@@ -478,7 +478,7 @@ its own fresh CI run, which was not polled or waited on as part of this task.
 
 ### T-006 · Licensing
 ```
-status: todo
+status: in-progress
 depends: T-001
 ```
 **Files:** `LICENSE`, `NOTICE`, `.github/workflows/ci.yml`
