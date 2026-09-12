@@ -41,11 +41,19 @@ on every runner, so `go install` replaced it (DEC-019). GNU Make is installed vi
 Windows runner since it is not preinstalled there. A `.gitattributes` forcing `eol=lf` was needed
 because Git for Windows' default `core.autocrlf=true` checkout turned the Go sources into CRLF,
 which made `gofumpt` report them as unformatted on `windows-latest` only.
-**Branch protection could not be configured**: `kdta91/tortui` is a private repository on a free
-plan, and both the classic branch-protection API and the newer repository-rulesets API return
-`403 Upgrade to GitHub Pro or make this repository public` (verified directly against both
-endpoints). This needs either the repo made public or the account upgraded — flagged for the
-orchestrator/user rather than silently skipped (DEC-020).
+**Branch protection is configured** on `main` via the classic branch-protection API
+(`PUT /repos/kdta91/tortui/branches/main/protection`): `required_status_checks.strict = true`
+with `contexts` = `make check (ubuntu-latest)`, `make check (macos-latest)`,
+`make check (windows-latest)` — the three matrix job names GitHub reports as individual status
+checks for the single `check` job in `.github/workflows/ci.yml`. `enforce_admins` is `false` and
+`required_pull_request_reviews` is left unset (confirmed absent from the API's own read-back of
+the protection object), so "require a pull request before merging" is **not** enabled, per
+AGENT.md §10 — the loop still pushes tracker status flips straight to `main`. This was previously
+blocked because `kdta91/tortui` was a private repository on a free plan, where both the classic
+protection API and the rulesets API returned `403 Upgrade to GitHub Pro or make this repository
+public`; the repo owner has since made the repository public (confirmed via
+`gh repo view kdta91/tortui --json visibility` → `PUBLIC`), which unblocked the classic API on
+the first retry. See DEC-020 (superseded) and DEC-021.
 **Files:** `go.mod`, `Makefile`, `.gitignore`, `.golangci.yml`, `.github/workflows/ci.yml`, `cmd/tortui/main.go`
 
 **Acceptance**
@@ -1099,7 +1107,8 @@ when it reaches it and does not start backlog items on its own.
 | DEC-017 | — | Destination is per-torrent, chosen before the add completes | Asking after the fact means moving data or re-downloading; the picker is cheap and the alternative is not | T-074 |
 | DEC-018 | — | Path containment checks resolve against a set of known destination roots | Per-torrent destinations make "the download dir" the wrong boundary; a single-dir check would either block legitimate paths or be quietly widened until it checks nothing | T-032, T-073, T-074 |
 | DEC-019 | 2026-09-12 | CI installs golangci-lint via `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`, and installs GNU Make via `choco` on the `windows-latest` runner | `windows-latest` does not ship GNU Make by default (confirmed against the runner-images software inventory). golangci-lint's own `install.sh` was tried first but its checksum verification failed against the published `v2.13.2` release asset on all three runners; `go install` against the pinned module version sidesteps that second verification path entirely | T-001 |
-| DEC-020 | 2026-09-12 | Branch protection on `main` requiring the CI check is left unconfigured, flagged as blocked rather than silently skipped | `kdta91/tortui` is a private repo on a free GitHub plan; both the classic branch-protection API and the repository-rulesets API return `403 Upgrade to GitHub Pro or make this repository public` for this repo. Unblocking needs either the repo made public or the account upgraded to GitHub Pro/Team — a decision for the human owner, not the agent | T-001 |
+| DEC-020 | 2026-09-12 | **Superseded by DEC-021.** Branch protection on `main` requiring the CI check was left unconfigured, flagged as blocked rather than silently skipped | `kdta91/tortui` was a private repo on a free GitHub plan at the time; both the classic branch-protection API and the repository-rulesets API returned `403 Upgrade to GitHub Pro or make this repository public` for this repo. Unblocking needed either the repo made public or the account upgraded to GitHub Pro/Team — a decision for the human owner, not the agent. The repo owner made it public; see DEC-021 | T-001 |
+| DEC-021 | 2026-09-12 | Repo owner made `kdta91/tortui` public; branch protection on `main` then configured via the classic API (`required_status_checks` on the three `make check` matrix contexts, strict, `required_pull_request_reviews` left unset) | Verified `gh repo view` reports `"visibility":"PUBLIC"` before retrying, which is what unblocked the classic protection endpoint (previously 403 per DEC-020). Deliberately did **not** enable "require a pull request before merging" — AGENT.md §10 requires tracker status flips to push straight to `main`, and that setting would stall the loop on the first task | T-001 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
