@@ -15,5 +15,5 @@ NOTICE
 # any platform and are intentionally not listed here.
 #
 module,license,license_url
-github.com/adrg/xdg,MIT,https://github.com/adrg/xdg/blob/v0.5.3/LICENSE
 github.com/BurntSushi/toml,MIT,https://github.com/BurntSushi/toml/blob/v1.6.0/COPYING
+github.com/adrg/xdg,MIT,https://github.com/adrg/xdg/blob/v0.5.3/LICENSE

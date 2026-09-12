@@ -46,6 +46,22 @@ SHELLCHECK_SOURCES := $(wildcard scripts/*)
 # above); `licenses` runs go-licenses once per OS and merges the results, the
 # same "analyze every platform from one host" idea build-all already uses for
 # cross-compilation.
+#
+# QA remediation (T-006): the merge step below pipes the three per-GOOS reports
+# through `sort -u` to dedup and order them before they're written into NOTICE,
+# which CI then diffs against the committed file to detect staleness. Plain
+# `sort -u` collates by the shell's ambient locale, and `github.com/BurntSushi/toml`
+# vs `github.com/adrg/xdg` collate in different relative order under
+# `en_US.UTF-8` (macOS default, where the committed NOTICE was first generated)
+# than under the `C`/POSIX byte-order collation GitHub's ubuntu runner uses --
+# so the exact same dependency set produced a different byte order on CI than
+# on the developer's machine, and the staleness gate (`git diff --exit-code --
+# NOTICE`) failed on every CI run regardless of whether dependencies had
+# actually changed. Confirmed directly: regenerating under `LC_ALL=C` and under
+# `LC_ALL=en_US.UTF-8` produced byte-different NOTICE files before this fix,
+# and byte-identical ones after. `LC_ALL=C` is pinned on both the `sort -u` and
+# the final `awk` reformat below so the output is deterministic on any machine,
+# in any locale, matching or not.
 MODULE := github.com/kdta91/tortui
 LICENSE_OSES := darwin linux windows
 ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC
@@ -104,7 +120,7 @@ licenses:
 	for goos in $(LICENSE_OSES); do \
 		GOOS=$$goos go-licenses report ./... --ignore $(MODULE) 2>/dev/null >> $(NOTICE_TMP); \
 	done; \
-	sort -u $(NOTICE_TMP) -o $(NOTICE_TMP)
+	LC_ALL=C sort -u $(NOTICE_TMP) -o $(NOTICE_TMP)
 	@set -eu; { \
 		echo "NOTICE"; \
 		echo "#"; \
@@ -123,7 +139,7 @@ licenses:
 		echo "# any platform and are intentionally not listed here."; \
 		echo "#"; \
 		echo "module,license,license_url"; \
-		awk -F, '{ print $$1 "," $$3 "," $$2 }' $(NOTICE_TMP); \
+		LC_ALL=C awk -F, '{ print $$1 "," $$3 "," $$2 }' $(NOTICE_TMP); \
 	} > NOTICE
 	@set -eu; rm -f $(NOTICE_TMP)
 	@set -eu; echo "make licenses: NOTICE regenerated."
