@@ -13,6 +13,12 @@ import (
 // files on macOS: $XDG_CONFIG_HOME/tortui when XDG_CONFIG_HOME is set to an
 // absolute path, otherwise ~/.config/tortui. macOS intentionally uses the
 // XDG convention rather than ~/Library/Application Support — see DEC-005.
+//
+// This is implemented directly against os.Getenv/os.UserHomeDir rather than
+// github.com/adrg/xdg: that library's own macOS default for ConfigHome is
+// ~/Library/Application Support, not ~/.config, so using it here would mean
+// either silently reintroducing the path DEC-005 rejected or bypassing its
+// default resolution entirely — see DEC-022.
 func ConfigDir() (string, error) {
 	if v := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(v) {
 		return filepath.Join(v, "tortui"), nil

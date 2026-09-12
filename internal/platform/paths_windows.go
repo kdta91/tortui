@@ -12,6 +12,13 @@ import (
 
 // ConfigDir returns the root directory tortui uses for its configuration
 // files on Windows: %AppData%\tortui.
+//
+// This is implemented directly against os.Getenv rather than
+// github.com/adrg/xdg: that library resolves its ConfigHome/StateHome on
+// Windows to the same folder, %LocalAppData%, with no roaming variant
+// exposed — it cannot express the roaming-config/local-state split AGENT.md
+// §14 specifies here, so this file reads %AppData%/%LocalAppData% itself.
+// See DEC-022.
 func ConfigDir() (string, error) {
 	appData := os.Getenv("APPDATA")
 	if appData == "" {
