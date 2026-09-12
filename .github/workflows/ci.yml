@@ -136,11 +136,20 @@ jobs:
           }
 
   indexer-hostnames:
+    # This job's name is the exact context registered in branch protection's
+    # required_status_checks.contexts on main (DEC-042, QA remediation of
+    # PR #7) -- change it here and in that branch protection setting
+    # together, or a rename silently strands every future PR waiting on a
+    # context that will never report again.
     name: check indexer hostname allowlist (T-007)
     # Only meaningful with a base/head to diff, so this only runs on the
     # pull_request event -- see scripts/check-indexer-hostnames.sh's own
-    # header for what it actually checks and why it can never be a denylist
-    # of known piracy hostnames (AGENT.md §2).
+    # header for what it actually checks (including commit messages) and why
+    # it can never be a denylist of known piracy hostnames (AGENT.md §2). A
+    # push-triggered run of this same workflow always reports this job as
+    # skipped for that reason, which required-status-check enforcement
+    # treats as passing -- the pull_request-triggered run alongside it is
+    # the one that actually evaluates the diff.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:

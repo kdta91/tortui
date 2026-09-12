@@ -25,9 +25,12 @@ indexer hosts at all. It exists now, in T-007, purely so:
   own `config.toml` or their own scraper definition file, never in this repository.
 - **Infrastructure or documentation hosts** (GitHub, the Go module proxy, this project's own
   docs, CI tool download URLs, and so on). The checker already treats plain, structurally
-  non-resolving placeholders as always allowed without needing an entry here: `localhost`, IP
-  literals, and the IANA-reserved `example.com` / `example.net` / `example.org` and the
-  `.test` / `.invalid` / `.localhost` TLDs from RFC 2606. It also only ever looks at lines inside
+  non-resolving placeholders as always allowed without needing an entry here: `localhost`, a
+  private/loopback/link-local IPv4 literal (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+  `127.0.0.0/8`, `169.254.0.0/16`), and the IANA-reserved `example.com` / `example.net` /
+  `example.org` and the `.test` / `.invalid` / `.localhost` TLDs from RFC 2606. A **public** IP
+  literal does not get this pass — unlike a reserved TLD, it can be a real production endpoint,
+  so it needs an entry here like any other host. It also only ever looks at lines inside
   files where tortui actually defines indexer sources in the first place
   (`internal/indexer/**`, `config.example.toml`, this file, `docs/bundled-sources.md`, and
   `testdata/**` fixtures) or lines that mention `indexer`, `torznab`, `scraper`, or `base_url` —

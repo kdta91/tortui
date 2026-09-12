@@ -98,8 +98,9 @@ exactly what the app is for — but it belongs in **your own** `definitions` dir
 file (T-023, T-025), not in this repository.
 
 An automated check (`scripts/check-indexer-hostnames.sh`, wired into CI as the
-`indexer-hostnames` job) backs this up by scanning each pull request's diff for anything that
-looks like a newly introduced indexer hostname. See
+`indexer-hostnames` job, and a required status check on `main`) backs this up by scanning each
+pull request's diff — and its commits' messages — for anything that looks like a newly introduced
+indexer hostname. It is a lightweight heuristic, not a substitute for review: see
 [`docs/indexer-hostname-allowlist.md`](docs/indexer-hostname-allowlist.md) for exactly how it
 decides what counts and the one place exceptions are ever added (T-024's bundled sources, and
 nothing else).
