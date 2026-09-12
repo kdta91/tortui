@@ -19,7 +19,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ### T-001 · Repository bootstrap
 ```
-status: todo
+status: in-progress
 depends: —
 ```
 **Files:** `go.mod`, `Makefile`, `.gitignore`, `.golangci.yml`, `.github/workflows/ci.yml`, `cmd/tortui/main.go`
