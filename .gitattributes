@@ -1,0 +1,4 @@
+# Normalize line endings to LF regardless of platform or local git config.
+# Windows' default core.autocrlf=true checkout otherwise turns Go source into
+# CRLF, which gofumpt/gofmt then reports as unformatted (T-001).
+* text=auto eol=lf

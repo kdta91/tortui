@@ -1,0 +1,22 @@
+# Build artifacts
+/bin/
+/dist/
+
+# Coverage
+*.out
+coverage.txt
+coverage.html
+
+# Local dev/config (never commit real secrets or config)
+/dev-config.toml
+config.toml
+*.log
+
+# Editor/OS cruft
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Go
+/vendor/

@@ -1,0 +1,21 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - revive
+    - bodyclose
+    - contextcheck
+    - errorlint
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
