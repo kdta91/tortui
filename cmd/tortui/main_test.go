@@ -72,3 +72,86 @@ func TestRunInvalidFlag(t *testing.T) {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
 }
+
+// TestRunLogLevelFlag is the direct regression test for PR #3 QA finding
+// 1: --log-level used to be rejected outright ("flag provided but not
+// defined", exit 2). It must now be accepted and its resolved value must
+// be observable.
+func TestRunLogLevelFlag(t *testing.T) {
+	out, code := captureOutput(t, func(w *os.File) int {
+		return run([]string{"--log-level=debug"}, w)
+	})
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0, output = %q", code, out)
+	}
+
+	if !strings.Contains(out, `log level="debug"`) {
+		t.Fatalf("output %q does not reflect the --log-level flag", out)
+	}
+}
+
+// TestRunLogFileFlag is the direct regression test for the --log-file half
+// of the same finding.
+func TestRunLogFileFlag(t *testing.T) {
+	out, code := captureOutput(t, func(w *os.File) int {
+		return run([]string{"--log-file=/tmp/foo.log"}, w)
+	})
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0, output = %q", code, out)
+	}
+
+	if !strings.Contains(out, `log file="/tmp/foo.log"`) {
+		t.Fatalf("output %q does not reflect the --log-file flag", out)
+	}
+}
+
+// TestRunLogLevelFlagInvalid confirms the flag is actually wired into
+// logging.ParseLevel — not merely accepted and ignored — by asserting a
+// nonsense level is rejected rather than silently passed through.
+func TestRunLogLevelFlagInvalid(t *testing.T) {
+	_, code := captureOutput(t, func(w *os.File) int {
+		return run([]string{"--log-level=not-a-real-level"}, w)
+	})
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 for an invalid --log-level value", code)
+	}
+}
+
+// TestRunLogLevelEnvVarLowerPrecedenceThanFlag confirms the flag continues
+// to win over TORTUI_LOG_LEVEL, matching logging.ResolveLevel's documented
+// precedence, now that both are reachable from the CLI.
+func TestRunLogLevelEnvVarLowerPrecedenceThanFlag(t *testing.T) {
+	t.Setenv("TORTUI_LOG_LEVEL", "warn")
+
+	out, code := captureOutput(t, func(w *os.File) int {
+		return run([]string{"--log-level=error"}, w)
+	})
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0, output = %q", code, out)
+	}
+
+	if !strings.Contains(out, `log level="error"`) {
+		t.Fatalf("output %q does not show the flag winning over the env var", out)
+	}
+}
+
+// TestRunDefaultLogLevelEmpty confirms no flag/env/config input still
+// resolves to an empty string end to end (New/ParseLevel default that to
+// "info"; ResolveLevel itself passes an all-empty result through as-is).
+func TestRunDefaultLogLevelEmpty(t *testing.T) {
+	out, code := captureOutput(t, func(w *os.File) int {
+		return run(nil, w)
+	})
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+
+	if !strings.Contains(out, `log level=""`) {
+		t.Fatalf("output %q does not show the expected empty default", out)
+	}
+}
