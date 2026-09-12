@@ -145,10 +145,71 @@ itself, not consuming it from `main`. Added `github.com/BurntSushi/toml v1.6.0` 
 
 ### T-003 · File logging
 ```
-status: in-progress
+status: done
 depends: T-001
 ```
-**Files:** `internal/config/log.go` (or `internal/logging/`)
+**Files:** `internal/logging/` (`logging.go`, `mask.go`, `rotate.go`, plus
+`logging_test.go`, `mask_test.go`, `rotate_test.go`)
+
+**Notes:** `internal/logging` is a standalone package: `New(Options) (*slog.Logger, io.Closer,
+error)` builds a JSON `slog.Handler` wrapping a from-scratch rotating `io.WriteCloser`
+(`rotate.go`) inside a masking handler (`mask.go`), writes to `Options.File` (or
+`<Options.StateDir>/tortui.log` when `File` is empty), and — critically — calls
+`slog.SetDefault` on the logger it builds, so every package-level `slog.Info`/`slog.Warn`/etc.
+call anywhere in the process is redirected away from slog's zero-value default handler (which
+writes to stderr) the moment `New` returns. JSON was chosen over a key=value text format purely
+because it is trivial to parse back apart in tests and matches how the masking handler already
+has to walk nested `slog.Group` values; no acceptance criterion required a specific format.
+
+Rotation (`rotate.go`) is hand-written rather than a third-party library (`DefaultMaxSizeBytes =
+10 * 1024 * 1024`, `DefaultMaxBackups = 3`): weighed against adding a dependency (which would need
+a `DEC-` row plus a license/maintenance check per AGENT.md §3) versus writing the ~140-line
+rotate-and-prune logic directly, the second was chosen since it is small, has no hidden behaviour
+to audit, and lets the writer sit directly behind the masking handler with nothing in between.
+"3 files retained" is implemented as 3 rotated backups plus the active file (4 files on disk at
+steady state: `tortui.log`, `.log.1`, `.log.2`, `.log.3`) — see DEC-025.
+
+Masking (`mask.go`) wraps *any* `slog.Handler` — not just the one this package builds — via
+`newMaskingHandler`, redacting: (1) any attribute whose key contains, case- and
+separator-insensitively, `url`/`apikey`/`cookie`/`token`/`secret`/`password`/`passkey`/
+`authorization`, recursing through `slog.Group` nesting and through attributes bound via
+`Logger.With`; and (2) URL-shaped substrings and `key=value`/`key: value` credential patterns
+found in free text — the log message itself, and any string-valued attribute whose key didn't
+match (1). Whole-value redaction was chosen over partial redaction (e.g. keeping a URL's
+scheme+host) because an indexer URL commonly carries the API key or session cookie itself as a
+query parameter (`?apikey=...`), so a partial mask keyed only on the attribute name could leave
+the exact secret sitting in the part left visible — see DEC-026.
+
+`ResolveLevel(configLevel, flagLevel string) string` and `ResolveFile(configFile, flagFile
+string) string` implement the config/env/flag precedence the acceptance list asks for — flag,
+then the `TORTUI_LOG_LEVEL` / `TORTUI_LOG_FILE` environment variables, then whatever the caller
+already resolved from config.toml, then (for level only) a built-in default of `"info"` applied
+by `ParseLevel`/`New` when every tier is empty. This package does not read `config.toml` or a
+`flag.FlagSet` itself, and `cmd/tortui/main.go` gains no new flags in this task: T-002 established
+the precedent of implementing a package fully while deferring its wiring into `main` to the
+composition root (`internal/app`) that doesn't exist yet, and this task follows the same
+scoping — see DEC-028. `internal/config.Config` is unchanged; no `config.example.toml` or
+`README.md` update was needed since no user-facing surface (a flag, a TOML key) actually exists
+yet to document.
+
+`TestNoStdoutStderrLeakAcrossSimulatedRun` (`logging_test.go`) is the direct test for "nothing is
+ever written to stdout or stderr": it repoints `os.Stdout`/`os.Stderr` at pipes, logs at every
+severity through both a directly-held `*slog.Logger` and the package-level `slog.Error` (which
+only reaches the file sink because of the `slog.SetDefault` call inside `New`), across a plain
+attr, a `slog.Group`-nested attr, an attr bound via `.With`, and a secret concatenated straight
+into a message string — then asserts both captured pipes are exactly empty while confirming the
+log *file* did receive the records with every secret redacted (so the empty streams aren't simply
+because nothing was logged). `mask_test.go` separately drives the masking handler directly and
+parses its JSON output to assert exact key-by-key redaction, including two levels of `slog.Group`
+nesting. `rotate_test.go` exercises rotation at a scaled-down threshold (real 10 MB/3-backup
+behaviour would make the test slow) verifying the oldest backup is pruned, the file is reopened at
+zero size, an existing on-disk file's size is honoured across a restart, and `Close` is idempotent
+while a write after `Close` fails cleanly rather than panicking.
+
+`go test ./internal/logging/...` and `go test -race ./...` are green; `internal/logging` measures
+87.6% local statement coverage (not gated by AGENT.md §9, whose per-package thresholds name only
+`internal/indexer`, `internal/engine`, and `internal/tui`). `make check` is green (`golangci-lint
+run` reports 0 issues).
 
 **Acceptance**
 - `slog` handler writing to the per-OS state dir (`~/.local/state/tortui/` on Linux,
@@ -1156,6 +1217,12 @@ when it reaches it and does not start backlog items on its own.
 | DEC-021 | 2026-09-12 | Repo owner made `kdta91/tortui` public; branch protection on `main` then configured via the classic API (`required_status_checks` on the three `make check` matrix contexts, strict, `required_pull_request_reviews` left unset) | Verified `gh repo view` reports `"visibility":"PUBLIC"` before retrying, which is what unblocked the classic protection endpoint (previously 403 per DEC-020). Deliberately did **not** enable "require a pull request before merging" — AGENT.md §10 requires tracker status flips to push straight to `main`, and that setting would stall the loop on the first task | T-001 |
 | DEC-022 | 2026-09-12 | **Corrected 2026-09-12 (same day, on QA remediation of PR #2).** Per-OS config/state/download path resolution lives in `internal/platform` (`paths_darwin.go`, `paths_linux.go`, `paths_windows.go`, one function set per file, no shared `runtime.GOOS` switch). `github.com/adrg/xdg` **is** a dependency in `go.mod`, per AGENT.md §3, and is genuinely used: `paths_linux.go` calls `xdg.Reload()` then reads `xdg.ConfigHome` / `xdg.StateHome` / `xdg.UserDirs.Download`. `paths_darwin.go` and `paths_windows.go` continue to read `os.Getenv`/`os.UserHomeDir` directly rather than through `xdg`, for OS-specific reasons below | The original version of this row justified dropping `adrg/xdg` entirely with: "there is no supported way to make it re-resolve against an env this package sets mid-test." **That claim was false.** `adrg/xdg@v0.5.3` exports `xdg.Reload()`, documented as refreshing base and user directories by reading the environment — exactly the injectable-env mechanism the claim said didn't exist. Verified directly: read the library's source (`xdg.go`, `paths_unix.go`, `paths_darwin.go`, `paths_windows.go`) rather than trusting the earlier claim, then proved `t.Setenv` + `xdg.Reload()` re-resolves correctly with real tests, including cross-executing the compiled `internal/platform` Linux test binary on linux/amd64 under Docker (not just reasoning about it) — all pass. It's safe under `go test -race` too: `t.Setenv` already forbids a test from calling `t.Parallel`, so nothing exercises `xdg`'s mutable package-level vars concurrently. Given it works, why not use it on all three OSes? Because its own compiled-in defaults conflict with conventions this project already froze, on two of the three: on macOS, `xdg.ConfigHome` defaults to `~/Library/Application Support` when `XDG_CONFIG_HOME` is unset (confirmed by reading `paths_darwin.go` in the module and by a live `xdg.Reload()` call), the opposite of DEC-005's `~/.config`. On Windows, `xdg.ConfigHome` and `xdg.StateHome` both default to `%LocalAppData%` with no roaming-config field exposed at all, so the library cannot express the `%AppData%`-for-config / `%LocalAppData%`-for-state split AGENT.md §14 requires. Using `xdg` as the sole implementation on those two OSes would mean either silently reintroducing the exact paths DEC-005 and §14 already rejected, or bypassing its default resolution entirely — at which point it would not be meaningfully "used," just imported for appearances. Linux is the one OS where `adrg/xdg`'s own defaults are exactly the XDG Base Directory Specification this project targets there, so `paths_linux.go` uses it directly; `paths_darwin.go` and `paths_windows.go` keep their plain `os.Getenv`/`os.UserHomeDir` implementation, which was always just as `t.Setenv`-testable as Linux's — the original claim's blocker never actually applied to any of the three files, on any OS. `BurntSushi/toml` is unaffected and remains the TOML library | T-002, T-003 |
 | DEC-023 | 2026-09-12 | On Linux, the default download directory prefers `$XDG_DOWNLOAD_DIR/tortui` over `~/Downloads/tortui` when `XDG_DOWNLOAD_DIR` is set (same precedence used for `XDG_CONFIG_HOME` vs `~/.config`) | AGENT.md §14's Linux line — "Default download dir `~/Downloads/tortui`, falling back to `$XDG_DOWNLOAD_DIR`" — reads ambiguously about which one is primary. Treating the explicit env var as the override and the literal path as the fallback matches ordinary XDG semantics and how every other XDG variable in this codebase behaves; the reverse reading (env var only used when `~/Downloads` is somehow unusable) has no clear trigger condition. **Addendum, DEC-022 remediation:** `DownloadDir()` on Linux now delegates to `github.com/adrg/xdg`'s `xdg.UserDirs.Download`, which actually has three levels, not two: `$XDG_DOWNLOAD_DIR` (if set to an absolute path), then an entry from `~/.config/user-dirs.dirs` (the desktop `xdg-user-dirs` mechanism) if that file exists and sets one, then the literal `~/Downloads`. This doesn't change the precedence conclusion above — the explicit env var still wins over every fallback — it just means the fallback is one step richer than this row originally described | T-002 |
+
+| DEC-024 | 2026-09-12 | `internal/logging` (T-003) writes JSON log lines and calls `slog.SetDefault` on the logger it builds | JSON was chosen only because it's trivial to parse in tests and matches how the masking handler already walks nested `slog.Group` values; no acceptance criterion names a format. Calling `slog.SetDefault` is what makes "nothing is ever written to stdout or stderr" hold for code that uses the package-level `slog.X` functions rather than a logger obtained from `New` directly — otherwise it would silently fall back to slog's built-in stderr-writing handler | T-003 |
+| DEC-025 | 2026-09-12 | T-003's "rotation at 10 MB with 3 files retained" is implemented as 3 rotated backups plus the still-active file (4 files on disk at steady state: `tortui.log`, `.log.1`, `.log.2`, `.log.3`) | The phrase reads two ways — 3 files total, or 3 backups on top of the active one. Read it the second way, matching the common `MaxSize`/`MaxBackups`-style rotation convention this phrasing echoes; the reverse reading would mean only 2 backups are ever kept, which is what "3 files retained" would describe less naturally | T-003 |
+| DEC-026 | 2026-09-12 | A sensitive attribute or URL is redacted wholesale (`[REDACTED]`), not partially (e.g. keeping a URL's scheme and host) | An indexer URL routinely carries the API key or session cookie itself as a query parameter (`?apikey=...`), so a partial mask keyed only on the attribute's own name (`cookie`, `api_key`) could still leave the same secret sitting in the part of a `url`-keyed value that was left visible. Masking is applied both by attribute key (recursing through `slog.Group` nesting and `Logger.With`-bound attrs) and, independently, by scanning message text and non-sensitive-keyed string values for URL-shaped or `key=value`-shaped credentials, so a secret concatenated into free text is still caught | T-003 |
+| DEC-027 | 2026-09-12 | Rotation (`internal/logging/rotate.go`) is a from-scratch `io.WriteCloser`, not a third-party library such as `natefinch/lumberjack` | AGENT.md §3 requires a `DEC-` row with a license check for any new dependency, and the task explicitly invited weighing writing it directly against adding one. The rotate-and-prune-N-backups logic needed here is small (~140 lines) and self-contained, with nothing to audit in someone else's rotation/retry/error-handling behaviour, and it sits directly behind the masking handler with no intermediary. No third-party library's source was read as part of this choice, since none was added — this row is the "wrote it myself" side of that trade-off, not a claim about any specific library's behaviour | T-003 |
+| DEC-028 | 2026-09-12 | `internal/logging`'s config/env/flag precedence (`ResolveLevel`, `ResolveFile`) is exposed as pure string-in/string-out functions; `cmd/tortui/main.go` gains no `--log-level`/`--log-file` flags and `internal/config.Config` gains no `log_level`/`log_file` fields in this task. New environment variables: `TORTUI_LOG_LEVEL`, `TORTUI_LOG_FILE`, checked between the config value and the flag value in that priority order (flag > env > config > built-in default) | T-002 established the precedent of implementing a package's full behaviour while deferring its wiring into `main` to the composition root (`internal/app`), which doesn't exist yet — see T-002's note on `cmd/tortui/main.go` still not consuming `internal/config.Load`. T-003's own `Files:` line names only `internal/logging/` (originally `internal/config/log.go` as the alternative), not `cmd/tortui/main.go` or `internal/config`, so this task follows the same boundary rather than building ahead into a later phase's composition work | T-003 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
