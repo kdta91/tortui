@@ -1,0 +1,67 @@
+# Example tortui configuration.
+#
+# This file is a reference only — it is never read directly. Your real
+# config is written automatically on first run; `tortui doctor` prints
+# where. Every value below is a placeholder or a documented default; there
+# are no real hosts, keys, or cookies in this file (AGENT.md §2).
+#
+# Everything here is also editable from inside the app: press `5` for
+# Settings. Editing this file by hand is supported but never required.
+
+# Default destination for downloaded torrents. Per-torrent destinations
+# chosen when adding a download override this.
+download_dir = "~/Downloads/tortui"
+
+# Additional destination roots you've saved, offered when adding a torrent.
+saved_destinations = []
+
+# Rate limits in bytes/sec. 0 means unlimited.
+max_download_rate = 0
+max_upload_rate   = 0
+
+# Torrents beyond this many active downloads queue until a slot frees.
+max_active_downloads = 3
+
+# Peer connections per torrent.
+max_peers = 50
+
+# BitTorrent listen port. 0 means "pick a free port".
+listen_port = 0
+
+# One of "ratio", "duration", or "off".
+seed_policy = "ratio"
+seed_ratio  = 1.0
+
+# Refuse to start a download that would leave less than this much free
+# space on its destination. Accepts a plain byte count or a suffix of B,
+# KB, MB, GB, or TB.
+min_free_space = "1GB"
+
+# Per-source timeout for a search fan-out. A Go duration string.
+search_timeout = "15s"
+
+# Built-in theme name.
+theme = "default"
+
+# Force ASCII glyphs instead of Unicode block characters.
+ascii = false
+
+# Example Torznab source (e.g. a feed exposed by Prowlarr or Jackett).
+# Uncomment and fill in your own URL and key — never commit real ones.
+# [[indexer]]
+# id      = "my-indexer"
+# name    = "My Indexer"
+# type    = "torznab"
+# url     = "http://localhost:9696/api/v1/indexer/1/newznab"
+# api_key = "paste-your-own-key-here"
+# enabled = true
+
+# Example scraper source, driven by a YAML definition file kept in the
+# definitions directory next to this config.
+# [[indexer]]
+# id         = "example"
+# name       = "Example"
+# type       = "scraper"
+# url        = "https://example.org"
+# definition = "example.yml"
+# enabled    = true
