@@ -277,7 +277,7 @@ per-package thresholds name only `internal/indexer`, `internal/engine`, and `int
 
 ### T-004 · Secret hygiene
 ```
-status: todo
+status: in-progress
 depends: T-001
 ```
 **Files:** `.gitleaks.toml`, `scripts/pre-commit`, `Makefile`
