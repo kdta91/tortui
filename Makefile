@@ -67,7 +67,7 @@ LICENSE_OSES := darwin linux windows
 ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC
 NOTICE_TMP := .notice.tmp
 
-.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses
+.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames
 
 build:
 	set -eu; go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/tortui
@@ -147,6 +147,16 @@ licenses:
 hooks:
 	set -eu; git config core.hooksPath scripts
 	@set -eu; echo "git hooks now run from ./scripts (core.hooksPath) — scripts/pre-commit is active."
+
+# T-007: local convenience wrapper around scripts/check-indexer-hostnames.sh,
+# which is what actually implements the check (see its own header comment).
+# CI's indexer-hostnames job calls the script directly with the PR's exact
+# base/head SHAs instead of using this target, since HOSTNAME_BASE_REF's
+# "origin/main" default assumes a fetched origin remote that CI doesn't need.
+HOSTNAME_BASE_REF ?= origin/main
+
+check-hostnames:
+	set -eu; scripts/check-indexer-hostnames.sh $(HOSTNAME_BASE_REF)
 
 cover:
 	set -eu; go test -coverprofile=$(COVERPROFILE) $(PKG)

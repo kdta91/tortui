@@ -1,0 +1,9 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contribution policy (read first for indexer-related ideas)
+    url: https://github.com/kdta91/tortui/blob/main/CONTRIBUTING.md
+    about: >-
+      Requests to add a specific indexer definition, endpoint, or default
+      source are closed without review -- read why before opening one of
+      those. Also covers the "no site names in issue text" rule that applies
+      to every issue and PR here.

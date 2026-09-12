@@ -134,3 +134,27 @@ jobs:
             echo "NOTICE is stale: run 'make licenses' and commit the result.";
             exit 1;
           }
+
+  indexer-hostnames:
+    name: check indexer hostname allowlist (T-007)
+    # Only meaningful with a base/head to diff, so this only runs on the
+    # pull_request event -- see scripts/check-indexer-hostnames.sh's own
+    # header for what it actually checks and why it can never be a denylist
+    # of known piracy hostnames (AGENT.md §2).
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Both the base and head commits must be present locally for the
+          # diff the script runs; the default shallow/single-commit checkout
+          # for a pull_request event doesn't guarantee that.
+          fetch-depth: 0
+
+      - name: Scan the PR diff for new indexer hostnames
+        run: |
+          set -eu
+          scripts/check-indexer-hostnames.sh \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}"
