@@ -530,10 +530,12 @@ it, which is exactly what broke. See DEC-039 for the root cause and the fix.
 
 ### T-007 · Contribution policy and repo hygiene
 ```
-status: in-progress
+status: done
 depends: T-006
 ```
-**Files:** `CONTRIBUTING.md`, `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md`, `CODE_OF_CONDUCT.md`
+**Files:** `CONTRIBUTING.md`, `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md`, `CODE_OF_CONDUCT.md`,
+`scripts/check-indexer-hostnames.sh`, `docs/indexer-hostname-allowlist.md`, `Makefile`,
+`.github/workflows/ci.yml`
 
 **Acceptance**
 - `CONTRIBUTING.md` states plainly that **pull requests adding indexer definitions, endpoints,
@@ -545,6 +547,115 @@ depends: T-006
 - PR checklist: task ID, `make check` green, tests added, docs updated, no named sites.
 - A CI check scans the diff for anything resembling a real indexer hostname and fails the PR,
   with an allowlist covering only the bundled lawful sources from T-024 (AGENT.md §2, §16).
+
+**Notes:** `CONTRIBUTING.md` (which already existed from T-004, documenting the secret-scan hook)
+gained three new sections rather than being replaced: "Indexer sources are user-supplied only",
+explaining the closed-without-review policy in the agent's own words — *MGM v. Grokster*
+inducement liability turning on the developer's own choices rather than the code's capabilities,
+and the 2020 youtube-dl/RIAA episode where the project's own test fixtures naming real copyrighted
+tracks became one of the case's factual hooks, resolved only after those references were stripped
+— "Site names don't belong anywhere in this repo — including issues and PRs", and a restated PR
+checklist. `CODE_OF_CONDUCT.md` is the standard Contributor Covenant v2.1 text (CC BY 4.0,
+attributed at the bottom per its own template) with the enforcement-contact section filled in as
+"contact the maintainer (@kdta91) through GitHub" — deliberately **not** a link to GitHub's private
+security-advisory reporting flow, since `gh api repos/kdta91/tortui/private-vulnerability-reporting`
+was checked directly and returned `{"enabled":false}` for this repository; linking a flow that
+isn't actually enabled would have been exactly the kind of unverified claim this project's QA has
+been failing tasks on.
+
+`.github/ISSUE_TEMPLATE/bug_report.md` asks for `tortui doctor` output but words it as
+conditional/forward-looking rather than asserting the command exists: "if your build includes
+it... `doctor` isn't implemented yet as of this writing — it lands in T-055 — so if your build
+predates it, please give us instead: OS/arch, terminal emulator and version, ...". It also asks
+for terminal emulator/version explicitly and tells the reporter not to paste indexer URLs, keys,
+cookies, or torrent titles, with the reasoning link to `CONTRIBUTING.md`.
+`.github/ISSUE_TEMPLATE/feature_request.md` and `.github/ISSUE_TEMPLATE/config.yml` (a contact
+link back to the contribution policy) carry the same "no site names" note; both templates and
+`.github/PULL_REQUEST_TEMPLATE.md` were validated with `ruby -ryaml` /
+`gh issue`-template-shape by eye (front matter parses; `config.yml` parses as YAML with
+`ruby -ryaml -e "YAML.load_file(...)"`, confirmed directly). The PR template's checklist matches
+this acceptance criterion's five items verbatim.
+
+**The hostname CI check (the hard part of this task).** T-024 (bundled lawful sources) doesn't
+exist yet, so there is no real allowlist to check against, and AGENT.md §2 forbids naming an
+infringement-oriented site anywhere in this repository — including in a blocklist, a regex, or a
+fixture — so this could never be built as a denylist of known piracy hostnames. What was built
+instead, in `scripts/check-indexer-hostnames.sh` (POSIX `sh`, passes `shellcheck -s sh`, wired into
+`make lint`'s existing `$(SHELLCHECK_SOURCES)` wildcard automatically since it lives in
+`scripts/`), is a **shape-plus-context heuristic**, not a name list:
+
+1. *Shape*: a substring of an added diff line that looks like a hostname — the authority of an
+   `http(s)://` URL (userinfo and port correctly stripped, so `https://user:pass@host` extracts
+   `host`, not `user`), or the value of a `url`/`host`/`endpoint`/`base_url`-style key.
+2. *Context*: that hostname-shaped substring only counts on a line that either lives in a file
+   where tortui actually defines indexer sources (`internal/indexer/**`, `config.example.toml`,
+   `docs/indexer-definitions.md`, `docs/bundled-sources.md`,
+   `docs/indexer-hostname-allowlist.md`, or `testdata/**`) or mentions `indexer`, `torznab`,
+   `scraper`, or `base_url` on the same line. A hostname anywhere else in the diff — a README
+   link, a CI action reference, a `NOTICE`/`go.sum` dependency URL — is never even inspected.
+3. What survives both filters is allowed only if it is a **structurally non-resolving
+   placeholder** — `localhost`, an IP literal, or a host ending in one of the RFC 2606 / RFC 6761
+   reserved labels `example`/`test`/`invalid`/`localhost` (covers both `example.com` and a
+   fixture like `real-indexer.example`) — or is listed in the new
+   `docs/indexer-hostname-allowlist.md`, which is intentionally empty of indexer hosts right now
+   (see its own header) and is the single, documented place **T-024** adds bundled-source hosts
+   to.
+
+Wired as a new `indexer-hostnames` job in `.github/workflows/ci.yml`, `if:
+github.event_name == 'pull_request'`, checked out with `fetch-depth: 0` and invoked as
+`scripts/check-indexer-hostnames.sh "${{ github.event.pull_request.base.sha }}" "${{
+github.event.pull_request.head.sha }}"` — both SHAs pinned rather than branch names, since a
+force-push can move a branch tip out from under a second read. A `make check-hostnames` target
+was also added for local use (`HOSTNAME_BASE_REF ?= origin/main`), but it is **not** wired into
+`make check` or the `check` CI job, matching how `licenses` and `build-all` already stand apart
+from `check` — a diff-based check has nothing meaningful to compare against outside a PR context,
+and gating every local commit on a possibly-stale fetched `origin/main` would be exactly the kind
+of local-only-green claim this project's QA has bounced other tasks for. **Branch protection on
+`main` was not touched**: the three `required_status_checks.contexts` from T-001/DEC-021 are
+unchanged, so `indexer-hostnames` reports as an ordinary (non-required) PR check for now, the same
+as `build-all` and `licenses` already do — flagging this rather than silently leaving it unstated,
+since AGENT.md doesn't ask this task to change branch protection and QA review is what actually
+gates the merge per AGENT.md §10 either way.
+
+**Verification, all done directly rather than assumed:**
+- `make check` is green (fmt-check, lint incl. `shellcheck -s sh` over both `scripts/*` files,
+  test, scan) and `go test -race ./... -count=1` is green — verbatim output in the PR body.
+- `scripts/check-indexer-hostnames.sh` was run against this PR's own diff
+  (`scripts/check-indexer-hostnames.sh origin/main`, after `git add -A` so the new files are
+  visible to `git diff`) and reported **zero** violations — the policy prose itself (which
+  necessarily uses the word "indexer" next to explanatory text) does not trip the checker.
+- It was run from the empty git tree (`git hash-object -t tree /dev/null`) to `HEAD` — i.e. every
+  tracked file in the repository as it exists today, not just this PR's diff — to prove it does
+  **not** false-positive on the existing tree. The first run of this found two real bugs, both
+  fixed and covered by the same re-run afterward: (a) `internal/logging/logging_test.go` and
+  `mask_test.go`'s existing `real-indexer.example` fixture hostname (a T-003 fixture, itself
+  already following the "invented name" convention) was flagged, because the allowlist only
+  special-cased `example.com`/`.net`/`.org`, not the bare `.example` TLD — fixed by adding the
+  RFC 2606/6761 reserved-TLD check described above; (b) the same run's basic-auth fixture
+  (`https://user:BASICAUTH-SECRET@real-indexer.example/path`) extracted `user` as a fake
+  "hostname" — fixed by stripping userinfo before further parsing. After both fixes, the
+  empty-tree-to-`HEAD` run is clean (exit 0, zero violations).
+- It was run against a synthetic addition of `https://totallyrealtorrentsite.suspicious-tld.zzz`
+  inside `config.example.toml`'s `[[indexer]]` block (single-rev mode, `... HEAD`, uncommitted) and
+  correctly failed (exit 1, naming the file and host) — then the same host inside
+  `internal/indexer/scraper/builtin/*.go` in a disposable scratch git repo, in **both** invocation
+  modes: single-rev against the working tree, and two-rev (`base-sha head-sha`) against two real
+  commits, matching exactly how the CI job invokes it. Both modes correctly failed on the new host
+  and correctly passed once that same host was added to a scratch allowlist file instead. A
+  control case — the same disallowed hostname added to a plain `README.md` line with no indexer
+  context — correctly produced **zero** violations, confirming the check is not simply "any new
+  hostname anywhere," which would have been a much blunter (and much noisier) instrument than the
+  acceptance criterion asks for.
+- Confirmed no secret-shaped content was introduced: `make scan` (gitleaks) is part of `make
+  check` and stayed green throughout, including the commit that added the intentionally-fake
+  basic-auth test hostname (`totallyrealtorrentsite.suspicious-tld.zzz`, `some-new-indexer-host.zzz`
+  — invented names, never committed to this repo; those probes were run against uncommitted
+  working-tree edits or a disposable scratch repository outside this project and reverted before
+  committing).
+
+**What this task deliberately leaves for T-024:** `docs/indexer-hostname-allowlist.md` ships with
+no indexer hostnames listed at all — there is nothing bundled yet to list. The file's own header
+states exactly what T-024 should add and where.
 
 ---
 
@@ -1495,6 +1606,8 @@ when it reaches it and does not start backlog items on its own.
 | DEC-037 | 2026-09-12 | **QA remediation of PR #5, same day.** Every `Makefile` recipe line now starts its shell invocation with a literal `set -eu;`, in addition to (not instead of) keeping `.SHELLFLAGS := -eu -c` | QA found, and this remediation independently reproduced with a throwaway Makefile against this machine's actual `/usr/bin/make`, that `.SHELLFLAGS` is itself a GNU Make 3.82+ feature: on this project's floor version, make 3.81, it is not recognized at all, so `-e`/`-u` were silently never in effect — a non-final `false` in a recipe didn't stop the recipe, and referencing an unset shell variable didn't error. AGENT.md §14 asks for both `.SHELLFLAGS := -eu -c` *and* zero 3.82+/4.0+ features, which is an internal tension once `.SHELLFLAGS` itself turns out to be one — resolved here by keeping the line (harmless, and it does take effect on newer make, e.g. this project's Linux CI runner) and separately achieving the same `-e`/`-u` behaviour on 3.81 the only way that's actually possible there: `set -eu;` is plain POSIX shell syntax passed as part of the command string itself, so it works identically regardless of what flags make chose when invoking `$(SHELL)`. Verified with the same throwaway-Makefile method: a `set -eu; false; echo ...` recipe line stopped before the echo, and `set -eu; echo $${UNSET_VAR}` failed on the unbound reference, both under make 3.81 | T-005 |
 | DEC-038 | 2026-09-12 | `LICENSE`'s copyright holder is the GitHub handle `kdta91`, not a personal or legal name; `NOTICE` (generated by `go-licenses/v2 v2.0.1`) enumerates exactly two dependencies — `github.com/BurntSushi/toml` and `github.com/adrg/xdg`, both MIT — and `make licenses` runs `go-licenses` once per `GOOS` in `darwin linux windows` rather than once on the host OS | No legal name for the repo owner is available anywhere in this repo or its history to attribute copyright to, and inventing one would be a false attribution in a legal document; the task instructions explicitly required falling back to the GitHub handle rather than fabricating a name in that situation, so `kdta91` is used verbatim. Separately, `go-licenses report ./...` was verified (by direct experiment, not assumed) to inspect the *compiled* import graph, and this repo's own `internal/platform` is intentionally split into `_darwin.go`/`_linux.go`/`_windows.go` files (T-002/DEC-022): only `paths_linux.go` imports `github.com/adrg/xdg`, so a report run with the host's default `GOOS=darwin` misses `adrg/xdg` entirely (confirmed: it appears under `GOOS=linux` and is absent under `GOOS=darwin` and `GOOS=windows`). Since AGENT.md §14 treats darwin/linux/windows as equally tier-1, "every … transitive dependency" has to mean every dependency compiled into *any* of the three, not just whichever one happens to be the CI runner's or developer's own OS — so `make licenses` loops all three `GOOS` values and merges, the same "analyze every platform from one host" approach `build-all` already established for cross-compilation (DEC-036). This also settles what NOTICE should *not* list: `github.com/stretchr/testify`, `github.com/davecgh/go-spew`, `github.com/pmezard/go-difflib`, and `gopkg.in/yaml.v3` all appear in `go.sum` and `go mod graph`, but `go mod graph` confirms every one of them is required only by `github.com/adrg/xdg`'s own `go.mod` (its test dependencies), not by any package this repo imports; grepping this repo's `.go` files for all four turns up nothing, and none of the three per-GOOS `go-licenses report` runs lists them either. They are go.sum/module-graph entries needed to verify checksums, not anything ever compiled into a tortui binary, so listing them in `NOTICE` would misrepresent what tortui actually ships. The same "never actually compiled into a tortui binary" reasoning, for a different mechanical cause, is why `golang.org/x/sys` (present in `go.mod` as an `// indirect` requirement, and surfaced by `go mod why -m golang.org/x/sys` as required via `github.com/adrg/xdg`'s own `golang.org/x/sys/windows` import) is also correctly absent from `NOTICE`: that import lives in a Windows-only file inside `adrg/xdg` itself, and `adrg/xdg` is in turn only ever imported by this repo's `paths_linux.go` (never `paths_darwin.go` or `paths_windows.go` — T-002/DEC-022). So on every one of the three tier-1 `GOOS` values this repo actually builds for, either `adrg/xdg` isn't compiled into tortui at all (darwin, windows) or it is compiled in under `GOOS=linux`, where Go's own build constraints exclude `adrg/xdg`'s `golang.org/x/sys/windows`-importing file. Verified directly: none of the three per-GOOS `go-licenses report` runs — including the `GOOS=windows` one — lists `golang.org/x/sys` either. `go-licenses check`'s enforcement is an allowlist (`--allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC`, matching AGENT.md §3/§16) rather than a GPL/AGPL/LGPL denylist, verified directly: removing `MIT` from the allowlist and re-running made the same two dependencies fail with an explicit "not allowed" message, proving the mechanism actually rejects a disallowed license rather than passing by omission | T-006 |
 | DEC-039 | 2026-09-13 | **QA remediation of PR #6, same day.** `make licenses`'s NOTICE-merge step now pins `LC_ALL=C` on both the `sort -u` that dedups/orders the merged per-GOOS reports and the final `awk` column reformat, instead of relying on whichever locale happens to be ambient | QA reproduced the PR's `licenses` CI job failing on *every* run, not only when a dependency actually changed. Root cause, confirmed directly rather than assumed: plain `sort -u` collates by the shell's ambient `LC_COLLATE`, and `github.com/BurntSushi/toml` sorts before `github.com/adrg/xdg` under the `C`/POSIX byte-order collation GitHub's `ubuntu-latest` runner uses, but *after* it under `en_US.UTF-8` — the locale of the macOS machine the original `NOTICE` was generated and committed on. Same two dependencies, same licenses, different byte order — so CI's `git diff --exit-code -- NOTICE` staleness check failed unconditionally on the runner. Reproduced by regenerating under `LC_ALL=C` then `LC_ALL=en_US.UTF-8` on the old Makefile (byte-different output, confirming the bug); regenerating under both locales with `LC_ALL=C` pinned on the fix produces byte-identical output, confirming the fix. Committed `NOTICE` is regenerated in the new, `C`-locale/CI-matching order (`BurntSushi/toml` now sorts first). Swept the rest of the `Makefile` for the same class of bug (ambient locale, sort order, hash/map-iteration order, timestamps): no other recipe's output feeds a committed file or a CI comparison the way `licenses` does — `build-all`'s trailing `ls -1 $(DIST)` and `lint`'s `shellcheck $(wildcard scripts/*)` both have an order that can vary by environment, but neither gates on that order (each build target / each shellcheck'd file passes or fails independently of the others' order), and `DATE`'s build timestamp is intentionally build-specific `ldflags` metadata that is never diffed against a committed value — none of those needed a change. **Also corrects an overstated claim in PR #6 and T-006's own tracker notes:** both said `make licenses` was verified green "locally... before opening the PR" and that two back-to-back local runs "confirm[ed] determinism"; in fact it was verified only on macOS under one locale, that check could not have caught a cross-locale bug by construction, and the PR's own CI (`ubuntu-latest`) was failing on both of its runs the whole time the T-006 row said `done`. That CI result was never checked before the row was marked complete. See the corrected T-006 notes above and the corrected PR #6 description | T-006 |
+| DEC-040 | 2026-09-13 | The T-007 "scans the diff for anything resembling a real indexer hostname" check is implemented as a shape-plus-context heuristic (`scripts/check-indexer-hostnames.sh`) with a currently-empty allowlist (`docs/indexer-hostname-allowlist.md`), rather than any form of denylist | AGENT.md §2 bars naming an infringement-oriented site anywhere in this repository, including in a blocklist, a regex, or a fixture — so a denylist of known piracy hostnames was never an option regardless of implementation difficulty; that is a hard `AGENT.md §2` constraint, not a design preference. T-024 (bundled lawful sources) hasn't landed yet, so there is also no real allowlist content to check against today. The heuristic scans only lines that (a) live in files where tortui actually defines indexer sources (`internal/indexer/**`, `config.example.toml`, `docs/indexer-definitions.md`, `docs/bundled-sources.md`, `docs/indexer-hostname-allowlist.md`, `testdata/**`) or (b) mention `indexer`/`torznab`/`scraper`/`base_url`, so a dependency URL in `NOTICE`, a README link, or a CI action reference is never inspected regardless of allowlist content — this is what keeps the check from false-positiving on the current tree (verified by diffing the empty git tree against `HEAD`, see the T-007 tracker notes) without needing to allowlist every incidental hostname already in the repo. A structurally non-resolving placeholder (`localhost`, an IP literal, or a host ending in the RFC 2606/6761 reserved `example`/`test`/`invalid`/`localhost` labels) is always allowed independent of the allowlist file, since those can never be a real bundled source by construction | T-007 |
+| DEC-041 | 2026-09-13 | `check-indexer-hostnames.sh` is wired as its own `indexer-hostnames` CI job (`if: github.event_name == 'pull_request'`), not as a new prerequisite of `make check` or the `check` CI job, and branch protection's required-status-check list (T-001/DEC-021) was left unchanged | A diff-based check has nothing meaningful to compare against outside a pull-request's base/head — on `main` itself, or in a local `make check` run with no reliable base ref, it would either need a network-fetched `origin/main` (which may be stale or absent) or trivially no-op, neither of which is a real per-commit gate. This mirrors how `licenses` and `build-all` (T-005/T-006) already stand apart from `check` for their own, different reasons. A `make check-hostnames` convenience target was still added for local use (`HOSTNAME_BASE_REF ?= origin/main`, overridable) since a contributor may want to run it before pushing. Branch protection was not touched because this task's acceptance criteria don't ask for it and QA review (not required-status enforcement) is what actually gates every merge here per AGENT.md §10; `indexer-hostnames` reports as an ordinary, non-required PR check for now, same as `build-all`/`licenses` | T-007 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.

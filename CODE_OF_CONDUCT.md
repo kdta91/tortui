@@ -58,10 +58,9 @@ appointed representative at an online or offline event.
 
 ## Enforcement
 
-This project does not yet have a dedicated conduct-reporting address. Until one
-exists, report instances of abusive, harassing, or otherwise unacceptable
-behavior through a private [GitHub security advisory](https://github.com/kdta91/tortui/security/advisories/new)
-on this repository, or by contacting the maintainer
+This project does not yet have a dedicated conduct-reporting email address.
+Until one exists, report instances of abusive, harassing, or otherwise
+unacceptable behavior by contacting the maintainer
 ([@kdta91](https://github.com/kdta91)) directly through GitHub. All complaints
 will be reviewed and investigated promptly and fairly.
 
