@@ -34,10 +34,18 @@ all green locally. `make cover` computes total coverage and fails under a thresh
 since the per-package thresholds in AGENT.md §9 apply to `internal/indexer`, `internal/engine`,
 and `internal/tui`, none of which exist yet — raise the threshold as those packages land).
 CI (`.github/workflows/ci.yml`) runs `make check` on `ubuntu-latest`, `macos-latest`, and
-`windows-latest`; golangci-lint is installed via the official `install.sh` pinned to `v2.13.2`
-rather than a marketplace action, and GNU Make is installed via `choco` on the Windows runner
-since it is not preinstalled there (see DEC-019). Branch protection on `main` requires the CI
-`check` job but does **not** require a pull request before merging, per AGENT.md §10.
+`windows-latest`, and is green on all three (see PR #1). golangci-lint is installed with
+`go install .../v2/cmd/golangci-lint@v2.13.2` — the official `install.sh` was tried first but
+its release-asset checksum verification failed against the currently published `v2.13.2` tarball
+on every runner, so `go install` replaced it (DEC-019). GNU Make is installed via `choco` on the
+Windows runner since it is not preinstalled there. A `.gitattributes` forcing `eol=lf` was needed
+because Git for Windows' default `core.autocrlf=true` checkout turned the Go sources into CRLF,
+which made `gofumpt` report them as unformatted on `windows-latest` only.
+**Branch protection could not be configured**: `kdta91/tortui` is a private repository on a free
+plan, and both the classic branch-protection API and the newer repository-rulesets API return
+`403 Upgrade to GitHub Pro or make this repository public` (verified directly against both
+endpoints). This needs either the repo made public or the account upgraded — flagged for the
+orchestrator/user rather than silently skipped (DEC-020).
 **Files:** `go.mod`, `Makefile`, `.gitignore`, `.golangci.yml`, `.github/workflows/ci.yml`, `cmd/tortui/main.go`
 
 **Acceptance**
@@ -1090,7 +1098,8 @@ when it reaches it and does not start backlog items on its own.
 | DEC-016 | — | Latest is an explicit `Query.Mode`, not an empty-string search | Inferring browse from an empty keyword hides the capability difference between sources and fails silently on ones that can't do it | T-010, T-012 |
 | DEC-017 | — | Destination is per-torrent, chosen before the add completes | Asking after the fact means moving data or re-downloading; the picker is cheap and the alternative is not | T-074 |
 | DEC-018 | — | Path containment checks resolve against a set of known destination roots | Per-torrent destinations make "the download dir" the wrong boundary; a single-dir check would either block legitimate paths or be quietly widened until it checks nothing | T-032, T-073, T-074 |
-| DEC-019 | 2026-09-12 | CI installs golangci-lint via its official `install.sh` (pinned `v2.13.2`) instead of a marketplace action, and installs GNU Make via `choco` on the `windows-latest` runner | `windows-latest` does not ship GNU Make by default (confirmed against the runner-images software inventory); `install.sh` avoids depending on a third-party action's golangci-lint-v2 support matrix | T-001 |
+| DEC-019 | 2026-09-12 | CI installs golangci-lint via `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`, and installs GNU Make via `choco` on the `windows-latest` runner | `windows-latest` does not ship GNU Make by default (confirmed against the runner-images software inventory). golangci-lint's own `install.sh` was tried first but its checksum verification failed against the published `v2.13.2` release asset on all three runners; `go install` against the pinned module version sidesteps that second verification path entirely | T-001 |
+| DEC-020 | 2026-09-12 | Branch protection on `main` requiring the CI check is left unconfigured, flagged as blocked rather than silently skipped | `kdta91/tortui` is a private repo on a free GitHub plan; both the classic branch-protection API and the repository-rulesets API return `403 Upgrade to GitHub Pro or make this repository public` for this repo. Unblocking needs either the repo made public or the account upgraded to GitHub Pro/Team — a decision for the human owner, not the agent | T-001 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
