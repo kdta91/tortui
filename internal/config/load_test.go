@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -80,8 +81,16 @@ func TestLoadValidConfig(t *testing.T) {
 		t.Fatalf("first-run Load() error = %v", err)
 	}
 
-	const body = `
-download_dir = "/tmp/tortui-downloads"
+	// The configured download_dir must live inside this test's own
+	// t.TempDir() sandbox, not at a fixed path such as /tmp/tortui-downloads
+	// — Load() feeds it to a real os.MkdirAll, so a hardcoded path outside
+	// the sandbox would create (and leak) a real directory on the host
+	// filesystem every time this test runs (T-005 QA remediation).
+	// A TOML literal string (single quotes) is used rather than a basic
+	// string so a Windows path's backslashes need no escaping.
+	downloadDir := filepath.Join(home, "configured-downloads")
+	body := fmt.Sprintf(`
+download_dir = '%s'
 max_peers = 75
 
 [[indexer]]
@@ -91,7 +100,7 @@ type    = "torznab"
 url     = "https://example.org/api"
 api_key = "placeholder"
 enabled = true
-`
+`, downloadDir)
 	writeFile(t, result.Paths.ConfigFile, body)
 
 	loaded, err := Load("")
@@ -107,8 +116,8 @@ enabled = true
 		t.Fatalf("Problems = %v, want none for a valid config", loaded.Problems)
 	}
 
-	if loaded.Config.DownloadDir != "/tmp/tortui-downloads" {
-		t.Fatalf("DownloadDir = %q, want the configured value", loaded.Config.DownloadDir)
+	if loaded.Config.DownloadDir != downloadDir {
+		t.Fatalf("DownloadDir = %q, want the configured value %q", loaded.Config.DownloadDir, downloadDir)
 	}
 
 	if loaded.Config.MaxPeers != 75 {
@@ -212,10 +221,13 @@ func TestLoadUnknownKeyIsReported(t *testing.T) {
 		t.Fatalf("first-run Load() error = %v", err)
 	}
 
-	const body = `
-download_dir = "/tmp/tortui-downloads"
+	// Same sandbox reasoning as TestLoadValidConfig above: this must not be
+	// a fixed path outside t.TempDir(), since Load() really creates it.
+	downloadDir := filepath.Join(home, "configured-downloads")
+	body := fmt.Sprintf(`
+download_dir = '%s'
 totally_made_up_key = "surprise"
-`
+`, downloadDir)
 	writeFile(t, result.Paths.ConfigFile, body)
 
 	loaded, err := Load("")
