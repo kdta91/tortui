@@ -277,16 +277,60 @@ per-package thresholds name only `internal/indexer`, `internal/engine`, and `int
 
 ### T-004 · Secret hygiene
 ```
-status: in-progress
+status: done
 depends: T-001
 ```
-**Files:** `.gitleaks.toml`, `scripts/pre-commit`, `Makefile`
+**Files:** `.gitleaks.toml`, `scripts/pre-commit`, `Makefile`, `.github/workflows/ci.yml`,
+`CONTRIBUTING.md`
 
 **Acceptance**
 - Pre-commit hook blocks commits containing API-key-shaped strings, cookies, or
   `config.toml` itself.
 - `make check` includes the scan.
 - Documented in `CONTRIBUTING.md`.
+
+**Notes:** `gitleaks` v8.30.1 (MIT; already verified installed locally) is the scanner.
+`.gitleaks.toml` sets `[extend] useDefault = true` to inherit the built-in ruleset (AWS/GCP/
+GitHub/GitLab/Slack tokens, JWTs, generic API keys, private keys, ...) and adds three
+tortui-specific things: (1) a global `[allowlist]` scoping `internal/logging/mask_test.go`
+by exact path — that file (T-003) deliberately contains secret-**shaped** fixture strings
+(`sk-`, `ghp_`, AWS-style keys, JWTs) for the masking tests, none of them real; verified the
+same strings at a different path are still flagged, so the allowlist is scoped, not a global
+weakening (see DEC-032); (2) a custom `tortui-generic-cookie` rule, because the default
+ruleset has no generic Cookie/Set-Cookie pattern — only vendor-specific ones like
+`gitlab-session-cookie` — and "cookie" isn't in `generic-api-key`'s keyword list either (DEC-
+033); (3) a path-only `tortui-config-toml` rule (no content regex, same pattern gitleaks'
+own `pkcs12-file` rule uses) that flags any file named exactly `config.toml` regardless of
+content, since a "boring" one with no secrets yet would otherwise pass content scanning
+(DEC-031).
+
+`scripts/pre-commit` (`#!/usr/bin/env sh`, POSIX only, executable) checks staged paths for a
+literal `config.toml` by basename (`config.example.toml` unaffected) and separately runs
+`gitleaks git --staged -c .gitleaks.toml`; it exits non-zero and prints an install hint if the
+`gitleaks` binary is missing, rather than silently skipping the scan (DEC-030). Being tracked
+in git does **not** make it run: `.git/hooks/` is never version-controlled, so a fresh clone
+has no protection until `make hooks` (or `git config core.hooksPath scripts`) is run once —
+stated plainly in `CONTRIBUTING.md` rather than implied.
+
+`make check` gained a `scan` prerequisite (`make scan` = `gitleaks dir --no-banner --redact -c
+.gitleaks.toml .`, a working-tree scan with no git-history walk) which likewise fails loudly
+with an install hint if `gitleaks` is absent, rather than skipping. Since GitHub-hosted CI
+runners don't ship `gitleaks`, `.github/workflows/ci.yml` now installs it the same way it
+already installs `gofumpt`/`goimports`/`golangci-lint`: `go install
+github.com/zricethezav/gitleaks/v8@v8.30.1` on all three OSes — **not**
+`github.com/gitleaks/gitleaks/v8`, despite that being the GitHub org/repo name; the module's
+own `go.mod` still declares `module github.com/zricethezav/gitleaks/v8`, and `go install
+github.com/gitleaks/gitleaks/v8@v8.30.1` was tried first and fails with "version constraints
+conflict ... module declares its path as: github.com/zricethezav/gitleaks/v8" (DEC-029).
+
+Verified end to end: `make check` (fmt-check, lint, test, scan, vet) is green locally, and
+`go test -race ./... -count=1` is green. The hook was exercised against three cases — an
+AWS-access-key-shaped string, a generic session-cookie-shaped value, and a forced `git add -f
+config.toml` — first in an isolated scratch git repo, then again (staged, observed rejected,
+reset, never committed) against this repo's own working tree; all three were rejected with a
+clear message and non-zero exit, and `config.example.toml` was confirmed unaffected. No
+secret, real or fixture-shaped, was ever committed to this repository's history in the
+process.
 
 ---
 
@@ -1276,6 +1320,11 @@ when it reaches it and does not start backlog items on its own.
 | DEC-026 | 2026-09-12 | **Addendum 2026-09-12 (PR #3 QA remediation, same day).** A sensitive attribute or URL is redacted wholesale (`[REDACTED]`), not partially (e.g. keeping a URL's scheme and host) | An indexer URL routinely carries the API key or session cookie itself as a query parameter (`?apikey=...`), so a partial mask keyed only on the attribute's own name (`cookie`, `api_key`) could still leave the same secret sitting in the part of a `url`-keyed value that was left visible. Masking is applied both by attribute key (recursing through `slog.Group` nesting and `Logger.With`-bound attrs, and — as of the addendum — through struct fields and map keys reached via a `slog.Any` value) and, independently, by scanning message text and string values for URL-shaped or `key=value`-shaped credentials, `Bearer <token>` headers, and a finite list of known bare secret-token shapes. **Addendum, correcting an overclaim:** the original wording here and in the PR description — "masked in every log line" — was not fully true: QA reproduced two live leaks, a struct logged via `slog.Any` (invisible to the masking handler entirely, since it only inspected `KindGroup`/`KindString`) and a bare secret value with no URL/`key=value` shape under a non-sensitive key. Both are now handled (see T-003's notes and `mask.go`'s package doc), but a **residual gap remains and is not closable in general**: an opaque secret with none of the recognized shapes, logged under a key name that isn't itself flagged sensitive, cannot be reliably distinguished from ordinary opaque data. That gap is procedural to close (name credential-carrying keys/fields using a recognized substring), not technical | T-003 |
 | DEC-027 | 2026-09-12 | Rotation (`internal/logging/rotate.go`) is a from-scratch `io.WriteCloser`, not a third-party library such as `natefinch/lumberjack` | AGENT.md §3 requires a `DEC-` row with a license check for any new dependency, and the task explicitly invited weighing writing it directly against adding one. The rotate-and-prune-N-backups logic needed here is small (~140 lines) and self-contained, with nothing to audit in someone else's rotation/retry/error-handling behaviour, and it sits directly behind the masking handler with no intermediary. No third-party library's source was read as part of this choice, since none was added — this row is the "wrote it myself" side of that trade-off, not a claim about any specific library's behaviour | T-003 |
 | DEC-028 | 2026-09-12 | **Corrected 2026-09-12 (same day, on QA remediation of PR #3) — the original row below contained a false statement and is rewritten rather than superseded, matching how DEC-022 was corrected in place.** `internal/logging`'s config/env/flag precedence (`ResolveLevel`, `ResolveFile`) is exposed as pure string-in/string-out functions, and `cmd/tortui/main.go` **does** declare `--log-level` and `--log-file` on its existing `flag.FlagSet` (alongside `--version`/`--config`, both since T-001), feeding their values through `ResolveLevel`/`ResolveFile` (config-side argument hardcoded to `""` for now — see below) and then `ParseLevel` for validation. `internal/config.Config` still gains no `log_level`/`log_file` fields in this task — that half of the original row was accurate and is unchanged. New environment variables: `TORTUI_LOG_LEVEL`, `TORTUI_LOG_FILE`, checked between the config value and the flag value in that priority order (flag > env > config > built-in default) | **What was false:** the original justification claimed "T-002 established the precedent of implementing a package's full behaviour while deferring its wiring into `main` to the composition root," and used that precedent to justify not declaring the flags at all. PR #3 QA (kdta91, 2026-09-12) checked this directly: T-002 deferred *consuming* `internal/config.Load`'s result into `main` — but the `--config` flag it would have consumed already existed, declared in T-001, before T-002 started. T-002 never had to *declare* a new flag on `main`'s `flag.FlagSet`; T-003 did, and `cmd/tortui/main.go` already has a working `FlagSet` with two flags declared on it, so adding two more needed no composition root. That made the precedent claim inapplicable to what T-003 actually needed to do, not merely a stretched reading of it. The config-side input to `ResolveLevel`/`ResolveFile` is still `""` in `main.go` because `internal/config.Config` carries no `log_level`/`log_file` fields yet (unaffected by this correction) — once the composition root loads config.toml, its resolved values replace that placeholder | T-003 |
+| DEC-029 | 2026-09-12 | CI installs `gitleaks` v8.30.1 via `go install github.com/zricethezav/gitleaks/v8@v8.30.1` (not `github.com/gitleaks/gitleaks/v8`) on all three OSes; `make scan` (part of `make check`) runs `gitleaks dir` — a working-tree scan with no git-history walk — rather than a full-history `gitleaks git` scan | GitHub-hosted runners don't ship `gitleaks`, so it needs the same `go install` treatment already used for `gofumpt`/`goimports`/`golangci-lint`. `go install github.com/gitleaks/gitleaks/v8@v8.30.1` was tried first (that is the project's GitHub org/repo name) and fails with "version constraints conflict ... module declares its path as: github.com/zricethezav/gitleaks/v8" — confirmed directly by attempting the install locally before writing it into CI, not assumed. `dir` (not `git`) mode was chosen for `make check` because the question each CI run needs answered is "does the tree as checked out right now contain a secret," which is fast and constant-time per run; a full-history scan re-walks the same already-scanned commits on every push and answers a different question ("was a secret ever committed at any point"), which the pre-commit hook's `gitleaks git --staged` already prevents going forward | T-004 |
+| DEC-030 | 2026-09-12 | `scripts/pre-commit` and `make scan` both fail loudly (block the commit / fail the build) with an install hint when the `gitleaks` binary is missing, rather than skipping the scan silently | A hook or check that can pass by omission isn't trustworthy — a missing binary and "no secrets found" must never look the same. CI is guaranteed to have `gitleaks` (DEC-029), so this path only bites a local dev without it installed, and the message tells them exactly what to run | T-004 |
+| DEC-031 | 2026-09-12 | A committed `config.toml` (as opposed to `config.example.toml`) is blocked by two independent mechanisms: a filename check in `scripts/pre-commit` (`git diff --cached --name-only` matched against `(^\|/)config\.toml$`) and a path-only `tortui-config-toml` rule in `.gitleaks.toml` with no content regex, mirroring the pattern gitleaks' own built-in `pkcs12-file` rule uses for `.p12`/`.pfx` files | Neither mechanism alone covers both gates: the hook only runs if a contributor has activated it (`make hooks`) and isn't bypassed with `--no-verify`, while `make check`'s `gitleaks dir` scan only runs in CI/on demand and needs its own rule to catch a `config.toml` with no secret-shaped content yet (content-only scanning would miss a "boring" one). Verified live: a forced `git add -f config.toml` (bypassing `.gitignore`, which already blocks a plain `git add`) was still rejected by the hook | T-004 |
+| DEC-032 | 2026-09-12 | `internal/logging/mask_test.go`'s deliberate secret-shaped fixtures (T-003) are excluded from scanning via a `[allowlist]` `paths` entry in `.gitleaks.toml` naming that exact file, not via a global rule/entropy change | Confirmed by direct test that the same fixture strings (an AWS-shaped key, a GitHub-PAT-shaped token) committed at a *different* path are still flagged — proving the allowlist is scoped to the one file that needs it rather than quietly weakening detection everywhere | T-004 |
+| DEC-033 | 2026-09-12 | Added a custom `tortui-generic-cookie` rule (`(?i)\b(?:set-)?cookie\b\s*[:=]\s*\S{6,}`) to `.gitleaks.toml` | Read the full default ruleset (`config/gitleaks.toml` inside the `gitleaks` module) rather than assuming: it has no generic Cookie/Set-Cookie rule, only vendor-specific session-cookie formats such as `gitlab-session-cookie`, and "cookie" appears only as a `generic-api-key` allowlist *stopword* (a value gitleaks ignores if the entire match equals it), never as a keyword that would trigger that rule on an arbitrary cookie-header line. Without a dedicated rule, T-004's "blocks cookies" acceptance criterion had no default coverage at all | T-004 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.

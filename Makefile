@@ -12,7 +12,7 @@ DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: build run test lint fmt fmt-check check cover clean
+.PHONY: build run test lint fmt fmt-check check cover clean scan hooks
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/tortui
@@ -34,8 +34,20 @@ fmt-check:
 	@test -z "$$(gofumpt -l .)" || (echo "gofumpt: the following files are not formatted:"; gofumpt -l .; exit 1)
 	@test -z "$$(goimports -l .)" || (echo "goimports: the following files are not formatted:"; goimports -l .; exit 1)
 
-check: fmt-check lint test
+check: fmt-check lint test scan
 	go vet $(PKG)
+
+scan:
+	@command -v gitleaks >/dev/null 2>&1 || { \
+		echo "make scan: gitleaks is not installed."; \
+		echo "install it (e.g. 'brew install gitleaks', see https://github.com/gitleaks/gitleaks#installing) and re-run 'make check'."; \
+		exit 1; \
+	}
+	gitleaks dir --no-banner --redact -c .gitleaks.toml .
+
+hooks:
+	git config core.hooksPath scripts
+	@echo "git hooks now run from ./scripts (core.hooksPath) — scripts/pre-commit is active."
 
 cover:
 	go test -coverprofile=$(COVERPROFILE) $(PKG)
