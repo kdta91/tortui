@@ -344,7 +344,7 @@ single accent plus dim. Sortable on any column; default sort is seeders descendi
 ```
 ▸ ubuntu-24.04-desktop-amd64.iso
   ████████████████░░░░░░░░  62%   3.1/5.0 GB   ↓ 12.4 MB/s   ↑ 880 KB/s   18 peers   ETA 2m
-  1337x · added 14:02                                          [o]pen [f]older [p]ause [x] remove
+  archive-src · added 14:02                                          [o]pen [f]older [p]ause [x] remove
 ```
 
 ### Keymap (global unless noted)
