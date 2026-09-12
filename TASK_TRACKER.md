@@ -170,27 +170,74 @@ to audit, and lets the writer sit directly behind the masking handler with nothi
 steady state: `tortui.log`, `.log.1`, `.log.2`, `.log.3`) — see DEC-025.
 
 Masking (`mask.go`) wraps *any* `slog.Handler` — not just the one this package builds — via
-`newMaskingHandler`, redacting: (1) any attribute whose key contains, case- and
-separator-insensitively, `url`/`apikey`/`cookie`/`token`/`secret`/`password`/`passkey`/
-`authorization`, recursing through `slog.Group` nesting and through attributes bound via
-`Logger.With`; and (2) URL-shaped substrings and `key=value`/`key: value` credential patterns
-found in free text — the log message itself, and any string-valued attribute whose key didn't
-match (1). Whole-value redaction was chosen over partial redaction (e.g. keeping a URL's
+`newMaskingHandler`, redacting: (1) any attribute, struct field, or map key whose name contains,
+case- and separator-insensitively, `url`/`apikey`/`cookie`/`token`/`secret`/`password`/`passkey`/
+`authorization`, recursing through `slog.Group` nesting, through attributes bound via
+`Logger.With`, and — since the PR #3 QA remediation below — through everything reachable inside a
+`slog.Any`-logged struct, map, slice, or pointer; and (2) URL-shaped substrings (including
+embedded basic-auth credentials), `key=value`/`key: value` credential patterns, `Bearer <token>`
+headers, and a finite list of well-known bare secret-token shapes (Stripe-style `sk-`/`sk_live_`
+keys, GitHub `ghp_`/`github_pat_` tokens, AWS `AKIA...` keys, GitLab `glpat-` tokens, Slack
+`xox?-` tokens, JWTs), found in free text — the log message itself, and any string-valued
+attribute or nested string leaf regardless of its key. A `slog.LogValuer` is resolved before any
+of this runs. Whole-value redaction was chosen over partial redaction (e.g. keeping a URL's
 scheme+host) because an indexer URL commonly carries the API key or session cookie itself as a
 query parameter (`?apikey=...`), so a partial mask keyed only on the attribute name could leave
 the exact secret sitting in the part left visible — see DEC-026.
+
+**PR #3 QA remediation (this task, same day).** QA failed the original PR on two points, both now
+fixed:
+
+1. `maskAttr` previously handled only `KindGroup` and `KindString`; a struct, map, slice, pointer,
+   error, or `fmt.Stringer` logged via `slog.Any` arrives as `KindAny` and passed through
+   completely untouched — confirmed by QA with a struct carrying a `URL` field with an embedded
+   `?apikey=...`. `maskAny` (new, reflection-based, depth-capped at 8) now walks all of these:
+   struct fields and map keys are checked with the same `isSensitiveKey` used for top-level
+   attributes, slice/array elements and pointer targets are recursed into, and `error`/`Stringer`
+   values are reduced to their formatted text and text-scanned. This is exactly the shape T-003's
+   own acceptance criteria anticipate: the frozen `indexer.Result` type (AGENT.md §5) carries
+   `SourceURL` and `Extra map[string]string`, and adapters in later tasks will log `Result` values
+   — almost certainly via `slog.Any`, since it isn't a plain string.
+2. A secret passed as a **bare string value under a non-sensitive key**
+   (`slog.String("value", "sk-live-...")`) survived, because the only free-text scanning that
+   existed was URL-shaped and `key=value`-shaped pattern matching, and a bare token matches
+   neither. `knownSecretPrefixPattern` now catches a finite, deliberately narrow list of
+   publicly-documented secret shapes (see above) even with no `key=`/URL wrapping.
+
+**Residual gap — stated plainly, not glossed over.** Pattern- and key-name-based masking
+*cannot*, in general, catch an opaque secret with none of the recognizable shapes above (no URL,
+no `key=value`, no known vendor prefix, no JWT structure) logged as a bare value under a key name
+that doesn't itself look sensitive. Since every tortui indexer is user-supplied (AGENT.md §2), a
+given indexer's `api_key`/`cookie` value can be any opaque string its operator issued, with no
+fixed shape to pattern-match — there is no reliable way to tell such a string apart from an
+ordinary opaque identifier (an info-hash, a random ID) by inspecting the value alone, short of an
+unacceptable false-positive rate. **The real defense for this case is procedural, not technical:**
+any code that logs a credential-carrying value must do so under a key name (or struct
+field/map key, now that those are walked too) containing one of `isSensitiveKey`'s substrings, so
+the one guarantee that doesn't depend on guessing a secret's shape actually applies. This is
+called out in `mask.go`'s package doc so it isn't lost, and needs to be treated as a real
+constraint by T-020 onward, which will start logging `indexer.Result` and HTTP request/response
+detail carrying exactly this kind of value. The PR body's and this tracker's earlier phrasing —
+"masked in every log line" — overstated this; see DEC-026's cross-reference and the corrected
+DEC-028 below for the acknowledgement.
 
 `ResolveLevel(configLevel, flagLevel string) string` and `ResolveFile(configFile, flagFile
 string) string` implement the config/env/flag precedence the acceptance list asks for — flag,
 then the `TORTUI_LOG_LEVEL` / `TORTUI_LOG_FILE` environment variables, then whatever the caller
 already resolved from config.toml, then (for level only) a built-in default of `"info"` applied
-by `ParseLevel`/`New` when every tier is empty. This package does not read `config.toml` or a
-`flag.FlagSet` itself, and `cmd/tortui/main.go` gains no new flags in this task: T-002 established
-the precedent of implementing a package fully while deferring its wiring into `main` to the
-composition root (`internal/app`) that doesn't exist yet, and this task follows the same
-scoping — see DEC-028. `internal/config.Config` is unchanged; no `config.example.toml` or
-`README.md` update was needed since no user-facing surface (a flag, a TOML key) actually exists
-yet to document.
+by `ParseLevel`/`New` when every tier is empty. **PR #3 QA remediation:** `cmd/tortui/main.go` now
+declares `--log-level` and `--log-file` on its existing `flag.FlagSet` (alongside `--version` and
+`--config`, both since T-001) and feeds their values through `ResolveLevel`/`ResolveFile` — with
+the config-side argument hardcoded to `""` for now, since `internal/config.Config` still has no
+`log_level`/`log_file` keys — then through `ParseLevel` for validation, exiting 1 on an
+unparseable level. `internal/logging` itself still does not read `config.toml` or a
+`flag.FlagSet` directly; only `cmd/tortui/main.go` changed, adding ~15 lines within AGENT.md §4's
+~80-line budget for `cmd/`. DEC-028 originally justified deferring this to the (nonexistent)
+`internal/app` composition root by analogy to T-002; that analogy was inaccurate (T-002 deferred
+*consuming* an already-declared `--config` flag, never having to *declare* a new one) and DEC-028
+has been corrected in place — see below. `internal/config.Config` is still unchanged; no
+`config.example.toml` or `README.md` update is needed yet since neither a TOML key nor a
+documented default exists to describe.
 
 `TestNoStdoutStderrLeakAcrossSimulatedRun` (`logging_test.go`) is the direct test for "nothing is
 ever written to stdout or stderr": it repoints `os.Stdout`/`os.Stderr` at pipes, logs at every
@@ -199,17 +246,23 @@ only reaches the file sink because of the `slog.SetDefault` call inside `New`), 
 attr, a `slog.Group`-nested attr, an attr bound via `.With`, and a secret concatenated straight
 into a message string — then asserts both captured pipes are exactly empty while confirming the
 log *file* did receive the records with every secret redacted (so the empty streams aren't simply
-because nothing was logged). `mask_test.go` separately drives the masking handler directly and
-parses its JSON output to assert exact key-by-key redaction, including two levels of `slog.Group`
-nesting. `rotate_test.go` exercises rotation at a scaled-down threshold (real 10 MB/3-backup
-behaviour would make the test slow) verifying the oldest backup is pruned, the file is reopened at
-zero size, an existing on-disk file's size is honoured across a restart, and `Close` is idempotent
-while a write after `Close` fails cleanly rather than panicking.
+because nothing was logged). `mask_test.go` drives the masking handler directly and parses its
+JSON output to assert exact key-by-key redaction, including two levels of `slog.Group` nesting,
+plus (added in the QA remediation) a struct/map/slice/pointer logged via `slog.Any`, an `error`
+and a custom `fmt.Stringer`, a `slog.LogValuer`, each bare known-secret-prefix shape, a
+`Bearer <token>` header, and a basic-auth URL under a non-sensitive key — alongside a regression
+test proving an ordinary secret-free struct survives `slog.Any` unchanged. `rotate_test.go`
+exercises rotation at a scaled-down threshold (real 10 MB/3-backup behaviour would make the test
+slow) verifying the oldest backup is pruned, the file is reopened at zero size, an existing
+on-disk file's size is honoured across a restart, and `Close` is idempotent while a write after
+`Close` fails cleanly rather than panicking. `cmd/tortui/main_test.go` gained cases for
+`--log-level`/`--log-file` acceptance, flag-over-env precedence, an invalid level's exit 1, and
+the empty-everything default.
 
-`go test ./internal/logging/...` and `go test -race ./...` are green; `internal/logging` measures
-87.6% local statement coverage (not gated by AGENT.md §9, whose per-package thresholds name only
-`internal/indexer`, `internal/engine`, and `internal/tui`). `make check` is green (`golangci-lint
-run` reports 0 issues).
+`go test ./internal/logging/...`, `go test ./...`, and `go test -race ./... -count=1` are green;
+`internal/logging` now measures 89.4% local statement coverage (not gated by AGENT.md §9, whose
+per-package thresholds name only `internal/indexer`, `internal/engine`, and `internal/tui`).
+`make check` is green (`golangci-lint run` reports 0 issues).
 
 **Acceptance**
 - `slog` handler writing to the per-OS state dir (`~/.local/state/tortui/` on Linux,
@@ -1220,9 +1273,9 @@ when it reaches it and does not start backlog items on its own.
 
 | DEC-024 | 2026-09-12 | `internal/logging` (T-003) writes JSON log lines and calls `slog.SetDefault` on the logger it builds | JSON was chosen only because it's trivial to parse in tests and matches how the masking handler already walks nested `slog.Group` values; no acceptance criterion names a format. Calling `slog.SetDefault` is what makes "nothing is ever written to stdout or stderr" hold for code that uses the package-level `slog.X` functions rather than a logger obtained from `New` directly — otherwise it would silently fall back to slog's built-in stderr-writing handler | T-003 |
 | DEC-025 | 2026-09-12 | T-003's "rotation at 10 MB with 3 files retained" is implemented as 3 rotated backups plus the still-active file (4 files on disk at steady state: `tortui.log`, `.log.1`, `.log.2`, `.log.3`) | The phrase reads two ways — 3 files total, or 3 backups on top of the active one. Read it the second way, matching the common `MaxSize`/`MaxBackups`-style rotation convention this phrasing echoes; the reverse reading would mean only 2 backups are ever kept, which is what "3 files retained" would describe less naturally | T-003 |
-| DEC-026 | 2026-09-12 | A sensitive attribute or URL is redacted wholesale (`[REDACTED]`), not partially (e.g. keeping a URL's scheme and host) | An indexer URL routinely carries the API key or session cookie itself as a query parameter (`?apikey=...`), so a partial mask keyed only on the attribute's own name (`cookie`, `api_key`) could still leave the same secret sitting in the part of a `url`-keyed value that was left visible. Masking is applied both by attribute key (recursing through `slog.Group` nesting and `Logger.With`-bound attrs) and, independently, by scanning message text and non-sensitive-keyed string values for URL-shaped or `key=value`-shaped credentials, so a secret concatenated into free text is still caught | T-003 |
+| DEC-026 | 2026-09-12 | **Addendum 2026-09-12 (PR #3 QA remediation, same day).** A sensitive attribute or URL is redacted wholesale (`[REDACTED]`), not partially (e.g. keeping a URL's scheme and host) | An indexer URL routinely carries the API key or session cookie itself as a query parameter (`?apikey=...`), so a partial mask keyed only on the attribute's own name (`cookie`, `api_key`) could still leave the same secret sitting in the part of a `url`-keyed value that was left visible. Masking is applied both by attribute key (recursing through `slog.Group` nesting and `Logger.With`-bound attrs, and — as of the addendum — through struct fields and map keys reached via a `slog.Any` value) and, independently, by scanning message text and string values for URL-shaped or `key=value`-shaped credentials, `Bearer <token>` headers, and a finite list of known bare secret-token shapes. **Addendum, correcting an overclaim:** the original wording here and in the PR description — "masked in every log line" — was not fully true: QA reproduced two live leaks, a struct logged via `slog.Any` (invisible to the masking handler entirely, since it only inspected `KindGroup`/`KindString`) and a bare secret value with no URL/`key=value` shape under a non-sensitive key. Both are now handled (see T-003's notes and `mask.go`'s package doc), but a **residual gap remains and is not closable in general**: an opaque secret with none of the recognized shapes, logged under a key name that isn't itself flagged sensitive, cannot be reliably distinguished from ordinary opaque data. That gap is procedural to close (name credential-carrying keys/fields using a recognized substring), not technical | T-003 |
 | DEC-027 | 2026-09-12 | Rotation (`internal/logging/rotate.go`) is a from-scratch `io.WriteCloser`, not a third-party library such as `natefinch/lumberjack` | AGENT.md §3 requires a `DEC-` row with a license check for any new dependency, and the task explicitly invited weighing writing it directly against adding one. The rotate-and-prune-N-backups logic needed here is small (~140 lines) and self-contained, with nothing to audit in someone else's rotation/retry/error-handling behaviour, and it sits directly behind the masking handler with no intermediary. No third-party library's source was read as part of this choice, since none was added — this row is the "wrote it myself" side of that trade-off, not a claim about any specific library's behaviour | T-003 |
-| DEC-028 | 2026-09-12 | `internal/logging`'s config/env/flag precedence (`ResolveLevel`, `ResolveFile`) is exposed as pure string-in/string-out functions; `cmd/tortui/main.go` gains no `--log-level`/`--log-file` flags and `internal/config.Config` gains no `log_level`/`log_file` fields in this task. New environment variables: `TORTUI_LOG_LEVEL`, `TORTUI_LOG_FILE`, checked between the config value and the flag value in that priority order (flag > env > config > built-in default) | T-002 established the precedent of implementing a package's full behaviour while deferring its wiring into `main` to the composition root (`internal/app`), which doesn't exist yet — see T-002's note on `cmd/tortui/main.go` still not consuming `internal/config.Load`. T-003's own `Files:` line names only `internal/logging/` (originally `internal/config/log.go` as the alternative), not `cmd/tortui/main.go` or `internal/config`, so this task follows the same boundary rather than building ahead into a later phase's composition work | T-003 |
+| DEC-028 | 2026-09-12 | **Corrected 2026-09-12 (same day, on QA remediation of PR #3) — the original row below contained a false statement and is rewritten rather than superseded, matching how DEC-022 was corrected in place.** `internal/logging`'s config/env/flag precedence (`ResolveLevel`, `ResolveFile`) is exposed as pure string-in/string-out functions, and `cmd/tortui/main.go` **does** declare `--log-level` and `--log-file` on its existing `flag.FlagSet` (alongside `--version`/`--config`, both since T-001), feeding their values through `ResolveLevel`/`ResolveFile` (config-side argument hardcoded to `""` for now — see below) and then `ParseLevel` for validation. `internal/config.Config` still gains no `log_level`/`log_file` fields in this task — that half of the original row was accurate and is unchanged. New environment variables: `TORTUI_LOG_LEVEL`, `TORTUI_LOG_FILE`, checked between the config value and the flag value in that priority order (flag > env > config > built-in default) | **What was false:** the original justification claimed "T-002 established the precedent of implementing a package's full behaviour while deferring its wiring into `main` to the composition root," and used that precedent to justify not declaring the flags at all. PR #3 QA (kdta91, 2026-09-12) checked this directly: T-002 deferred *consuming* `internal/config.Load`'s result into `main` — but the `--config` flag it would have consumed already existed, declared in T-001, before T-002 started. T-002 never had to *declare* a new flag on `main`'s `flag.FlagSet`; T-003 did, and `cmd/tortui/main.go` already has a working `FlagSet` with two flags declared on it, so adding two more needed no composition root. That made the precedent claim inapplicable to what T-003 actually needed to do, not merely a stretched reading of it. The config-side input to `ResolveLevel`/`ResolveFile` is still `""` in `main.go` because `internal/config.Config` carries no `log_level`/`log_file` fields yet (unaffected by this correction) — once the composition root loads config.toml, its resolved values replace that placeholder | T-003 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
