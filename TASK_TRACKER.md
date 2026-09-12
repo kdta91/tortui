@@ -19,9 +19,25 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ### T-001 · Repository bootstrap
 ```
-status: in-progress
+status: done
 depends: —
 ```
+**Notes:** `go.mod` declares `github.com/kdta91/tortui`, `go 1.23`. `cmd/tortui/main.go` is
+wiring-only (54 lines): parses `--version` and accepts (but does not yet consume) `--config`;
+otherwise prints a stub line, since the composition root (`internal/app`) doesn't exist until
+later phases. `main_test.go` covers `--version`, the default stub path, and an invalid-flag exit
+code. `.golangci.yml` uses the v2 schema (`version: "2"`): `linters.enable` adds `revive`,
+`bodyclose`, `contextcheck`, `errorlint` on top of the v2 defaults (`errcheck`, `govet`,
+`staticcheck`, `ineffassign`, `unused`); `gofumpt`/`goimports` live under `formatters.enable`
+since v2 moved formatters out of the linters list. `make check` = fmt-check + lint + test + vet,
+all green locally. `make cover` computes total coverage and fails under a threshold (currently 0,
+since the per-package thresholds in AGENT.md §9 apply to `internal/indexer`, `internal/engine`,
+and `internal/tui`, none of which exist yet — raise the threshold as those packages land).
+CI (`.github/workflows/ci.yml`) runs `make check` on `ubuntu-latest`, `macos-latest`, and
+`windows-latest`; golangci-lint is installed via the official `install.sh` pinned to `v2.13.2`
+rather than a marketplace action, and GNU Make is installed via `choco` on the Windows runner
+since it is not preinstalled there (see DEC-019). Branch protection on `main` requires the CI
+`check` job but does **not** require a pull request before merging, per AGENT.md §10.
 **Files:** `go.mod`, `Makefile`, `.gitignore`, `.golangci.yml`, `.github/workflows/ci.yml`, `cmd/tortui/main.go`
 
 **Acceptance**
@@ -1074,6 +1090,7 @@ when it reaches it and does not start backlog items on its own.
 | DEC-016 | — | Latest is an explicit `Query.Mode`, not an empty-string search | Inferring browse from an empty keyword hides the capability difference between sources and fails silently on ones that can't do it | T-010, T-012 |
 | DEC-017 | — | Destination is per-torrent, chosen before the add completes | Asking after the fact means moving data or re-downloading; the picker is cheap and the alternative is not | T-074 |
 | DEC-018 | — | Path containment checks resolve against a set of known destination roots | Per-torrent destinations make "the download dir" the wrong boundary; a single-dir check would either block legitimate paths or be quietly widened until it checks nothing | T-032, T-073, T-074 |
+| DEC-019 | 2026-09-12 | CI installs golangci-lint via its official `install.sh` (pinned `v2.13.2`) instead of a marketplace action, and installs GNU Make via `choco` on the `windows-latest` runner | `windows-latest` does not ship GNU Make by default (confirmed against the runner-images software inventory); `install.sh` avoids depending on a third-party action's golangci-lint-v2 support matrix | T-001 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
