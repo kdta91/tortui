@@ -530,7 +530,7 @@ it, which is exactly what broke. See DEC-039 for the root cause and the fix.
 
 ### T-007 · Contribution policy and repo hygiene
 ```
-status: todo
+status: in-progress
 depends: T-006
 ```
 **Files:** `CONTRIBUTING.md`, `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md`, `CODE_OF_CONDUCT.md`
