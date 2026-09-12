@@ -1632,6 +1632,14 @@ when it reaches it and does not start backlog items on its own.
   skips binary content by design in both `gitleaks git --staged` (the hook) and `gitleaks dir`
   (`make scan` in CI), so a secret embedded in a binary-ish file is caught by neither the hook nor
   the CI backstop.
+- `T-913` Close the backtick raw-string bypass in `scripts/check-indexer-hostnames.sh`. QA on T-007
+  (PR #7) found that a Go raw string literal — a backtick-delimited value with no `http(s)://`
+  scheme, in a gated path — evades the check entirely, because the value-shape regex strips only an
+  optional `"` and never a backtick. This is outside the gaps (a)/(b)/(c) that T-007 documented.
+- `T-914` `docs/indexer-hostname-allowlist.md`'s prose enumeration of auto-allowed private IPv4
+  ranges omits `0.0.0.0/8`, which `is_private_ipv4()` in the script does allow and which DEC-040 and
+  the script header both list. Cosmetic doc inconsistency found by QA on T-007.
+
 
 ---
 
