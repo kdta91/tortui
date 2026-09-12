@@ -336,10 +336,129 @@ process.
 
 ### T-005 · Cross-platform tooling baseline
 ```
-status: in-progress
+status: done
 depends: T-001
 ```
-**Files:** `Makefile`, `scripts/`, `.github/workflows/ci.yml`
+**Files:** `Makefile`, `scripts/`, `.github/workflows/ci.yml`, `cmd/tortui/main_test.go`,
+`internal/config/load_test.go`
+
+**Notes:** `Makefile` already had `SHELL := /bin/sh` and `.SHELLFLAGS := -eu -c` from T-001; audited
+every line for GNU Make 3.82+/4.0+ syntax (`.ONESHELL`, `$(file ...)`, the `!=` assignment
+operator, `&:` grouped targets) and found none — confirmed by grepping the whole file, not just by
+inspection. Stronger than that: this development machine's `/usr/bin/make` **is itself GNU Make
+3.81** (`make --version` → `GNU Make 3.81`), so every `make check` and `make build-all` run quoted
+below already executed under the exact old-make constraint this task cares about, not merely
+"reviewed and believed compatible."
+
+**Correction (QA remediation of PR #5, same day): `.SHELLFLAGS` itself is a GNU Make 3.82+
+feature and was inert the whole time on this development machine's make 3.81 — a false impression
+the paragraph above (and the PR description) left standing by not saying so.** QA verified this
+directly with a throwaway Makefile: on make 3.81, a non-final recipe line that ran `false` did not
+stop the recipe, and a reference to an unset shell variable did not error — proving `-e` and `-u`
+were both silently ignored, not merely unexercised. This was re-confirmed independently during
+remediation with the same test against this machine's actual `/usr/bin/make`. Nothing in `make
+check` or `make build-all` was actually broken by this, because no recipe happened to depend on
+mid-recipe fail-fast or unset-variable behaviour — but the tracker and PR calling every green run
+"already executed under the exact old-make constraint this task cares about" implied `.SHELLFLAGS`
+was one of the things that constraint had exercised, which was never true. Fixed rather than just
+documented: every recipe now starts its shell invocation with a literal `set -eu;`, a plain POSIX
+shell builtin that does not depend on which flags make chose when invoking `$(SHELL)` — verified
+with the same throwaway-Makefile method to give real `-e`/`-u` behaviour under make 3.81. `.SHELLFLAGS
+:= -eu -c` is kept as-is (AGENT.md §14 asks for it, and it is not wrong to have — it just isn't
+sufficient on its own on this project's floor make version); see DEC-037.
+
+Added `make lint` → `shellcheck -s sh $(wildcard scripts/*)` (currently just `scripts/pre-commit`,
+which is both the only script and the only git hook in the tree) after `golangci-lint run`, gated
+the same way `make scan` gates on a missing `gitleaks` (T-004/DEC-029/DEC-030): fails loudly with
+an install hint if `shellcheck` isn't on `PATH`, rather than silently skipping — see DEC-034.
+`scripts/pre-commit` already passes `shellcheck -s sh` with zero findings; no changes to the
+script itself were needed for this task, only the wiring.
+
+Added `make build-all`: a `for` loop (POSIX `sh`, using `$${var%/*}`/`$${var#*/}` parameter
+expansion, no bashisms) over the six targets from AGENT.md §14's support matrix
+(`darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64`), building each
+with `CGO_ENABLED=0 GOOS=... GOARCH=... go build` into `dist/tortui-<os>-<arch>[.exe]` and exiting
+non-zero the moment any one combination fails (`if ! go build ...; then exit 1; fi` inside the
+loop) — see DEC-035 for why `CGO_ENABLED=0` is forced. Ran it locally; all six produced valid
+binaries, confirmed with `file(1)` — see the verbatim output below. `dist/` was already gitignored
+(T-001).
+
+`.github/workflows/ci.yml`: added a `build-all` job (runs on every push/PR, `ubuntu-latest` only —
+see DEC-036) running `make build-all`. Added `shellcheck` installation to the existing `check`
+job's matrix, one step per OS (`apt-get install` on Linux, `brew install` on macOS,
+`choco install shellcheck` on Windows) rather than assuming any runner image ships it already —
+the same reasoning DEC-029 already applied to `gitleaks`. The pre-existing three-OS `make check`
+matrix job is otherwise unchanged; nothing was duplicated or removed from it.
+
+**Case-sensitivity and path-joining audit (existing tests, all four packages plus `cmd/tortui`):**
+searched every `*_test.go` under `internal/config`, `internal/logging`, `internal/platform`, and
+`cmd/tortui` for (a) manual `"/"`-concatenated paths in place of `filepath.Join` — zero hits, every
+constructed path in the tree already goes through `filepath.Join` (`internal/config/load_test.go`,
+`internal/logging/rotate_test.go`, `internal/logging/logging_test.go`); (b) any test relying on
+two filenames differing only by case being treated as distinct — zero hits, no test in the tree
+uses a mixed-case filename at all, checked by pattern-matching every quoted filename literal
+against one containing an uppercase letter. One borderline case was found and fixed rather than
+left ambiguous: `cmd/tortui/main_test.go`'s `TestRunLogFileFlag` passed `--log-file=/tmp/foo.log`
+as a flag value — but `run()` never opens, joins, or otherwise touches that value as a filesystem
+path (it only threads it through `logging.ResolveFile` and echoes it back as a string), so it
+never exercised path-separator semantics at all. Still, a hardcoded Unix-style absolute path
+sitting in a test is exactly the shape this criterion is checking for, so it was replaced with the
+bare filename `custom.log` to remove any doubt, and the test's own comment now says why.
+
+**Correction (QA remediation of PR #5, same day) — the closing sentence above, "No other
+occurrence of a slash-containing literal exists in any test in the tree," was false, and the audit
+that produced it was not exhaustive enough to catch a live bug.** QA found, and this remediation
+independently reproduced, that `internal/config/load_test.go` hardcoded
+`download_dir = "/tmp/tortui-downloads"` as TOML body content in two tests —
+`TestLoadValidConfig` (then line 84) and `TestLoadUnknownKeyIsReported` (then line 216) — and that
+literal is not inert: `Load()` (`internal/config/load.go`) calls a real `os.MkdirAll(cfg.DownloadDir,
+0o755)` on whatever `download_dir` decodes to, unconditionally, regardless of whether that path is
+inside the test's own `t.TempDir()` sandbox. Both tests fed it a path *outside* the sandbox, so
+every run of `go test ./internal/config/...` actually created `/tmp/tortui-downloads` on the real
+filesystem and left it there — confirmed live: the directory was still present on disk
+(`ls -la /tmp/tortui-downloads`, owned by the account that ran a prior `go test`) before this
+remediation touched anything. The original audit's category (a) check — "manual `/`-concatenated
+paths in place of `filepath.Join`" — was the wrong test for this bug: the literal was never
+concatenated with anything, it was a whole hardcoded absolute path handed straight to a real
+`os.MkdirAll` from inside a TOML fixture string, a shape the audit's pattern search never
+targeted. **Fixed:** both tests now build `download_dir` from `filepath.Join(home, ...)`, where
+`home` is that test's own `t.TempDir()`, and embed it in the TOML body as a single-quoted TOML
+literal string (`download_dir = '<path>'`) rather than a Go double-quoted one, so a Windows path's
+backslashes need no TOML escaping. Re-audited the remaining two hits of the same shape found by a
+fresh, broader grep (`grep -rn '"/tmp' --include='*_test.go'`, plus a scan of every quoted
+`/`-containing literal in every `*_test.go` in the tree): `internal/config/validate_test.go`'s
+`Default("/tmp/downloads")` and `c.DownloadDir = "/custom/downloads"` are not the same defect —
+both flow only into `Config.Validate()`, a pure function with no filesystem access, never into
+`Load()`, so neither ever touches disk. The `internal/platform/paths_{darwin,linux}_test.go` fake
+`HOME` values (`/Users/alice`, `/home/alice`, etc.) were also re-checked against `paths_darwin.go`
+/ `paths_linux.go`: `ConfigDir`/`StateDir`/`DownloadDir` there are pure `filepath.Join` string
+computations with no `os.MkdirAll` or other I/O, so no `/Users/alice` directory is ever created.
+No other test in the tree calls a function that both accepts a hardcoded path literal and performs
+real filesystem I/O with it outside a `t.TempDir()`. That is now a personally-verified negative,
+not an assumed one — the entire `*_test.go` list in this repo is nine files, all read in full for
+this remediation.
+
+**Verification.** `make check`, `go test -race ./... -count=1`, and `make build-all` are all green
+— verbatim output is in the PR body. What *was* done at review time: audited every Makefile line
+for the documented 3.82+/4.0+ feature list, wrote every recipe in POSIX `sh` with no bash-specific
+parameter expansion beyond what `dash`/`ash` also support, and pushed CI's new `windows-latest` job
+(`choco install make`, the pre-existing mechanism from T-001/DEC-019) so the three-OS `check`
+matrix — including `shellcheck`'s new Windows install step — would get real coverage once it ran.
+At review time that job was still `IN_PROGRESS`, so the Windows/Git Bash criterion could not yet
+be counted as met by it. `make build-all` itself runs only on `ubuntu-latest` in CI, by design
+(DEC-036), so it never independently confirms Windows/Git Bash behaviour either way.
+
+**Update (QA remediation of PR #5, same day): the `windows-latest` `make check` job has since
+completed and passed, discharging this criterion with real evidence.** GitHub Actions'
+`windows-latest` runners resolve a workflow step's `shell: bash` to Git for Windows' bundled bash —
+genuinely Git Bash, not a substitute — so this job is valid evidence for "targets run unmodified on
+Windows under Git Bash," confirmed by reading the completed run rather than assumed: checked
+`gh api repos/kdta91/tortui/commits/7e388c295dc915820f50cc43444a933f3cfbcfaa/check-runs` once
+(no polling), which returned run id `34701713965` (triggered by the `pull_request` event on
+`task/T-005-xplat-tooling` at that exact commit) with job `make check (windows-latest)` ->
+`status: completed`, `conclusion: success`, alongside the `ubuntu-latest`/`macos-latest` `check`
+jobs and the `build-all` job, all also `success`. This remediation's own new commit will trigger
+its own fresh CI run, which was not polled or waited on as part of this task.
 
 **Acceptance**
 - `Makefile` sets `SHELL := /bin/sh` and `.SHELLFLAGS := -eu -c`; uses no GNU make 3.82+ or
@@ -1334,6 +1453,11 @@ when it reaches it and does not start backlog items on its own.
 | DEC-031 | 2026-09-12 | A committed `config.toml` (as opposed to `config.example.toml`) is blocked by two independent mechanisms: a filename check in `scripts/pre-commit` (`git diff --cached --name-only` matched against `(^\|/)config\.toml$`) and a path-only `tortui-config-toml` rule in `.gitleaks.toml` with no content regex, mirroring the pattern gitleaks' own built-in `pkcs12-file` rule uses for `.p12`/`.pfx` files | Neither mechanism alone covers both gates: the hook only runs if a contributor has activated it (`make hooks`) and isn't bypassed with `--no-verify`, while `make check`'s `gitleaks dir` scan only runs in CI/on demand and needs its own rule to catch a `config.toml` with no secret-shaped content yet (content-only scanning would miss a "boring" one). Verified live: a forced `git add -f config.toml` (bypassing `.gitignore`, which already blocks a plain `git add`) was still rejected by the hook | T-004 |
 | DEC-032 | 2026-09-12 | `internal/logging/mask_test.go`'s deliberate secret-shaped fixtures (T-003) are excluded from scanning via a `[allowlist]` `paths` entry in `.gitleaks.toml` naming that exact file, not via a global rule/entropy change | Confirmed by direct test that the same fixture strings (an AWS-shaped key, a GitHub-PAT-shaped token) committed at a *different* path are still flagged — proving the allowlist is scoped to the one file that needs it rather than quietly weakening detection everywhere | T-004 |
 | DEC-033 | 2026-09-12 | Added a custom `tortui-generic-cookie` rule (`(?i)\b(?:set-)?cookie\b\s*[:=]\s*\S{6,}`) to `.gitleaks.toml` | Read the full default ruleset (`config/gitleaks.toml` inside the `gitleaks` module) rather than assuming: it has no generic Cookie/Set-Cookie rule, only vendor-specific session-cookie formats such as `gitlab-session-cookie`, and "cookie" appears only as a `generic-api-key` allowlist *stopword* (a value gitleaks ignores if the entire match equals it), never as a keyword that would trigger that rule on an arbitrary cookie-header line. Without a dedicated rule, T-004's "blocks cookies" acceptance criterion had no default coverage at all | T-004 |
+
+| DEC-034 | 2026-09-12 | `shellcheck -s sh $(wildcard scripts/*)` is wired into `make lint` and fails loudly (build error + install hint) when `shellcheck` is missing, rather than skipping the check silently; CI installs it explicitly on all three OSes (`apt-get` / `brew` / `choco`) instead of assuming a runner image ships it | Mirrors T-004's `gitleaks` precedent (DEC-029/DEC-030) exactly: a check that can pass by omission ("shellcheck wasn't run" vs. "shellcheck ran and found nothing") isn't trustworthy, and this project has no verified claim about what any GitHub-hosted runner image ships by default, so it is installed rather than assumed | T-005 |
+| DEC-035 | 2026-09-12 | `make build-all` sets `CGO_ENABLED=0` for all six cross-compiles | None of this project's current dependencies (`BurntSushi/toml`, `adrg/xdg`) need cgo, and cross-compiling a cgo-enabled build for a non-host GOOS/GOARCH (e.g. `windows/arm64` from a `darwin/arm64` host) needs a matching C cross-toolchain that isn't installed anywhere in this pipeline. Forcing pure-Go compilation sidesteps that entirely; if a future dependency genuinely needs cgo, that dependency choice needs its own `DEC-` row per AGENT.md §3 and would have to address this directly | T-005 |
+| DEC-036 | 2026-09-12 | The new CI `build-all` job runs on `ubuntu-latest` only, not the three-OS matrix `check` already uses | `go build` with `GOOS`/`GOARCH` set produces the same output regardless of which OS or arch the compiler itself runs on — cross-compilation is the entire point of `make build-all` — so running it three times would triple the job's cost for identical output, not additional coverage. The three-OS matrix stays reserved for `make check`, which runs native tests that really do depend on the host OS | T-005 |
+| DEC-037 | 2026-09-12 | **QA remediation of PR #5, same day.** Every `Makefile` recipe line now starts its shell invocation with a literal `set -eu;`, in addition to (not instead of) keeping `.SHELLFLAGS := -eu -c` | QA found, and this remediation independently reproduced with a throwaway Makefile against this machine's actual `/usr/bin/make`, that `.SHELLFLAGS` is itself a GNU Make 3.82+ feature: on this project's floor version, make 3.81, it is not recognized at all, so `-e`/`-u` were silently never in effect — a non-final `false` in a recipe didn't stop the recipe, and referencing an unset shell variable didn't error. AGENT.md §14 asks for both `.SHELLFLAGS := -eu -c` *and* zero 3.82+/4.0+ features, which is an internal tension once `.SHELLFLAGS` itself turns out to be one — resolved here by keeping the line (harmless, and it does take effect on newer make, e.g. this project's Linux CI runner) and separately achieving the same `-e`/`-u` behaviour on 3.81 the only way that's actually possible there: `set -eu;` is plain POSIX shell syntax passed as part of the command string itself, so it works identically regardless of what flags make chose when invoking `$(SHELL)`. Verified with the same throwaway-Makefile method: a `set -eu; false; echo ...` recipe line stopped before the echo, and `set -eu; echo $${UNSET_VAR}` failed on the unbound reference, both under make 3.81 | T-005 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.

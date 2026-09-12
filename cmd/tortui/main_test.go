@@ -92,17 +92,20 @@ func TestRunLogLevelFlag(t *testing.T) {
 }
 
 // TestRunLogFileFlag is the direct regression test for the --log-file half
-// of the same finding.
+// of the same finding. The value is an opaque flag string here — run never
+// touches the filesystem with it — so a bare filename is used rather than a
+// path, to keep this test free of any platform path-separator assumption
+// (T-005).
 func TestRunLogFileFlag(t *testing.T) {
 	out, code := captureOutput(t, func(w *os.File) int {
-		return run([]string{"--log-file=/tmp/foo.log"}, w)
+		return run([]string{"--log-file=custom.log"}, w)
 	})
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0, output = %q", code, out)
 	}
 
-	if !strings.Contains(out, `log file="/tmp/foo.log"`) {
+	if !strings.Contains(out, `log file="custom.log"`) {
 		t.Fatalf("output %q does not reflect the --log-file flag", out)
 	}
 }

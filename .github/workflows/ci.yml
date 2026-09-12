@@ -54,6 +54,42 @@ jobs:
         shell: pwsh
         run: choco install make -y --no-progress
 
+      # T-005: installed explicitly on every OS rather than assumed present,
+      # the same reasoning DEC-029 already applied to gitleaks — a runner
+      # image's preinstalled tool list is not something this workflow relies
+      # on without saying so.
+      - name: Install shellcheck (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Install shellcheck (macOS)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck
+
+      - name: Install shellcheck (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install shellcheck -y --no-progress
+
       - name: make check
         shell: bash
         run: make check
+
+  build-all:
+    name: make build-all
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Cross-compilation output does not depend on the host OS/arch — a
+      # single ubuntu-latest job builds and verifies all six tier-1
+      # combinations from AGENT.md §14 on every push, per T-005.
+      - name: make build-all
+        run: make build-all
