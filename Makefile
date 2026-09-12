@@ -67,7 +67,7 @@ LICENSE_OSES := darwin linux windows
 ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC
 NOTICE_TMP := .notice.tmp
 
-.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses
+.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames test-scripts
 
 build:
 	set -eu; go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/tortui
@@ -95,7 +95,7 @@ fmt-check:
 	@set -eu; test -z "$$(gofumpt -l .)" || (echo "gofumpt: the following files are not formatted:"; gofumpt -l .; exit 1)
 	@set -eu; test -z "$$(goimports -l .)" || (echo "goimports: the following files are not formatted:"; goimports -l .; exit 1)
 
-check: fmt-check lint test scan
+check: fmt-check lint test scan test-scripts
 	set -eu; go vet $(PKG)
 
 scan:
@@ -147,6 +147,24 @@ licenses:
 hooks:
 	set -eu; git config core.hooksPath scripts
 	@set -eu; echo "git hooks now run from ./scripts (core.hooksPath) — scripts/pre-commit is active."
+
+# T-007: local convenience wrapper around scripts/check-indexer-hostnames.sh,
+# which is what actually implements the check (see its own header comment).
+# CI's indexer-hostnames job calls the script directly with the PR's exact
+# base/head SHAs instead of using this target, since HOSTNAME_BASE_REF's
+# "origin/main" default assumes a fetched origin remote that CI doesn't need.
+HOSTNAME_BASE_REF ?= origin/main
+
+check-hostnames:
+	set -eu; scripts/check-indexer-hostnames.sh $(HOSTNAME_BASE_REF)
+
+# T-007 QA remediation: regression test for scripts/check-indexer-hostnames.sh
+# itself (see that test script's own header). Unlike check-hostnames above,
+# this needs no base ref from the ambient repo -- it builds its own disposable
+# scratch git repo -- so it belongs in the commit gate, not standing apart
+# from it the way check-hostnames does (DEC-041).
+test-scripts:
+	set -eu; scripts/check-indexer-hostnames_test.sh
 
 cover:
 	set -eu; go test -coverprofile=$(COVERPROFILE) $(PKG)
