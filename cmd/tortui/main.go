@@ -29,7 +29,9 @@ func run(args []string, out *os.File) int {
 	fs.SetOutput(out)
 
 	showVersion := fs.Bool("version", false, "print version information and exit")
-	// config is accepted but not yet consumed; config loading lands in T-002.
+	// config is accepted but not yet consumed here: internal/config (T-002)
+	// implements loading, but wiring it into main happens once the
+	// composition root (internal/app) exists.
 	fs.String("config", "", "path to config.toml (overrides the default XDG location)")
 
 	if err := fs.Parse(args); err != nil {

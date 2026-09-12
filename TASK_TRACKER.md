@@ -70,10 +70,49 @@ the first retry. See DEC-020 (superseded) and DEC-021.
 
 ### T-002 · Configuration package
 ```
-status: in-progress
+status: done
 depends: T-001
 ```
-**Files:** `internal/config/`, `config.example.toml`
+**Files:** `internal/config/`, `internal/platform/`, `config.example.toml`
+
+**Notes:** `internal/config` exposes `Config`/`Indexer` structs matching every field in the
+acceptance list, `Default(downloadDir)` for built-in defaults, `(Config).Validate() []string`
+which collects every problem (never stops at the first), and `ParseByteSize` for `min_free_space`
+strings like `"1GB"`/`"500MB"`. `Load(flagConfigPath)` resolves paths, writes a default config
+atomically (temp file in the same directory, `fsync`, `chmod 0600`, `rename`) and creates the
+download dir on a missing file (`FirstRun: true`), or decodes an existing file over the defaults
+(so partial files keep defaults for every omitted key) and reports both unknown TOML keys
+(via `toml.MetaData.Undecoded()`) and `Validate()` problems in `LoadResult.Problems`. A
+world-readable existing config file (checked via `os.FileMode.Perm()&0o077`) is reported in
+`LoadResult.Warnings`, separate from key-specific problems. Bundled lawful sources (T-024) are
+compiled definitions, not config entries, so `Default()` ships with an empty `Indexers` list —
+that is expected and is not a gap in this task. `--config` overrides only the config file path,
+never the state or download roots.
+
+Per-OS path resolution (§14) lives in a new `internal/platform` package with `paths_darwin.go`,
+`paths_linux.go`, `paths_windows.go` (see DEC-022) — `ConfigDir()`, `StateDir()`, `DownloadDir()`
+per OS, each reading `os.Getenv`/`os.UserHomeDir` at call time so tests can inject env with
+`t.Setenv`. `$TORTUI_HOME`, when set, short-circuits `internal/platform` entirely and puts
+config/state/downloads under `$TORTUI_HOME/{config,state,downloads}` (`internal/config/paths.go`).
+
+Tests: `internal/config/validate_test.go` (table-driven `Validate`/`ParseByteSize` cases —
+valid, and one invalid case per field, plus a duplicate/missing indexer id and a scraper missing
+its definition) and `internal/config/load_test.go` (first run, valid file, partial file, invalid
+file with multiple simultaneous problems, unknown key, malformed TOML, `TORTUI_HOME` redirection,
+`--config` override, world-readable warning skipped on Windows). `internal/platform` has one
+build-tag-gated test file per OS (`paths_darwin_test.go`, `paths_linux_test.go`,
+`paths_windows_test.go`), each exercising that OS's env-driven resolution with `t.Setenv`; only
+the host OS's file runs locally, the other two run natively in the CI matrix. All three GOOS
+targets were cross-compiled locally (`go build`/`go vet`/`go test -c` under `GOOS=linux` and
+`GOOS=windows`) to catch build-tag mistakes before relying on CI. `go test ./...` and
+`go test -race ./...` are green; `internal/config` and `internal/platform` are at 81.6% and
+81.8% statement coverage respectively (measured locally, not enforced by `make cover`'s
+threshold yet since T-009's §9 per-package thresholds name only `internal/indexer`,
+`internal/engine`, and `internal/tui`). `cmd/tortui/main.go`'s comment claiming config loading
+"lands in T-002" was corrected to say wiring it into `main` still waits on the `internal/app`
+composition root, since T-002's scope is the `internal/config` package itself, not consuming it
+from `main`. Added `github.com/BurntSushi/toml v1.6.0` (MIT) to `go.mod`; did **not** add
+`github.com/adrg/xdg` despite AGENT.md §3 naming it for "XDG-compliant paths" — see DEC-022.
 
 **Acceptance**
 - Loads TOML from `$XDG_CONFIG_HOME/tortui/config.toml`, overridable with `--config`.
@@ -1109,6 +1148,8 @@ when it reaches it and does not start backlog items on its own.
 | DEC-019 | 2026-09-12 | CI installs golangci-lint via `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`, and installs GNU Make via `choco` on the `windows-latest` runner | `windows-latest` does not ship GNU Make by default (confirmed against the runner-images software inventory). golangci-lint's own `install.sh` was tried first but its checksum verification failed against the published `v2.13.2` release asset on all three runners; `go install` against the pinned module version sidesteps that second verification path entirely | T-001 |
 | DEC-020 | 2026-09-12 | **Superseded by DEC-021.** Branch protection on `main` requiring the CI check was left unconfigured, flagged as blocked rather than silently skipped | `kdta91/tortui` was a private repo on a free GitHub plan at the time; both the classic branch-protection API and the repository-rulesets API returned `403 Upgrade to GitHub Pro or make this repository public` for this repo. Unblocking needed either the repo made public or the account upgraded to GitHub Pro/Team — a decision for the human owner, not the agent. The repo owner made it public; see DEC-021 | T-001 |
 | DEC-021 | 2026-09-12 | Repo owner made `kdta91/tortui` public; branch protection on `main` then configured via the classic API (`required_status_checks` on the three `make check` matrix contexts, strict, `required_pull_request_reviews` left unset) | Verified `gh repo view` reports `"visibility":"PUBLIC"` before retrying, which is what unblocked the classic protection endpoint (previously 403 per DEC-020). Deliberately did **not** enable "require a pull request before merging" — AGENT.md §10 requires tracker status flips to push straight to `main`, and that setting would stall the loop on the first task | T-001 |
+| DEC-022 | 2026-09-12 | Per-OS config/state/download path resolution lives in a new `internal/platform` package (`paths_darwin.go`, `paths_linux.go`, `paths_windows.go`, one function set per file, no shared `runtime.GOOS` switch), instead of using `adrg/xdg` as AGENT.md §3's stack table names for this. `adrg/xdg` was pulled in, inspected, then dropped from `go.mod` | `adrg/xdg` resolves `xdg.ConfigHome` and friends into package-level `var`s computed once at package init from the process's real environment; there is no supported way to make it re-resolve against an env this package sets mid-test. That directly conflicts with T-002's own acceptance criterion requiring "per-OS path resolution tests using injected env." `internal/platform` implements the same conventions (XDG Base Directory spec on macOS/Linux, `%AppData%`/`%LocalAppData%` known folders on Windows) as plain functions reading `os.Getenv`/`os.UserHomeDir` at call time, so `t.Setenv` works normally, while still keeping every OS-specific line inside `internal/platform` per AGENT.md §14. `BurntSushi/toml` is unaffected and remains the TOML library | T-002, T-003 |
+| DEC-023 | 2026-09-12 | On Linux, the default download directory prefers `$XDG_DOWNLOAD_DIR/tortui` over `~/Downloads/tortui` when `XDG_DOWNLOAD_DIR` is set (same precedence used for `XDG_CONFIG_HOME` vs `~/.config`) | AGENT.md §14's Linux line — "Default download dir `~/Downloads/tortui`, falling back to `$XDG_DOWNLOAD_DIR`" — reads ambiguously about which one is primary. Treating the explicit env var as the override and the literal path as the fallback matches ordinary XDG semantics and how every other XDG variable in this codebase behaves; the reverse reading (env var only used when `~/Downloads` is somehow unusable) has no clear trigger condition | T-002 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
