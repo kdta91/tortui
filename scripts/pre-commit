@@ -1,0 +1,40 @@
+#!/usr/bin/env sh
+# scripts/pre-commit — T-004 secret-hygiene guard.
+#
+# This file is version-controlled but NOT installed automatically by
+# cloning the repo — git only runs hooks it finds in .git/hooks (never
+# tracked), so a fresh clone has no protection until this hook is activated
+# with one of:
+#   make hooks
+#   git config core.hooksPath scripts
+# See CONTRIBUTING.md.
+#
+# Blocks a commit when:
+#   1. a staged path is a real config.toml (config.example.toml is fine), or
+#   2. gitleaks finds a secret-shaped string in the staged changes.
+#
+# POSIX sh only (AGENT.md #14): macOS ships bash 3.2 as /bin/sh's target on
+# some setups and this must run correctly there — no bash-4 syntax.
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+status=0
+
+if git diff --cached --name-only --diff-filter=ACM | grep -qE '(^|/)config\.toml$'; then
+	echo "pre-commit: refusing to commit a real config.toml — it holds live credentials and must never enter the repo (config.example.toml is fine):" >&2
+	git diff --cached --name-only --diff-filter=ACM | grep -E '(^|/)config\.toml$' >&2
+	status=1
+fi
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+	echo "pre-commit: gitleaks is not installed — cannot scan staged changes for secrets." >&2
+	echo "pre-commit: install it (e.g. 'brew install gitleaks', see https://github.com/gitleaks/gitleaks#installing) and re-commit." >&2
+	exit 1
+fi
+
+if ! gitleaks git --staged --no-banner --redact -c "$repo_root/.gitleaks.toml" "$repo_root"; then
+	echo "pre-commit: gitleaks found a likely secret in the staged changes above — commit blocked." >&2
+	status=1
+fi
+
+exit "$status"

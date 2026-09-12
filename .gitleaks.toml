@@ -1,0 +1,47 @@
+title = "tortui secret-scanning config (T-004)"
+
+# Inherit gitleaks' built-in rule set (AWS/GCP/GitHub/GitLab/Slack tokens,
+# JWTs, generic API keys, private keys, etc.) instead of hand-rolling
+# pattern coverage that already exists and is actively maintained upstream.
+[extend]
+useDefault = true
+
+# internal/logging/mask_test.go (T-003) deliberately contains secret-SHAPED
+# strings (sk-, ghp_, AWS-style keys, JWTs, ...) as fixtures for the log
+# masking tests. None of them are real credentials, but they are shaped
+# exactly like the ones the default ruleset exists to catch, so without this
+# allowlist entry the scan fails on that one file for everyone, on every
+# commit and every CI run, forever. Scoped to that single path rather than
+# loosening any rule's specificity globally — verified that the same
+# secret-shaped strings at a different path are still caught (see T-004
+# tracker notes).
+[allowlist]
+description = "Masking-test fixtures with secret-shaped (not real) strings"
+paths = [
+  '''internal/logging/mask_test\.go''',
+]
+
+# The default ruleset has no generic "Cookie:"/"Set-Cookie:" rule (it only
+# catches a handful of vendor-specific session-cookie formats, e.g.
+# gitlab-session-cookie). Session cookies are exactly the kind of indexer
+# credential the config model expects a user to paste into config.toml, so
+# a generic pattern is added here rather than relying on generic-api-key,
+# whose keyword list (access/api/auth/key/credential/creds/passwd/password/
+# secret/token) does not include "cookie" at all.
+[[rules]]
+id = "tortui-generic-cookie"
+description = "Generic Cookie/Set-Cookie header or assignment carrying a session value"
+regex = '''(?i)\b(?:set-)?cookie\b\s*[:=]\s*\S{6,}'''
+keywords = ["cookie"]
+
+# A real, populated config.toml (as opposed to config.example.toml, which
+# ships with placeholders only) holds live indexer credentials and must
+# never enter the repo at all, regardless of its content — it belongs only
+# at $XDG_CONFIG_HOME/tortui/config.toml on disk, mode 0600. Matched purely
+# by filename, the same way gitleaks' own default config flags .p12/.pfx
+# files (see its "pkcs12-file" rule) — no content regex needed, so a
+# "boring" config.toml with no secrets in it yet still gets caught.
+[[rules]]
+id = "tortui-config-toml"
+description = "A real config.toml (not config.example.toml) committed to the repository"
+path = '''(^|/)config\.toml$'''
