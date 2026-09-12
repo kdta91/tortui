@@ -145,7 +145,7 @@ itself, not consuming it from `main`. Added `github.com/BurntSushi/toml v1.6.0` 
 
 ### T-003 · File logging
 ```
-status: todo
+status: in-progress
 depends: T-001
 ```
 **Files:** `internal/config/log.go` (or `internal/logging/`)
