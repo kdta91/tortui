@@ -70,7 +70,7 @@ the first retry. See DEC-020 (superseded) and DEC-021.
 
 ### T-002 · Configuration package
 ```
-status: todo
+status: in-progress
 depends: T-001
 ```
 **Files:** `internal/config/`, `config.example.toml`
