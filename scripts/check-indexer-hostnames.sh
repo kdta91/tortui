@@ -103,7 +103,11 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		if (host == "localhost") return 1
 		if (host ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) return 1
 		if (host ~ /(^|\.)example\.(com|net|org)$/) return 1
-		if (host ~ /(^|\.)(test|invalid|localhost)$/) return 1
+		# RFC 2606 / RFC 6761 reserved TLDs: any host ending in one of these
+		# four labels is guaranteed never to resolve on the public Internet,
+		# so it can never be a real bundled indexer regardless of what comes
+		# before it -- e.g. "real-indexer.example", "my-indexer.test".
+		if (host ~ /(^|\.)(example|test|invalid|localhost)$/) return 1
 		for (i = 1; i <= n; i++) {
 			entry = allow[i]
 			if (entry == "") continue
@@ -118,8 +122,11 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		return 0
 	}
 	function scan(text, file,    rest, m, host) {
+		# Authority after the scheme: may carry userinfo (user:pass@) and a
+		# port, so match everything up to the first path/space/quote/angle
+		# separator and let check_host() pick the hostname apart from that.
 		rest = text
-		while (match(rest, /https?:\/\/[A-Za-z0-9.-]+/)) {
+		while (match(rest, /https?:\/\/[^\/[:space:]"'\''<>]+/)) {
 			m = substr(rest, RSTART, RLENGTH)
 			sub(/^https?:\/\//, "", m)
 			check_host(m, file, text)
@@ -134,7 +141,13 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		}
 	}
 	function check_host(host, file, text,   colon) {
-		gsub(/[",'"'"' 	]+$/, "", host)
+		# Strip a trailing quote/space/paren/sentence-punctuation run picked
+		# up from surrounding prose or markdown.
+		gsub(/[",'"'"' 	.,;)\]]+$/, "", host)
+		# Drop userinfo ("user:pass@host" -> "host"): a greedy match of
+		# everything up to the LAST "@" removes it even if the password
+		# itself contained "@".
+		sub(/^.*@/, "", host)
 		colon = index(host, ":")
 		if (colon > 0) host = substr(host, 1, colon - 1)
 		host = tolower(host)
