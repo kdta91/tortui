@@ -336,7 +336,7 @@ process.
 
 ### T-005 · Cross-platform tooling baseline
 ```
-status: todo
+status: in-progress
 depends: T-001
 ```
 **Files:** `Makefile`, `scripts/`, `.github/workflows/ci.yml`
