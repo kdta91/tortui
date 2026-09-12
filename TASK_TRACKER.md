@@ -1284,6 +1284,15 @@ when it reaches it and does not start backlog items on its own.
 - `T-908` Apple notarisation (requires a paid Apple Developer account)
 - `T-909` Windows code signing (requires a certificate or signing service)
 - `T-910` Homebrew core submission (has notability requirements a tap does not)
+- `T-911` Install a `pre-merge-commit` hook. QA on T-004 (PR #4) demonstrated that merge commits
+  bypass `scripts/pre-commit` entirely: git invokes `pre-merge-commit` for merges, and that hook is
+  not installed. Reproduced by committing a secret on a side branch with hooks disabled, then
+  merging with `git merge --no-ff` while `pre-commit` was active — the merge succeeded and the
+  secret entered history uncaught.
+- `T-912` Close the binary-file gap in the secret scan. QA on T-004 (PR #4) confirmed that gitleaks
+  skips binary content by design in both `gitleaks git --staged` (the hook) and `gitleaks dir`
+  (`make scan` in CI), so a secret embedded in a binary-ish file is caught by neither the hook nor
+  the CI backstop.
 
 ---
 
