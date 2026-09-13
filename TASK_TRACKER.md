@@ -827,10 +827,85 @@ source (`example-archive`, `archive.example.org`) with a deliberately all-zeros 
 
 ### T-011 · Category taxonomy
 ```
-status: in-progress
+status: done
 depends: T-010
 ```
-**Files:** `internal/indexer/category.go`
+**Files:** `internal/indexer/category.go` (plus `internal/indexer/category_test.go`; a
+deletion-only change to `internal/indexer/indexer.go`)
+
+**The taxonomy classifies the kind of data, never the subject matter.** The buckets are
+`CategoryOther` (the zero value), `CategoryAudio`, `CategoryVideo`, `CategoryImage`,
+`CategoryText`, `CategorySoftware`, `CategoryData` — six broad buckets plus the catch-all. Four
+of the names (`audio`, `image`, `text`, `video`) are also the IANA top-level media type names;
+the registry at <https://www.iana.org/assignments/media-types/media-types.xhtml> was fetched on
+2026-09-13 and its top-level sections are `application`, `audio`, `example`, `font`, `haptics`,
+`image`, `message`, `model`, `multipart`, `text`, `video`. `Software` and `Data` are **not** IANA
+names — they are ours, because IANA's `application` is a catch-all that would swallow both, and
+because the sources AGENT.md §2 lets tortui bundle (public archives, research dataset
+repositories, distro release listings) are exactly software and datasets. No bucket names a
+genre, a medium, a scene tag, or any kind of material, so the enum reveals nothing about what
+the app is for (AGENT.md §2, §16). A test, `TestCategoryBucketSetIsClosed`, pins the exact
+set of seven tokens, so adding, removing, or renaming a bucket fails the build until someone
+edits that list on purpose — and the failure message says what the rule is. (The tripwire is a
+closed-set check rather than a list of forbidden content words, because writing that list would
+put the very words §2 keeps out of this repository into a test file.) See DEC-046.
+
+**Torznab numeric mapping is by 1000-block, and the block numbers were read, not recalled.**
+`CategoryFromTorznab(id)` looks up `id/1000`. The blocks were verified on 2026-09-13 against two
+sources, cited by repository and path rather than by URL so the T-007 hostname check stays
+meaningful: the newznab API specification, section 3 "Predefined Categories"
+(`docs/newznab_api_specification.txt` in the `nZEDb/nZEDb` repository on GitHub, branch `dev`),
+which gives the ranges `0000-0999`, `1000-1999` … `7000-7999`, then `8000-99999` reserved and
+`100000-` site-specific custom; and `src/Jackett.Common/Models/TorznabCatType.cs` in the
+`Jackett/Jackett` repository on GitHub, branch `master`, which is the numbering most Torznab
+servers actually emit and which agrees on the parent ids `1000/2000/3000/4000/5000/6000/7000`
+while additionally using `8000` as its own catch-all where the specification leaves that range
+reserved. Both files were downloaded and read in this
+session; the spec's range table and Jackett's `ParentCats` list were quoted from directly.
+Blocks 0 and 8 therefore both map to `CategoryOther`, which covers both conventions. Only the
+block *numbers* appear in the code — the names those two sources give the blocks are
+subject-matter labels, and copying them into this repository is what §2 forbids, so each block
+is written down as the kind of data its items are and nothing else. See DEC-047.
+
+**Both helpers are total.** `CategoryFromTorznab(int)` and `CategoryFromString(string)` return a
+`Category` and no error, and every input path ends at a defined bucket — `CategoryOther` when
+nothing matches. Nothing is dropped and nothing errors, per AGENT.md §13. `CategoryFromString`
+lowercases the label, splits it on every rune that is not a letter or digit, and returns the
+first token in a short lookup table, so `Movies/HD`, `PC > Games`, `[Books]`, and `  audio  `
+all resolve; a word that merely *contains* a token (`audiophile`) does not match, and a numeric
+label is deliberately **not** routed to the Torznab helper. The word table holds the canonical
+`String()` tokens plus the everyday words sources label with; some of those name subject matter
+because that is what sources write, but every one of them collapses *into* a data-kind bucket,
+which is how a source's taxonomy gets discarded at the boundary rather than adopted. See
+DEC-048.
+
+**`type Category int` was relocated** from `indexer.go` into `category.go`, the option DEC-043
+and the type's own godoc offered. The change to `indexer.go` is a pure deletion — 15 lines
+removed, 0 added (`git show --stat`) — of the declaration and the now-false T-010 godoc that
+said the enum "has not landed yet". The six frozen AGENT.md §5 contracts (`Indexer`, `Query`,
+`Result`, `Caps`, `Trust`, `Mode`) are untouched: `Category` is referenced by §5 but never
+defined there, so its definition was never frozen (DEC-043 says so explicitly). A within-package
+move changes no contract. See DEC-049.
+
+**Verification.** `make check` green and `go test -race ./... -count=1` green, both **on macOS
+only** — the Linux and Windows CI legs are not reproducible on this machine and are NOT verified
+locally; the PR's own CI run is the evidence for those. `go test ./internal/indexer/ -cover`
+reports **100.0% of statements**, unchanged from T-010 (the §9 floor for this package is 75%);
+note that `make cover`'s threshold is 0 and enforces nothing (backlog T-916), so this number
+comes from running the tool, not from a gate. Beyond the table tests, `go test -fuzz
+FuzzCategoryFromString -fuzztime 30s` ran 18,630,338 executions and `-fuzz FuzzCategoryFromTorznab
+-fuzztime 20s` ran 19,801,798, both PASS with no crashers and no corpus files added to the repo;
+the two fuzz targets also run their seed corpus under a plain `go test`.
+`TestCategoryFromTorznabIsTotal` sweeps every id from -20000 to 120000. Hostile string inputs covered explicitly: empty,
+whitespace-only, punctuation-only, mixed case, non-ASCII (Greek, CJK), emoji, combining marks,
+an embedded NUL, invalid UTF-8, and a 100 001-token label.
+
+**Deliberately not done here:** no `Categories()`/`AllCategories()` enumeration helper and no
+human-facing display labels (the TUI's category filter is a Phase 4 task and will say what shape
+it needs); no routing of numeric-looking strings into `CategoryFromTorznab` (an adapter with
+numeric ids calls that helper directly, and guessing would make `"8"` mean something surprising);
+no sub-category granularity below the 1000-block; and no adapter actually calling either helper
+yet — Torznab is T-021, the scraper T-022.
 
 **Acceptance**
 - Small internal enum (`CategoryOther` as the zero value, plus a handful of broad buckets).
@@ -1775,6 +1850,10 @@ when it reaches it and does not start backlog items on its own.
 | DEC-043 | 2026-09-13 | `internal/indexer/indexer.go` declares a bare `type Category int` with no constants and no methods, rather than T-010 creating `category.go`, inlining a placeholder `CategoryOther`, or changing `Query`/`Result` to avoid the type | AGENT.md §5 freezes `Query.Categories []Category` and `Result.Category Category`, so the type must exist for T-010's file to compile, but the taxonomy itself — the enum values, the `CategoryOther` zero value, and the Torznab-numeric/adapter-string mapping helpers — is T-011's acceptance criteria and T-011's file (`internal/indexer/category.go`). Three options were weighed: (a) create `category.go` here with the full enum, which is building ahead into another task and would leave T-011 with nothing to do; (b) declare a placeholder `CategoryOther Category = iota` here, which pre-commits the zero value that T-011's own criteria are supposed to define and would leave a stray constant in the wrong file if T-011 chose differently; (c) declare only the type. (c) was chosen as the literal minimum: it adds three lines, claims no zero value, and leaves every T-011 decision open. The type's godoc names `category.go` and T-011 explicitly, and states that T-011 may either add its `const` block in `category.go` against this declaration (legal Go — same package) or relocate the declaration into `category.go`, and that such a move is a within-package relocation that changes no contract and needs no `DEC-` entry of its own. This row exists so T-011 does not mistake the bare type for a frozen §5 contract: §5 references `Category` but never defines it, so its definition is not frozen by this task | T-010, T-011 |
 | DEC-044 | 2026-09-13 | `Trust.String()` returns lowercase tokens (`unknown`/`none`/`verified`/`trusted`/`vip`) while `Trust.Badge()` returns the display cells (`VIP`/`TR`/`✓`/`""`); `Badge()` returns the Unicode `✓` with no ASCII fallback, and both methods return a safe value for an out-of-range `Trust` rather than panicking | The two methods have different jobs and AGENT.md pins only one of them. §7 pins `Badge()` exactly: `VIP` / `TR` / `✓` / blank, "a compact badge, not a word", with blank covering both `TrustUnknown` and `TrustNone` since neither is worth a column cell. `String()` is unpinned, so it was made the *identifier* form instead of a second display form — case-uniform lowercase so it is stable to write in a log line, assert on in a test, and later parse in a filter expression, with no per-value casing exception for VIP that a parser would have to special-case. Out-of-range handling differs on purpose: `String()` returns `trust(N)` because a surprising value in a log should be diagnosable, `Badge()` returns `""` because a surprising value in a fixed-width table column must not widen it. On the ASCII fallback: AGENT.md §14 requires `✓` to have an ASCII substitute chosen by terminal-capability detection and forceable with `--ascii`, but that detection lives in the TUI theme layer, so `Badge()` deliberately stays capability-unaware and returns the Unicode form — putting the fallback here would mean this package reading terminal state, which would also make `Badge()` impure and untestable without an environment | T-010, T-050 |
 | DEC-045 | 2026-09-13 | `Result.Validate()` validates only that at least one of `Magnet`/`TorrentURL` is set, treats a whitespace-only value as unset, and reports failure by wrapping an exported sentinel `ErrNoLink` inside `fmt.Errorf("indexer %q: result %q: %w", ...)` | The acceptance criterion names exactly one rejection and adding more was considered and rejected: every other `Result` field is legitimately empty for some source (a source may publish no size, no date, no uploader, no details page, and `InfoHash` is explicitly allowed to be empty until `Resolve` by §5's own comment), so a stricter `Validate` would discard results that are perfectly displayable, and it would do so inside a frozen contract that every future adapter has to satisfy. Whitespace-only is treated as unset because a `Magnet` of `"   "` is not a link by any reading of "has neither" and would otherwise pass a bare `!= ""` check straight through to the engine. The sentinel plus `%w` wrapping is what lets a caller branch on the condition with `errors.Is` rather than by string-matching the message, while still satisfying AGENT.md §6.9's requirement that errors name their context — the ids are `%q`-quoted so an empty `IndexerID` on a malformed result reads as `""` rather than producing a mangled message. Documented on the method: a result that `Search` returns unresolved will not pass `Validate`, so callers validate after `Resolve`, not before | T-010 |
+| DEC-046 | 2026-09-13 | The `Category` enum is `CategoryOther` (zero value) plus six buckets named for the kind of DATA a torrent carries — `Audio`, `Video`, `Image`, `Text`, `Software`, `Data` — and no bucket names subject matter (no genre, medium, scene tag, or kind of material). `TestCategoryBucketSetIsClosed` pins the exact seven tokens so a future edit cannot slip one in unnoticed | AGENT.md §2 bars content-specific categorisation outright and §16 explains that this is the project's legal posture, not a style preference: a bucket list that told a reader what kind of media the app is for would be the curated-front-end evidence §16 describes. Data kind is the classification that survives that rule while still being useful for a coarse search filter and a one-word table column. Four of the six names (`audio`, `image`, `text`, `video`) are also IANA top-level media type names — the registry at https://www.iana.org/assignments/media-types/media-types.xhtml was fetched and read on 2026-09-13 for this row, and its top-level sections are `application`, `audio`, `example`, `font`, `haptics`, `image`, `message`, `model`, `multipart`, `text`, `video`. `Software` and `Data` are deliberately NOT IANA names: IANA's `application` is a catch-all that would swallow both, and the sources §2 lets tortui bundle (public archives, research dataset repositories, distro release listings) are precisely software and datasets, so collapsing them into one bucket would make the filter useless for the only sources that ship enabled. Six was chosen as the smallest set that keeps those two distinct and still covers what any source publishes | T-011, T-021, T-022, T-040 |
+| DEC-047 | 2026-09-13 | `CategoryFromTorznab` maps by 1000-block (`id/1000`) and the code contains the block NUMBERS only — never the block names the Torznab sources give them. Blocks 0 and 8 both map to `CategoryOther`; every unmapped block, including the reserved and site-specific custom ranges, negatives, and extreme ints, also returns `CategoryOther` | The block numbers were verified in this session on 2026-09-13, not recalled: the newznab API specification section 3 'Predefined Categories' (`docs/newznab_api_specification.txt` in the `nZEDb/nZEDb` repository on GitHub, branch `dev`) was downloaded and its range table read directly (0000-0999, 1000-1999 through 7000-7999, then 8000-99999 reserved and 100000- site-specific custom), and `src/Jackett.Common/Models/TorznabCatType.cs` in the `Jackett/Jackett` repository on GitHub, branch `master`, was downloaded and its parent-category list read directly (1000/2000/3000/4000/5000/6000/7000 identical to the spec, plus 8000 used as Jackett's own catch-all where the spec leaves that range reserved). Handling both 0 and 8 as `CategoryOther` is what makes the helper correct against both conventions. Block granularity rather than sub-id granularity because the block already determines the kind of data and the sub-id only refines the source's own subject-matter labelling, which tortui has no use for. Writing the block names into the table was considered and rejected: they are subject-matter labels, and importing them would put exactly the content-specific vocabulary AGENT.md §2 excludes into this repository, so each block is recorded as the data kind its items are and the two citations above carry the provenance | T-011, T-021 |
+| DEC-048 | 2026-09-13 | `CategoryFromString` lowercases the label, splits it on every rune that is not a letter or digit, and returns the bucket for the first token found in a fixed word table; a token must match a whole word (`audiophile` does not match `audio`), and an all-digit label is NOT routed to `CategoryFromTorznab`. The table holds the canonical `String()` tokens plus a short list of the everyday words sources label with, several of which do name subject matter | Adapter labels are arbitrary source text (`Movies/HD`, `PC > Games`, `[Books]`, padded, mixed case, non-ASCII, invalid UTF-8), so tokenising and matching whole words is the only rule that stays predictable across them, and first-match-wins gives a deterministic answer for a multi-part label. Substring matching was rejected as it produces silent false positives. Auto-routing numeric strings was rejected because it would make a source whose category is literally named `8` mean something surprising, and an adapter holding numeric ids should call the numeric helper. Keeping subject-matter words as table KEYS is not a content-specific category (AGENT.md §2): the buckets they map to are all data kinds, so the table is precisely where a source's own taxonomy is discarded rather than adopted — the alternative, recognising only tortui's own seven tokens, would leave nearly every real label falling to `CategoryOther` and make the helper pointless. The list is kept short and generic on purpose and the godoc says it is not a place to accumulate genre words, format names, or scene tags | T-011, T-022 |
+| DEC-049 | 2026-09-13 | The bare `type Category int` declared by T-010 was relocated from `internal/indexer/indexer.go` into `internal/indexer/category.go` rather than left in place with the `const` block added beside it | DEC-043 explicitly offered both options and recorded that a within-package move changes no contract and needs no `DEC-` row of its own; this row exists only because the move is visible in the diff to a file that holds frozen contracts, and a reviewer should not have to guess whether §5 was touched. It was not: the six frozen §5 types (`Indexer`, `Query`, `Result`, `Caps`, `Trust`, `Mode`) are unchanged, and the change to `indexer.go` is a pure deletion of 15 lines with 0 added (`git show --stat`). `Category` is referenced by §5 but never defined there, so its definition was never frozen. Relocating was preferred over adding constants remotely because the T-010 godoc on the declaration stated that the enum 'has not landed yet' and named T-011 as its owner — text that becomes false the moment this task lands, so the doc comment had to be rewritten regardless, and a type whose values, `String()`, and both mapping helpers all live in `category.go` belongs in that file | T-010, T-011 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
