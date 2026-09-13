@@ -1843,6 +1843,19 @@ when it reaches it and does not start backlog items on its own.
   `internal/tui` >= 50%) that one global number structurally cannot express. Live as of T-010:
   `internal/indexer` is at 100% with nothing in CI guarding it against regression. Found by QA on
   T-010 (PR #8).
+- `T-917` `CategoryFromString` is first-token-wins, so an Other-class word leading the label
+  discards a specific token later in it. Reproduced against merged `main` (261a381):
+  `"Misc/Software"` -> other and `"Unknown/Audio"` -> other, while `"Software/Misc"` -> software.
+  Common in the newznab block-0 dialect, so T-021/T-022 will meet it. Found by QA on T-011 (PR #9).
+- `T-918` `CategoryFromString` applies simple case folding only, so fullwidth forms miss every
+  bucket. Reproduced against merged `main` (261a381): `"AUDIO"` and `"audio"` in fullwidth both ->
+  other. Cosmetic; recorded so T-022 is not surprised. Found by QA on T-011 (PR #9).
+- `T-919` Unwrap `*ast.ParenExpr` in `isCategoryTypeExpr` in `internal/indexer/category_test.go`.
+  The §2 bucket-set tripwire matches only a bare `*ast.Ident`, so a parenthesized type spelling
+  evades it. QA round 3 on T-011 (PR #9) judged this non-blocking because `make fmt-check` rejects
+  that spelling and gofumpt rewrites it to the form the tripwire catches — but the guard should not
+  depend on the formatter to hold. Also covers the alias, untyped-conversion and bare-inline shapes
+  that DEC-051 discloses as open by design.
 
 
 ---
