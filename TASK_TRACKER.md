@@ -737,7 +737,7 @@ states exactly what T-024 should add and where.
 
 ### T-010 · Indexer contracts
 ```
-status: todo
+status: in-progress
 depends: T-002
 ```
 **Files:** `internal/indexer/indexer.go`
