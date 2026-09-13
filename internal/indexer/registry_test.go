@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -500,14 +501,34 @@ func TestSearchAllOneSourceTimesOut(t *testing.T) {
 	}
 
 	// The registry returned while the source was still blocked. Releasing it
-	// now must let its goroutine finish: if the registry had left an
-	// unbuffered handoff behind, this send would block forever and the
-	// goroutine would leak.
+	// now must let everything the registry started on its behalf finish:
+	// the source's own call, and the goroutine the registry runs it on. The
+	// second is the one that leaks if the answer has nowhere to go.
 	close(slow.release)
 	select {
 	case <-slow.exited:
 	case <-time.After(2 * time.Second):
-		t.Fatal("the timed-out source's goroutine never finished after being released; the registry left it blocked")
+		t.Fatal("the timed-out source's Search call never returned after being released")
+	}
+	waitForNoGoroutineIn(t, "indexer.callSearch.func1")
+}
+
+// waitForNoGoroutineIn fails the test if any goroutine is still inside frame
+// after a couple of seconds. It polls rather than sampling once, so a
+// goroutine that is merely on its way out is not mistaken for a leak.
+func waitForNoGoroutineIn(t *testing.T, frame string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		buf := make([]byte, 1<<20)
+		stacks := string(buf[:runtime.Stack(buf, true)])
+		if !strings.Contains(stacks, frame) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a goroutine is still parked in %s two seconds after the source was released; the registry leaked it:\n%s", frame, stacks)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -920,6 +941,56 @@ func TestSearchAllCachedResultsAreIsolatedFromCallers(t *testing.T) {
 	}
 	if second[0].Title != "alpha one" || second[0].Extra["quality"] != "original" {
 		t.Errorf("cached result came back as %q/%v after the caller mutated the first copy; the cache is not isolated", second[0].Title, second[0].Extra)
+	}
+}
+
+func TestSearchAllCachedResultsAreIsolatedFromTheAdapter(t *testing.T) {
+	// An adapter is free to keep a reference to the slice and the maps it
+	// returned. If the cache holds those same objects, whatever the adapter
+	// does to them afterwards silently rewrites history.
+	own := []Result{{IndexerID: "alpha", ID: "1", Title: "alpha one", Magnet: testMagnet, Extra: map[string]string{"quality": "original"}}}
+	src := &stubIndexer{id: "alpha", caps: bothCaps, fn: func(_ context.Context, _ Query) ([]Result, error) {
+		return own, nil
+	}}
+	r, _ := newTestRegistry(t, Config{CacheTTL: time.Hour}, src)
+	q := Query{Text: "x"}
+
+	if _, _, err := r.SearchAll(context.Background(), q); err != nil {
+		t.Fatalf("first SearchAll: %v", err)
+	}
+	own[0].Title = "rewritten by the adapter"
+	own[0].Extra["quality"] = "rewritten by the adapter"
+
+	cached, _, err := r.SearchAll(context.Background(), q)
+	if err != nil {
+		t.Fatalf("second SearchAll: %v", err)
+	}
+	if cached[0].Title != "alpha one" || cached[0].Extra["quality"] != "original" {
+		t.Errorf("cached result came back as %q/%v after the adapter mutated what it had returned; the cache holds the adapter's own objects", cached[0].Title, cached[0].Extra)
+	}
+}
+
+func TestCachedResultsHandsOutPrivateCopies(t *testing.T) {
+	// cachedResults is the single door out of the cache; whatever comes
+	// through it must be the caller's alone, whether or not today's only
+	// caller happens to copy again downstream.
+	r := NewRegistry(Config{CacheTTL: time.Hour})
+	key := newCacheKey("alpha", Query{Text: "x"})
+	r.storeResults(key, []Result{{IndexerID: "alpha", ID: "1", Title: "alpha one", Extra: map[string]string{"quality": "original"}}})
+
+	first, ok := r.cachedResults(key)
+	if !ok {
+		t.Fatal("cachedResults reported a miss for an entry just stored")
+	}
+	first[0].Title = "vandalised"
+	first[0].Extra["quality"] = "vandalised"
+
+	second, ok := r.cachedResults(key)
+	if !ok {
+		t.Fatal("cachedResults reported a miss on the second read")
+	}
+	if second[0].Title != "alpha one" || second[0].Extra["quality"] != "original" {
+		t.Errorf("second read = %q/%v, want the stored values; cachedResults handed out the cache's own objects", second[0].Title, second[0].Extra)
 	}
 }
 
