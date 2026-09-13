@@ -277,22 +277,27 @@ func FuzzCategoryFromTorznab(f *testing.F) {
 	})
 }
 
-// No bucket may name a kind of content: the taxonomy classifies the kind of
-// data, never the subject matter (AGENT.md §2, §16). This is a guard against a
-// future edit quietly adding one, and it is deliberately blunt.
-func TestCategoryBucketsAreContentNeutral(t *testing.T) {
-	banned := []string{
-		"movie", "film", "cinema", "tv", "television", "show", "series",
-		"anime", "cartoon", "music", "song", "album", "book", "ebook",
-		"magazine", "comic", "game", "sport", "adult", "porn", "xxx",
-		"scene", "release", "rip", "bluray", "dvd", "webdl", "hdtv",
-	}
+// The bucket set is closed, and this test is the tripwire on it: adding,
+// removing, or renaming a bucket fails here until someone updates this list on
+// purpose.
+//
+// That is the point. Every bucket must name a kind of DATA — audio, video,
+// still images, text, software, datasets. A bucket that names subject matter
+// instead (a genre, a medium, a scene tag, a kind of material) is the
+// content-specific categorisation AGENT.md §2 forbids and §16 explains, and it
+// must not reach the enum by accident.
+func TestCategoryBucketSetIsClosed(t *testing.T) {
+	want := []string{"other", "audio", "video", "image", "text", "software", "data"}
+
+	var got []string
 	for _, c := range allCategories {
-		name := c.String()
-		for _, b := range banned {
-			if strings.Contains(name, b) {
-				t.Errorf("category %q contains the content-specific word %q", name, b)
-			}
-		}
+		got = append(got, c.String())
+	}
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("bucket set = [%s], want [%s]\n"+
+			"if this is a deliberate change: a bucket must name a kind of data, "+
+			"never subject matter (AGENT.md §2, §16)",
+			strings.Join(got, ", "), strings.Join(want, ", "))
 	}
 }

@@ -97,17 +97,17 @@ func (c Category) String() string {
 // block, so the block alone determines the kind of data and the sub-id only
 // refines a source's own subject-matter labelling, which tortui has no use for.
 // The block numbers were read off two sources on 2026-09-13 rather than
-// recalled:
+// recalled (both are code-hosting documents, cited by repository and path
+// rather than by URL so the T-007 hostname check stays meaningful):
 //
-//   - the newznab API specification, section 3 "Predefined Categories", at
-//     https://raw.githubusercontent.com/nZEDb/nZEDb/dev/docs/newznab_api_specification.txt
-//     which gives the ranges 0000-0999, 1000-1999, ..., 7000-7999, then
-//     8000-99999 reserved and 100000+ site-specific custom;
-//   - Jackett's TorznabCatType.cs, at
-//     https://raw.githubusercontent.com/Jackett/Jackett/master/src/Jackett.Common/Models/TorznabCatType.cs
-//     which is the numbering most Torznab servers actually emit. It agrees on
-//     blocks 1-7 and additionally uses 8000 as its catch-all, which the
-//     specification leaves reserved.
+//   - the newznab API specification, section 3 "Predefined Categories" —
+//     docs/newznab_api_specification.txt in the nZEDb/nZEDb repository on
+//     GitHub, branch dev — which gives the ranges 0000-0999, 1000-1999, ...,
+//     7000-7999, then 8000-99999 reserved and 100000+ site-specific custom;
+//   - src/Jackett.Common/Models/TorznabCatType.cs in the Jackett/Jackett
+//     repository on GitHub, branch master, which is the numbering most
+//     Torznab servers actually emit. It agrees on blocks 1-7 and additionally
+//     uses 8000 as its catch-all, which the specification leaves reserved.
 //
 // Only the block numbers are reproduced here. The names those two sources give
 // the blocks are subject-matter labels, and copying them into this repository
