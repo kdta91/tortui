@@ -124,21 +124,6 @@ const (
 	ModeLatest
 )
 
-// Category is tortui's internal, content-neutral classification bucket.
-//
-// The enum values, the CategoryOther zero value, and the helpers that map a
-// source's own numeric or string categories onto it are owned by T-011 in
-// internal/indexer/category.go, which has not landed yet. Only the type is
-// declared here, because Query and Result reference it and AGENT.md §5 freezes
-// those two. T-011 may add the values in category.go or relocate this
-// declaration into that file — a move within the same package changes no
-// contract and needs no DEC- entry.
-//
-// Adapters map their source's categories onto this enum inside the adapter,
-// never in the TUI, and an unrecognised category maps to the zero value rather
-// than being dropped (AGENT.md §13).
-type Category int
-
 // Query is a single search request, as handed to one indexer. The registry
 // builds it once and gives the same value to every selected source; an adapter
 // translates it into whatever its own source speaks and must not mutate it.
