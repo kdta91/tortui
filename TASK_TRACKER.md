@@ -1709,6 +1709,17 @@ when it reaches it and does not start backlog items on its own.
 - `T-914` `docs/indexer-hostname-allowlist.md`'s prose enumeration of auto-allowed private IPv4
   ranges omits `0.0.0.0/8`, which `is_private_ipv4()` in the script does allow and which DEC-040 and
   the script header both list. Cosmetic doc inconsistency found by QA on T-007.
+- `T-915` Create `docs/session-log.md` and backfill T-001…T-010. AGENT.md §11 requires a running
+  session log — one line per task with timestamp, task ID, and outcome — as the thing a human reads
+  to catch up. It has never existed; `docs/` currently holds only `indexer-hostname-allowlist.md`.
+  Found by QA on T-010 (PR #8), disclosed by the T-010 build agent rather than backfilled from one
+  task's vantage point.
+- `T-916` Enforce per-package coverage thresholds in `make cover`. `COVER_THRESHOLD := 0` at
+  `Makefile:28`, so the gate currently enforces nothing, and it compares a single repo-wide total.
+  AGENT.md §9 mandates per-package floors (`internal/indexer` and `internal/engine` >= 75%,
+  `internal/tui` >= 50%) that one global number structurally cannot express. Live as of T-010:
+  `internal/indexer` is at 100% with nothing in CI guarding it against regression. Found by QA on
+  T-010 (PR #8).
 
 
 ---
