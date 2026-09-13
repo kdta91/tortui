@@ -827,7 +827,7 @@ source (`example-archive`, `archive.example.org`) with a deliberately all-zeros 
 
 ### T-011 · Category taxonomy
 ```
-status: todo
+status: in-progress
 depends: T-010
 ```
 **Files:** `internal/indexer/category.go`
