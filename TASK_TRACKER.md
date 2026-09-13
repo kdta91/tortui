@@ -965,7 +965,7 @@ yet — Torznab is T-021, the scraper T-022.
 
 ### T-012 · Registry and fan-out search
 ```
-status: todo
+status: in-progress
 depends: T-010, T-011
 ```
 **Files:** `internal/indexer/registry.go`
