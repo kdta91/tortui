@@ -43,14 +43,32 @@ func walkCategories() []Category {
 //
 // This is the half of the tripwire that a String method cannot fool. Walking
 // String only sees buckets someone remembered to add a case for; reading the
-// declaration sees every constant of type Category the package declares, in any
-// of its files, whether or not String knows about it.
+// declaration sees the constants the package spells with the type Category, in
+// any of its files, whether or not String knows about them.
 //
-// Anything about the declaration this cannot interpret unambiguously — a spec
-// declaring several names at once, an explicit value part-way down the block, a
-// Category const block that is not an iota run — fails the test rather than
-// being skipped, because a shape this does not understand is a shape it cannot
-// honestly claim to be guarding.
+// It works in two passes over the same parsed files. The first finds the iota
+// const block and reads the bucket names off it in declaration order. The
+// second sweeps every other declaration in every file — const and var alike,
+// including ones nested inside a function body — and fails the test on any
+// name declared with the type Category that the first pass did not already
+// account for. Without that second pass a Category constant that is not the
+// first spec of its block is invisible, which is how a working bucket was
+// smuggled past an earlier version of this test (DEC-051).
+//
+// Anything that spells the type Category and that this cannot fold into the
+// enum — a spec declaring several names at once, an explicit value part-way
+// down the block, a Category const block that is not an iota run, a Category
+// constant or variable declared anywhere outside that block — fails the test
+// rather than being skipped, because a shape this does not understand is a
+// shape it cannot honestly claim to be guarding.
+//
+// What it cannot see at all is a declaration that never spells the identifier
+// Category: a const or var typed through an alias (type c = Category), or a
+// bare Category(7) conversion with no declaration behind it. Matching on the
+// type name as written is a syntactic check, and closing those two would need a
+// full type check of the package. DEC-051 records that as a deliberate, stated
+// limit rather than pretending the guard is airtight — and none of this stops
+// an author who simply edits this test, which is not what it is here for.
 func categoryConstNames(t *testing.T) []string {
 	t.Helper()
 
@@ -74,17 +92,23 @@ func categoryConstNames(t *testing.T) []string {
 	}
 
 	fset := token.NewFileSet()
-
-	var (
-		names  []string
-		blocks int
-	)
+	parsed := make([]*ast.File, 0, len(files))
 	for _, name := range files {
 		file, err := parser.ParseFile(fset, filepath.Clean(name), nil, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatalf("parsing %s: %v", name, err)
 		}
+		parsed = append(parsed, file)
+	}
 
+	// Pass 1: the iota const block is the enum proper, and its declaration
+	// order is what gives each bucket its value.
+	var (
+		names  []string
+		blocks int
+	)
+	for i, file := range parsed {
+		name := files[i]
 		for _, decl := range file.Decls {
 			gd, ok := decl.(*ast.GenDecl)
 			if !ok || gd.Tok != token.CONST || len(gd.Specs) == 0 {
@@ -95,7 +119,7 @@ func categoryConstNames(t *testing.T) []string {
 			if !ok {
 				continue
 			}
-			if id, ok := first.Type.(*ast.Ident); !ok || id.Name != "Category" {
+			if !isCategoryTypeExpr(first.Type) {
 				continue
 			}
 			if len(first.Values) != 1 {
@@ -126,7 +150,49 @@ func categoryConstNames(t *testing.T) []string {
 		}
 	}
 
+	// Pass 2: nothing else in the package may declare a Category. A constant
+	// or variable of this type that pass 1 did not read is a bucket the enum
+	// does not know about, whatever block or file it hides in.
+	accounted := make(map[string]bool, len(names))
+	for _, n := range names {
+		accounted[n] = true
+	}
+	for i, file := range parsed {
+		name := files[i]
+		ast.Inspect(file, func(n ast.Node) bool {
+			gd, ok := n.(*ast.GenDecl)
+			if !ok || (gd.Tok != token.CONST && gd.Tok != token.VAR) {
+				return true
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok || !isCategoryTypeExpr(vs.Type) {
+					continue
+				}
+				for _, id := range vs.Names {
+					if accounted[id.Name] {
+						continue
+					}
+					t.Fatalf("%s:%d: %s is declared with type Category outside the enum's iota const block; "+
+						"a bucket declared here is invisible to declaration order and to Category.String, "+
+						"so the closed bucket set cannot be checked — declare it in the iota block or not at all",
+						name, fset.Position(id.Pos()).Line, id.Name)
+				}
+			}
+			return true
+		})
+	}
+
 	return names
+}
+
+// isCategoryTypeExpr reports whether a declaration's type is written as the
+// bare identifier Category. This is a syntactic match on the name, not a type
+// check: an alias for Category is spelled differently and is not recognised.
+// See the limits documented on categoryConstNames.
+func isCategoryTypeExpr(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == "Category"
 }
 
 func isKnownCategory(c Category) bool {
@@ -404,7 +470,9 @@ func FuzzCategoryFromTorznab(f *testing.F) {
 // every way a bucket can arrive:
 //
 //   - the declared constants (parsed out of the package source) catch a bucket
-//     added to the enum whether or not String has a case for it;
+//     added to the enum whether or not String has a case for it, and a Category
+//     declared anywhere else in the package fails the parse outright — within
+//     the limits categoryConstNames states on itself;
 //   - the tokens those constants render as catch a bucket whose name is fine
 //     but whose String token is not;
 //   - the String walk that produces allCategories, compared against the
