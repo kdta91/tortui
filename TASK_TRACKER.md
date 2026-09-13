@@ -965,10 +965,103 @@ yet — Torznab is T-021, the scraper T-022.
 
 ### T-012 · Registry and fan-out search
 ```
-status: in-progress
+status: done
 depends: T-010, T-011
 ```
-**Files:** `internal/indexer/registry.go`
+**Files:** `internal/indexer/registry.go`, `internal/indexer/registry_test.go`
+
+**What landed.** `Registry` is the named set of sources plus the fan-out across them:
+`NewRegistry(Config)`, `Register`, `Get`, `List`, `Enabled`, `SetEnabled`, and
+`SearchAll(ctx, q, ids...) ([]Result, []SourceError, error)`. `Config` carries three durations —
+per-indexer `Timeout` (default 15s), `CacheTTL` (60s) and `MinRefreshInterval` (1s) — and any
+zero or negative field is replaced by its default, so the zero `Config` is the documented one.
+No frozen §5 type was touched: neither `indexer.go` nor `category.go` appears in
+`git diff --stat origin/main` at all, and the two files above are the whole change to the package. No
+adapter exists yet (T-021, T-022) and none is imported: every source in the tests is a fake
+declared in `registry_test.go`, per §4's rule that the registry is the only consumer of adapters.
+
+**One type reports both failures and skips, because the return shape is fixed.** The acceptance
+criteria fix the signature at `([]Result, []SourceError, error)`, and §6.3 requires a source that
+lacks a needed capability to be *reported* as skipped without being a failure. There is nowhere
+else to put that, so `SourceError` carries `IndexerID`, `Err`, and a `Skipped` bool, and unwraps
+to a sentinel (`ErrUnsupportedMode`, `ErrThrottled`, `ErrUnknownIndexer`, `ErrSourcePanic`, or the
+adapter's own error). `Error()` says which outcome it was and names the source, so a collected
+error reads on its own (§6.9). See DEC-052.
+
+**The fatal-error rule, stated exactly.** `SearchAll` returns a non-nil error in two cases and no
+others: `ErrAllSourcesFailed` when at least one source failed and none succeeded, and
+`ErrNoSources` when there was nothing to query at all. A skip counts as neither a success nor a
+failure, which settles the three edge cases individually: **all skipped** is a nil error with no
+results and one skip note per source; **skipped + failed** is `ErrAllSourcesFailed`, because every
+source that was actually queried failed; **skipped + succeeded** is a nil error and partial
+results. `ErrNoSources` is a deliberate reading of "the error is non-nil only when every source
+failed", not an oversight — see DEC-053, which records the alternative and why it was rejected.
+
+**The per-source refresh floor skips rather than waits, and is claimed before the request.**
+`reserveFetch` checks the source's last fetch time and stamps the new one under the same lock, so
+two concurrent fan-outs cannot both decide they are first; a cache hit never calls it, because it
+makes no request. A source inside the floor is skipped with `ErrThrottled` — a skip, so it can
+never turn a search fatal. The floor is 1s by default and the 60s cache sits in front of it, so
+the mash-`R` case is a cache hit and the floor only bites on a *different* query reaching the same
+source within a second. The cost is real and is written down rather than hidden: two concurrent
+*distinct* queries against one source will skip one of them (backlog `T-920`). DEC-054 records
+the rejected alternatives.
+
+**Each `Search` runs on its own goroutine behind a buffered handoff.** An adapter that ignores its
+context cannot be allowed to hold the fan-out open past its deadline, and Go cannot abandon a
+blocked call in place; the buffered channel means a late answer is delivered and discarded rather
+than blocking the adapter's goroutine forever. The same goroutine recovers a panicking adapter and
+reports it as that source's failure — §6.9 forbids *raising* a panic outside `main`, and §6.3
+forbids one bad source taking the app down. `SearchAll` itself starts no goroutine that outlives
+it. See DEC-055.
+
+**Dedup and ordering are fully determined by the answers, never by who replied first.** Sources
+are queried concurrently but their results are folded in selection order, so the merge and the
+sort are reproducible. Identity is the infohash (trimmed, lowercased) when there is one, otherwise
+the normalised title plus the size; a result with neither an infohash nor a title containing a
+letter or digit is never merged with anything, since merging on emptiness folds unrelated rows
+together. Highest seeders survives, every contributing id is joined into
+`Extra["tortui.sources"]` in selection order, and the sort breaks ties on the other of
+seeders/published, then title, then indexer id, then result id. DEC-056.
+
+**Verification.** `make check` green and `go test -race ./... -count=1` green (also `-count=3` on
+the package), both **on macOS only** — the Linux and Windows CI legs are not reproducible on this
+machine and are NOT verified locally; the PR's own CI run is the evidence for those.
+`go test ./internal/indexer/ -cover` reports **100.0% of statements** (the §9 floor for this
+package is 75%; `make cover`'s threshold is 0 and enforces nothing — backlog `T-916`).
+`scripts/check-indexer-hostnames.sh origin/main HEAD` exits 0. 41 test functions cover the
+required matrix (all succeed, one times out, one errors, all fail, duplicate infohashes across
+sources, zero results) plus the concurrency cases: concurrent `Register`/`List`/`Get` against
+`SearchAll`, sixteen concurrent identical searches sharing the cache and the floor, an adapter
+that panics, one that returns `(nil, nil)`, one that answers after its deadline, a pre-cancelled
+parent context, and a determinism check that runs the same three-source fan-out 25 times and
+compares the orderings.
+
+**The tests were checked by breaking the code, not by reading it.** Nineteen defects were injected
+into `registry.go` one at a time, each run against the tests it should trip and then reverted
+(`git status` clean afterwards): sequential fan-out, skips counted as failures, any failure fatal,
+no panic recovery, unbuffered handoff, cache storing the adapter's own slice, merge writing into
+the adapter's `Extra`, first-copy-wins dedup, no contributing-source list, cache hit consuming the
+refresh floor, failures cached, one ordering for both modes, category filter not canonicalised, no
+capability check, no refresh floor, no result cache, unmatchable results merged, no per-indexer
+timeout, and ids not de-duplicated. **Two of them passed**, and both were real gaps in the tests
+rather than in the code: the timeout test watched the *fake source's* call return, which happens
+even when the registry's handoff goroutine is left blocked forever, and nothing covered an adapter
+mutating the slice and maps it had already returned. Both were closed — the first by polling the
+goroutine dump for a goroutine still parked in `callSearch`, the second with an adapter that
+rewrites what it returned — and re-running those two mutations plus a third (`cachedResults`
+handing out the cache's own objects) is now red for all three.
+
+**Deliberately not done here:** no adapter (T-021, T-022) and no HTTP client (T-020) — this task
+ships the registry and is tested against fakes only. No single-flight sharing of an in-flight
+fetch (`T-920`). `SearchAll` does not report which sources answered from cache, which T-061's
+status bar will want (`T-921`). `CacheTTL` and `MinRefreshInterval` are registry defaults with no
+TOML keys — `search_timeout` is the only related key `internal/config` has today, and nothing
+wires config into a registry yet because the composition root does not exist (`T-922`). No
+`Query.Limit` cap and no `Query.MinSeeders` filter on the merged output: T-010's godoc already
+puts both on the adapter (`MinSeeders` explicitly, `Categories` explicitly — 'the registry does
+not filter on its behalf'), and truncating the merge would silently drop the tail of a
+multi-source search. No `Resolve` fan-out — nothing calls it yet.
 
 **Acceptance**
 - `Register(Indexer)` / `Get(id)` / `List()` / `Enabled()`.
@@ -1856,6 +1949,20 @@ when it reaches it and does not start backlog items on its own.
   that spelling and gofumpt rewrites it to the form the tripwire catches — but the guard should not
   depend on the formatter to hold. Also covers the alias, untyped-conversion and bare-inline shapes
   that DEC-051 discloses as open by design.
+- `T-920` Share an in-flight fetch between concurrent fan-outs (single-flight per cache key). As
+  built in T-012 the per-source minimum refresh interval is claimed before the request, so two
+  concurrent *distinct* queries reaching one source inside the interval get one fetch and one
+  `ErrThrottled` skip. Pinned by `TestSearchAllConcurrentCallsShareTheCache` and documented in
+  DEC-054; harmless while the TUI issues one search at a time, worth closing before anything
+  issues two.
+- `T-921` `SearchAll` does not tell the caller which sources answered from cache. T-061's
+  acceptance criteria require the status bar to show "when results came from cache rather than a
+  fresh fetch", and the T-012 return shape (`[]Result`, `[]SourceError`, `error`) has nowhere to
+  put it. Decide the shape when T-061 lands rather than guessing now.
+- `T-922` No TOML keys for the registry's cache TTL and per-source minimum refresh interval.
+  `internal/config` has `search_timeout` only; `indexer.Config`'s other two durations are
+  code-level defaults. Nothing is wired either way yet — no composition root exists — so this is
+  a note for whichever task builds one.
 
 
 ---
@@ -1917,6 +2024,12 @@ when it reaches it and does not start backlog items on its own.
 | DEC-049 | 2026-09-13 | The bare `type Category int` declared by T-010 was relocated from `internal/indexer/indexer.go` into `internal/indexer/category.go` rather than left in place with the `const` block added beside it | DEC-043 explicitly offered both options and recorded that a within-package move changes no contract and needs no `DEC-` row of its own; this row exists only because the move is visible in the diff to a file that holds frozen contracts, and a reviewer should not have to guess whether §5 was touched. It was not: the six frozen §5 types (`Indexer`, `Query`, `Result`, `Caps`, `Trust`, `Mode`) are unchanged, and the change to `indexer.go` is a pure deletion of 15 lines with 0 added (`git show --stat`). `Category` is referenced by §5 but never defined there, so its definition was never frozen. Relocating was preferred over adding constants remotely because the T-010 godoc on the declaration stated that the enum 'has not landed yet' and named T-011 as its owner — text that becomes false the moment this task lands, so the doc comment had to be rewritten regardless, and a type whose values, `String()`, and both mapping helpers all live in `category.go` belongs in that file | T-010, T-011 |
 | DEC-050 | 2026-09-13 | **Corrected 2026-09-13 (same day, on QA remediation round 2 of PR #9) — the scan-coverage sentence in the rationale column below was false and is rewritten in place, matching how DEC-022, DEC-028, DEC-040 and DEC-046 were corrected.** **QA remediation of PR #9.** `TestCategoryBucketSetIsClosed` derives the bucket set by parsing the `Category` iota const block out of the package's own non-test `.go` files with `go/parser` (`categoryConstNames`), rather than by QA's suggested walk of `Category.String` until it returns the `category(N)` sentinel. The `String` walk is kept as well — it is what now builds `allCategories`, so the other tests in the file check against buckets read off the implementation too — but it is a cross-check, not the primary derivation | Both approaches fix the reported defect for the case QA reproduced, and the walk is much the simpler of the two. The walk alone leaves one hole, verified by experiment rather than argued: a constant added to the enum **without** a matching `String()` case makes `String` return the sentinel at that value, so the walk stops *before* the new bucket and reports the same seven tokens as before — green. Go does not require a `switch` over a named integer type to be exhaustive and no linter in this repo's `.golangci.yml` enforces exhaustiveness, so that is an ordinary edit, not a contrived one; the bucket is real, reachable, and settable on `Result.Category` whether or not `String` knows its name. Parsing the declaration closes it, because the const block is the one place a bucket cannot be added without appearing. Cost accepted: the test now depends on the *shape* of the declaration, so it fails loudly (`t.Fatalf`, not a skip) on any const block of type `Category` it cannot read unambiguously — a multi-name spec, an explicit value part-way down the iota run, or a second `Category` iota block in another file (iota restarts per block, so declaration order would no longer give the values). A guard that silently ignored a shape it did not understand would be the same class of defect as the one being fixed here. The scan covers every non-test `.go` file in the package directory, not just `category.go`, and a second pass over those same files fails the test on any constant or variable **written with the type `Category`** that the iota block did not declare — so the enum cannot be extended from a neighbouring file by any declaration that spells the type. It can still be extended by a declaration that does not spell it: see DEC-051, which records exactly which shapes stay open and why. All five cases were re-proved by experiment on the fixed test — bucket added with a `String` case, bucket added without one, bucket removed, constant renamed, `String` token renamed — and every one of them is red or a build failure; `internal/indexer` coverage stays at 100.0% since none of this is production code. **What was false:** the original version of this row said "the scan covers every non-test `.go` file in the package directory, not just `category.go`, so **the enum cannot be extended from a neighbouring file**." It could. As first written, the scan discriminated const blocks on `gd.Specs[0].Type` being `Category` and skipped the block otherwise, so a `Category` constant that was not the *first* spec of its block was never looked at, and `var` declarations were never looked at at all. PR #9 QA round 2 (kdta91, 2026-09-13) proved it with a single new file in the package — `const ( CategoryProbeDoc = "probe"; CategoryProbeBucket Category = 7 )` plus an `init` adding it to `categoryWords`, with `category.go` and `category_test.go` both untouched — giving a reachable, content-specific bucket with `go test` `ok` and `golangci-lint` at `0 issues.` That bypass was reproduced on the shipped code before being fixed, and the fix (the second pass described in the decision column) turns it red; the same three attack shapes QA reported — a mixed const block, a `var`, and the neighbouring-file variant — are all red now, and the five cases above are still red. The absolute wording is gone: the row now says what the syntactic match actually reaches, and DEC-051 states the shapes it does not | T-011 |
 | DEC-051 | 2026-09-13 | **QA remediation round 2 of PR #9.** `categoryConstNames` gains a second pass that sweeps every `const` and `var` declaration in every non-test file of the package — including ones nested inside a function body — and `t.Fatalf`s on any name declared with the type `Category` that the iota block did not already declare. The match is **syntactic**: the type must be written as the bare identifier `Category`. Closing the remaining shapes with `go/types` was considered and rejected | This is the fix for the false sentence corrected in DEC-050, and it is the remedy PR #9 QA named as preferred. The alternative was prose-only — scope the claim and file the hardening as backlog — but the guard is a §2 backstop and the shapes QA demonstrated (a `Category` const that is not the first spec of its block, a `var`, and either of those in a neighbouring file) are ordinary Go that a future task could write without meaning anything by it, so closing them is worth ~40 lines of test code. **What stays open, stated rather than implied.** A syntactic match cannot see a declaration that never writes the word `Category`, and three shapes were probed and confirmed still green: a const typed through an alias (`type c = Category; const X c = 7`); an untyped const whose value is a conversion (`const X = Category(7)`); and a bare `Category(7)` used inline with no declaration behind it at all. The last of those has no declaration for any parser to read, so no amount of AST work closes it. Closing the first two would need a full type check — `go/types` with an importer over the parsed package — and that was rejected on portability: it makes a unit test depend on export data being present for every import, it behaves differently under `go test -c` and under a cold build cache, and the three CI legs (ubuntu/macOS/Windows) cannot be verified from the macOS dev machine, so a flaky guard would be traded for a leaky one. A value-shape sweep that flagged any `Category(...)` conversion in a declaration's initialiser was also rejected: it would fire on legitimate future code such as `var zero = Category(0)`, and it still would not reach the inline case. **Calibration.** This is a backstop against an accidental or unnoticed addition, not a security boundary — the test lives in the repository and anyone deliberately adding a bucket can edit it. Its value is that the ordinary ways of adding one all fail loudly with a message naming the rule. The godoc on `categoryConstNames` states these same limits at the code, so a reader of the test is told what it does not cover without having to find this row | T-011 |
+| DEC-052 | 2026-09-13 | `SourceError` is one struct carrying both outcomes — `IndexerID`, `Err`, and a `Skipped` bool — rather than two return slices or a skip reported as an ordinary error. It unwraps to a sentinel (`ErrUnsupportedMode`, `ErrThrottled`, `ErrUnknownIndexer`, `ErrSourcePanic`, or the adapter's own error) and its `Error()` names the source and says whether it failed or was skipped | The T-012 acceptance criteria fix the return shape at `([]Result, []SourceError, error)`, so a separate `[]Skipped` return was not available; and AGENT.md §6.3 requires a source that lacks a needed capability to be reported as skipped *and* to not count as a failure, so collapsing it into a plain error was not available either. A bool plus a sentinel keeps both facts on one value: callers that only want to count failures read `Skipped`, callers that want the reason use `errors.Is`. The alternative considered was a `Kind` enum (failed/unsupported/throttled/unknown); it was rejected because it duplicates information the sentinel already carries and would need extending every time a new skip reason appears, whereas a new sentinel does not change the type. An unknown indexer id is deliberately NOT a skip: it is a caller error, so it counts towards the all-failed condition | T-012 |
+| DEC-053 | 2026-09-13 | `SearchAll` returns a non-nil error in exactly two cases: `ErrAllSourcesFailed` when at least one source failed and none succeeded, and `ErrNoSources` when the selection was empty (empty registry, or every source disabled). Skips count as neither success nor failure, so all-skipped is a nil error and skipped-plus-failed is `ErrAllSourcesFailed` | The criterion says the error is non-nil only when every source failed, and the three skip edge cases it does not spell out have to resolve somewhere. Treating a skip as neutral is the only reading consistent with §6.3's 'skipped and noted, not treated as a failure': counting it as a success would suppress a genuine all-failed report, and counting it as a failure is what §6.3 forbids. `ErrNoSources` is the one place this goes beyond the literal wording, and it is deliberate: with nothing queried there is no partial success to protect, and returning `(nil, nil, nil)` would render in the TUI as 'no results found' when the truth is 'you have no sources enabled' — a different message and a different fix for the user. It is a distinct sentinel precisely so a caller can tell the two apart, and the godoc on `SearchAll` states both cases. The alternative — nil error and an empty result set — was rejected for that reason | T-012, T-061 |
+| DEC-054 | 2026-09-13 | The per-source minimum refresh interval (default 1s) is enforced by *skipping* the source with `ErrThrottled`, and the slot is claimed under the registry lock **before** the request is made, not after it completes. A cache hit never claims a slot | Claiming before rather than after is what makes the floor hold under concurrency: two fan-outs that both check a stale timestamp would both fetch. Skipping rather than waiting was chosen over two alternatives. (1) Waiting out the remainder of the interval, bounded by the context: it needs the slot reserved for a future instant and released again if the caller gives up, and an abandoned reservation leaves a phantom slot blocking a source that is idle — real complexity for a case the cache already covers. (2) Serving a stale cache entry when throttled: dead code by construction, because with the TTL (60s) longer than the floor (1s), a query whose entry is inside the floor is necessarily still inside the TTL and was already served from cache. The default is 1s rather than something larger precisely because the floor only ever bites on a *different* query within the interval: a user retyping a search cannot go faster than that by hand, but a loop can. The known cost is that two concurrent distinct queries against one source skip one of them, which is pinned by a test and filed as `T-920` rather than left to be discovered | T-012, T-061 |
+| DEC-055 | 2026-09-13 | Each source's `Search` runs on a goroutine of its own with the answer handed back over a **buffered** channel, and that goroutine recovers a panicking adapter and turns it into that source's error (`ErrSourcePanic`) | Two things §6.2 and §6.3 ask for cannot be had from a direct call. An adapter that ignores its context would otherwise hold the whole fan-out open past its deadline, and Go offers no way to abandon a blocked call in place — so the deadline is honoured by ceasing to wait, not by killing anything, and the buffer is what keeps that honest: a late answer is delivered into the buffer and discarded, so the adapter's goroutine finishes instead of parking forever on a send nobody will receive. That distinction is not theoretical — with an unbuffered channel the goroutine leaks, and the first version of the timeout test did not catch it (it watched the fake's own call return, which still happens); the test now polls the goroutine dump for a goroutine parked in `callSearch`, and is red with the buffer removed. Recovering the panic is not a violation of §6.9: that rule bars *raising* a panic outside `main`, while §6.3 requires one broken source not to crash the application, and an adapter is exactly the untrusted code that might. The recover sits on the goroutine that can see the panic, and the recovered value is included in the error text | T-012, T-021, T-022 |
+| DEC-056 | 2026-09-13 | Dedup identity is the infohash (trimmed, lowercased) when present, else the normalised title (lowercased, every run of non-letter/non-digit collapsed to one space) plus `SizeBytes`. A result with neither an infohash nor a title containing a letter or digit is never merged with anything. The survivor is the copy with the most seeders; contributing ids are joined into `Result.Extra` under the exported key `tortui.sources`, always set, in the order the sources were queried | Sources differ in separators, bracketing and case far more often than they differ in words, so normalising those is what makes a title match at all; including the size keeps two genuinely different items with the same name apart. The 'no identity, no merge' rule exists because the empty key is otherwise shared by every unidentifiable row, which would fold unrelated results from different sources into one — the degenerate case is given a per-row unique key instead. Highest-seeders-wins is the criterion's own rule and is also the copy most likely to resolve into a live swarm. The key is exported (`ExtraKeySources`) rather than a bare string so the TUI has one name to read, and it is always set — including for a result only one source produced — so consumers have a single code path; the registry overwrites whatever an adapter put there, which is stated in the godoc. §5 says nothing outside an adapter may *depend on* a particular `Extra` key and no core logic may *branch* on one; writing a display-only annotation is neither, and the criterion requires the ids to be recorded in `Extra` specifically | T-012, T-061 |
+| DEC-057 | 2026-09-13 | `SetEnabled(id, bool)` was added alongside the four methods the criteria name, and naming ids explicitly in `SearchAll` queries those sources whether or not they are enabled | `Enabled()` is unanswerable without something that sets enablement — with no setter it would be a permanent synonym for `List()` — and `internal/config`'s `Indexer.Enabled` field — merged in T-002 (`internal/config/config.go`) with the comment 'controls whether the registry queries this source' — shows the flag is expected to exist. It is the minimum addition: no removal, no reordering, and a disabled source keeps its place in `List()` and its registration order. Explicit ids overriding the flag is the other half of the same decision: the enabled set is the *default* fan-out, and a caller that names sources (the search screen's multi-select, T-060) has made the more specific statement. The alternative — silently dropping a named-but-disabled source — would give the TUI a selection whose result depends on invisible state | T-012, T-002, T-060 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
