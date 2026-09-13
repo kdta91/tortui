@@ -737,10 +737,80 @@ states exactly what T-024 should add and where.
 
 ### T-010 · Indexer contracts
 ```
-status: in-progress
+status: done
 depends: T-002
 ```
-**Files:** `internal/indexer/indexer.go`
+**Files:** `internal/indexer/indexer.go` (plus `internal/indexer/indexer_test.go`)
+
+**Notes:** `internal/indexer` is a new package holding only the AGENT.md §5 contracts —
+`Trust`, `Mode`, `Query`, `Result`, `Caps`, `Indexer` — with no adapter, no registry, and no
+imports beyond `context`, `errors`, `fmt`, `strings`, `time`. Type names, field names, field
+order, field types, and iota order were transcribed from the §5 code block and then read back
+against it line by line; the only deviations from the literal text of that block are gofumpt's
+alignment of the `Caps` fields (which §5 writes unaligned) and per-field doc comments replacing
+§5's trailing `//` comments, both of which preserve every identifier and its position.
+
+**What was introduced beyond the §5 text, and why (this is what T-011 inherits):** §5's `Query`
+and `Result` both reference a `Category` type that §5 itself never defines and that T-011 owns
+(`internal/indexer/category.go`, not created here). To make this task's single file compile
+without building ahead, `indexer.go` declares the bare type and nothing else:
+
+```go
+type Category int
+```
+
+No constants, no `CategoryOther`, no `String()`, no mapping helpers — all of that is T-011's,
+and the type's godoc says so explicitly and names the file. T-011 can either add its `const`
+block in `category.go` referring to this declaration (same package, compiles as-is) or relocate
+the three-line declaration into `category.go`; a move within one package changes no contract and
+needs no `DEC-` entry. The zero value is deliberately left unclaimed here so T-011 can define it
+as `CategoryOther` per its own acceptance criteria and AGENT.md §13. See DEC-043.
+
+**`Trust.String()` vs `Trust.Badge()`** are two different renderings on purpose (DEC-044).
+`String()` returns lowercase, case-uniform tokens — `unknown` / `none` / `verified` / `trusted`
+/ `vip` — as the identifier form for logs, test output, and any later filter syntax. `Badge()`
+returns the AGENT.md §7 table cell — `VIP` / `TR` / `✓` / `""`, with `""` for both
+`TrustUnknown` and `TrustNone`. An out-of-range `Trust` renders as `trust(N)` from `String()`
+(diagnosable) and as `""` from `Badge()` (so an unexpected number can never widen a fixed-width
+column); both are tested at `Trust(99)` and `Trust(-1)`. `Badge()` returns the **Unicode** `✓`
+and has no terminal-capability awareness — the AGENT.md §14 ASCII fallback is the TUI theme
+layer's job and is deliberately *not* started here.
+
+**`Result.Validate()`** checks exactly the one thing the acceptance criterion names — that at
+least one of `Magnet` / `TorrentURL` is set — and nothing else, because every other field is
+legitimately empty for some source (no size, no date, no uploader, no details page), so
+validating them would reject perfectly displayable results. A whitespace-only value does not
+count as set (`strings.TrimSpace`), since a magnet of `"   "` is neither a link nor something a
+caller would want to hand the engine. Failures wrap an exported sentinel, `ErrNoLink`, inside
+`fmt.Errorf("indexer %q: result %q: %w", ...)` so callers can `errors.Is` it while the message
+still names the source and the item (AGENT.md §6.9); the test asserts both the `errors.Is` match
+and the presence of the two ids in the message.
+
+**Godoc** is on every exported identifier — package, both enums and all seven of their constants
+individually, all three structs and each of their fields, `ErrNoLink`, `Validate`, `String`,
+`Badge`, the `Indexer` interface, and each of its five methods — and states adapter obligations
+rather than restating the field name: `Trust` is display-only and never gates behaviour (§2),
+`TrustUnknown` must not be collapsed into `TrustNone`, `Caps` must be honest and constant,
+`ID`/`Name`/`Caps` do no I/O and are concurrency-safe, `Search`/`Resolve` honour the ctx deadline
+and are safe for concurrent fan-out, errors are wrapped to name the source and nothing panics,
+and neither method may call anything but the source the user pointed it at (§2, no telemetry).
+
+**Verification.** `make check` green and `go test -race ./... -count=1` green, both **on macOS
+only** — the Linux and Windows CI legs are not reproducible on this machine and are NOT verified
+locally; the PR's own CI run is the evidence for those. `go test ./internal/indexer/ -cover`
+reports **100.0% of statements** (the §9 floor for this package is 75%); the only executable
+statements in the package are `String`, `Badge`, and `Validate`, all exhaustively covered
+including their out-of-range and zero-value paths. `scripts/check-indexer-hostnames.sh
+origin/main` exits 0 on the committed diff. Tests also pin the two zero values the rest of the
+codebase will rely on (`Trust(0) == TrustUnknown`, `Mode(0) == ModeSearch`), the full
+least-to-most-trusted iota ordering that the §7 sortable trust column depends on, and a
+compile-time `var _ Indexer = fakeIndexer{}` proving the interface is implementable as declared
+plus a check that a no-op `Resolve` returns the result unchanged. The test fixture is an invented
+source (`example-archive`, `archive.example.org`) with a deliberately all-zeros infohash, per §2.
+
+**Deliberately not done here:** no `category.go` (T-011), no registry or `SearchAll` (T-012), no
+`Mode.String()` (nothing needs one yet; T-012's cache key may add it), no ASCII glyph fallback
+(TUI), and no `Validate` checks beyond the link.
 
 **Acceptance**
 - `Indexer`, `Query`, `Result`, `Caps`, `Trust`, `Mode` exactly as specified in AGENT.md §5.
@@ -1691,6 +1761,9 @@ when it reaches it and does not start backlog items on its own.
 | DEC-040 | 2026-09-13 | **Corrected 2026-09-13 (QA remediation of PR #7) — the closing sentence of the rationale column below was false and is rewritten in place, matching how DEC-022/DEC-028 were corrected.** The T-007 "scans the diff for anything resembling a real indexer hostname" check is implemented as a shape-plus-context heuristic (`scripts/check-indexer-hostnames.sh`) with a currently-empty allowlist (`docs/indexer-hostname-allowlist.md`), rather than any form of denylist | AGENT.md §2 bars naming an infringement-oriented site anywhere in this repository, including in a blocklist, a regex, or a fixture — so a denylist of known piracy hostnames was never an option regardless of implementation difficulty; that is a hard `AGENT.md §2` constraint, not a design preference. T-024 (bundled lawful sources) hasn't landed yet, so there is also no real allowlist content to check against today. The heuristic scans only lines that (a) live in files where tortui actually defines indexer sources (`internal/indexer/**`, `config.example.toml`, `docs/indexer-definitions.md`, `docs/bundled-sources.md`, `docs/indexer-hostname-allowlist.md`, `testdata/**`) or (b) mention `indexer`/`torznab`/`scraper`/`base_url`, so a dependency URL in `NOTICE`, a README link, or a CI action reference is never inspected regardless of allowlist content — this is what keeps the check from false-positiving on the current tree (verified by diffing the empty git tree against `HEAD`, see the T-007 tracker notes) without needing to allowlist every incidental hostname already in the repo. A structurally non-resolving placeholder — `localhost`, or a host ending in the RFC 2606/6761 reserved `example`/`test`/`invalid`/`localhost` labels — is always allowed independent of the allowlist file, since those can never resolve to a real bundled source by construction. **What was false:** the original version of this row extended that same "can never be a real source by construction" reasoning to *any* IP literal. That does not hold — unlike a reserved TLD, a bare IP address can absolutely be a real production endpoint, and QA (PR #7) called this out directly. Corrected: only a **private/loopback/link-local** IPv4 literal (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8`, `169.254.0.0/16`, `0.0.0.0/8`) is auto-allowed by construction now; a public IPv4 literal is treated like any other hostname and falls through to the same allowlist, flagged if it isn't on it. `is_allowed()`/`is_private_ipv4()` in `scripts/check-indexer-hostnames.sh`, `docs/indexer-hostname-allowlist.md`, and the T-007 tracker notes were all updated to match, with a regression test (`scripts/check-indexer-hostnames_test.sh`) covering both the private-allowed and public-flagged cases | T-007 |
 | DEC-041 | 2026-09-13 | `check-indexer-hostnames.sh` is wired as its own `indexer-hostnames` CI job (`if: github.event_name == 'pull_request'`), not as a new prerequisite of `make check` or the `check` CI job — **this clause is unaffected and stands** — and branch protection's required-status-check list (T-001/DEC-021) was left unchanged — **this clause was reversed by DEC-042 below (QA remediation of PR #7); see there** | A diff-based check has nothing meaningful to compare against outside a pull-request's base/head — on `main` itself, or in a local `make check` run with no reliable base ref, it would either need a network-fetched `origin/main` (which may be stale or absent) or trivially no-op, neither of which is a real per-commit gate. This mirrors how `licenses` and `build-all` (T-005/T-006) already stand apart from `check` for their own, different reasons. A `make check-hostnames` convenience target was still added for local use (`HOSTNAME_BASE_REF ?= origin/main`, overridable) since a contributor may want to run it before pushing. Branch protection was not touched because this task's acceptance criteria don't ask for it and QA review (not required-status enforcement) is what actually gates every merge here per AGENT.md §10; `indexer-hostnames` reports as an ordinary, non-required PR check for now, same as `build-all`/`licenses` — **QA (PR #7) found this reasoning didn't hold: merges here happen via `gh pr merge --auto`, which only waits on *required* checks, so "QA review gates the merge" and "the check fails the PR" are not equivalent, and the acceptance criterion asks for the latter. See DEC-042** | T-007 |
 | DEC-042 | 2026-09-13 | **QA remediation of PR #7, same day.** Branch protection's `required_status_checks.contexts` on `main` now includes `check indexer hostname allowlist (T-007)` alongside the three existing `make check (<os>)` contexts (`strict: true` preserved; `required_pull_request_reviews` still not set) | This is the fix for DEC-041's reversed clause above. QA verified live that a red `indexer-hostnames` run blocked nothing, since `gh pr merge --auto` only waits on required checks and this context wasn't one. Before adding it, the exact registered context string was confirmed from a real completed check run on this PR's own head commit (`gh api repos/kdta91/tortui/commits/<head-sha>/check-runs`: `"name":"check indexer hostname allowlist (T-007)"`, `"conclusion":"success"`, run `event: pull_request`) rather than assumed from the workflow YAML's job `name:` field, since GitHub's actual registered context can differ from that (e.g. under a matrix). Applied via `gh api -X PUT repos/kdta91/tortui/branches/main/protection` with the full protection object — the `.../required_status_checks` sub-resource PUT 404s for this repo for reasons not fully diagnosed in the time available — carrying forward every other field's existing value explicitly (`strict`, `allow_force_pushes`, `allow_deletions`, `required_linear_history`, `block_creations`, `required_conversation_resolution`, `lock_branch`, `allow_fork_syncing`) rather than omitting them, because a first attempt that omitted `allow_force_pushes` silently reset it to `false`; caught by reading protection back and diffing against the pre-change GET before treating the change as done. Deadlock check: `indexer-hostnames` only runs `if: github.event_name == 'pull_request'`, and every push to this PR's branch triggers both a `push` event (job reports `skipping`, harmless) and a `pull_request` synchronize event (job actually runs) — confirmed directly for this PR's current head commit, which already has one of each, with the `pull_request`-triggered run reporting `success` — so requiring this context does not strand the PR on a context that never reports for a `pull_request` event. Read-back proof is in the PR description/remediation report, not duplicated here | T-007 |
+| DEC-043 | 2026-09-13 | `internal/indexer/indexer.go` declares a bare `type Category int` with no constants and no methods, rather than T-010 creating `category.go`, inlining a placeholder `CategoryOther`, or changing `Query`/`Result` to avoid the type | AGENT.md §5 freezes `Query.Categories []Category` and `Result.Category Category`, so the type must exist for T-010's file to compile, but the taxonomy itself — the enum values, the `CategoryOther` zero value, and the Torznab-numeric/adapter-string mapping helpers — is T-011's acceptance criteria and T-011's file (`internal/indexer/category.go`). Three options were weighed: (a) create `category.go` here with the full enum, which is building ahead into another task and would leave T-011 with nothing to do; (b) declare a placeholder `CategoryOther Category = iota` here, which pre-commits the zero value that T-011's own criteria are supposed to define and would leave a stray constant in the wrong file if T-011 chose differently; (c) declare only the type. (c) was chosen as the literal minimum: it adds three lines, claims no zero value, and leaves every T-011 decision open. The type's godoc names `category.go` and T-011 explicitly, and states that T-011 may either add its `const` block in `category.go` against this declaration (legal Go — same package) or relocate the declaration into `category.go`, and that such a move is a within-package relocation that changes no contract and needs no `DEC-` entry of its own. This row exists so T-011 does not mistake the bare type for a frozen §5 contract: §5 references `Category` but never defines it, so its definition is not frozen by this task | T-010, T-011 |
+| DEC-044 | 2026-09-13 | `Trust.String()` returns lowercase tokens (`unknown`/`none`/`verified`/`trusted`/`vip`) while `Trust.Badge()` returns the display cells (`VIP`/`TR`/`✓`/`""`); `Badge()` returns the Unicode `✓` with no ASCII fallback, and both methods return a safe value for an out-of-range `Trust` rather than panicking | The two methods have different jobs and AGENT.md pins only one of them. §7 pins `Badge()` exactly: `VIP` / `TR` / `✓` / blank, "a compact badge, not a word", with blank covering both `TrustUnknown` and `TrustNone` since neither is worth a column cell. `String()` is unpinned, so it was made the *identifier* form instead of a second display form — case-uniform lowercase so it is stable to write in a log line, assert on in a test, and later parse in a filter expression, with no per-value casing exception for VIP that a parser would have to special-case. Out-of-range handling differs on purpose: `String()` returns `trust(N)` because a surprising value in a log should be diagnosable, `Badge()` returns `""` because a surprising value in a fixed-width table column must not widen it. On the ASCII fallback: AGENT.md §14 requires `✓` to have an ASCII substitute chosen by terminal-capability detection and forceable with `--ascii`, but that detection lives in the TUI theme layer, so `Badge()` deliberately stays capability-unaware and returns the Unicode form — putting the fallback here would mean this package reading terminal state, which would also make `Badge()` impure and untestable without an environment | T-010, T-050 |
+| DEC-045 | 2026-09-13 | `Result.Validate()` validates only that at least one of `Magnet`/`TorrentURL` is set, treats a whitespace-only value as unset, and reports failure by wrapping an exported sentinel `ErrNoLink` inside `fmt.Errorf("indexer %q: result %q: %w", ...)` | The acceptance criterion names exactly one rejection and adding more was considered and rejected: every other `Result` field is legitimately empty for some source (a source may publish no size, no date, no uploader, no details page, and `InfoHash` is explicitly allowed to be empty until `Resolve` by §5's own comment), so a stricter `Validate` would discard results that are perfectly displayable, and it would do so inside a frozen contract that every future adapter has to satisfy. Whitespace-only is treated as unset because a `Magnet` of `"   "` is not a link by any reading of "has neither" and would otherwise pass a bare `!= ""` check straight through to the engine. The sentinel plus `%w` wrapping is what lets a caller branch on the condition with `errors.Is` rather than by string-matching the message, while still satisfying AGENT.md §6.9's requirement that errors name their context — the ids are `%q`-quoted so an empty `IndexerID` on a malformed result reads as `""` rather than producing a mangled message. Documented on the method: a result that `Search` returns unresolved will not pass `Validate`, so callers validate after `Resolve`, not before | T-010 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
