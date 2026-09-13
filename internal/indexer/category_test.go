@@ -1,22 +1,132 @@
 package indexer
 
 import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"math"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
 
-// allCategories is every bucket the taxonomy defines. Helpers must only ever
-// return one of these, whatever they are fed.
-var allCategories = []Category{
-	CategoryOther,
-	CategoryAudio,
-	CategoryVideo,
-	CategoryImage,
-	CategoryText,
-	CategorySoftware,
-	CategoryData,
+// allCategories is every bucket the taxonomy defines, read off the
+// implementation rather than listed here a second time: the walk starts at the
+// zero value and stops at the first value Category.String reports as unnamed
+// (the category(N) sentinel). A bucket added to the enum therefore shows up in
+// this slice on its own, which is what makes the closed-set tripwire below able
+// to see it. Helpers must only ever return one of these, whatever they are fed.
+var allCategories = walkCategories()
+
+// walkCategories enumerates the buckets by asking Category.String where the
+// named values stop. The bound is a sanity limit, not the expected size: an
+// enum that somehow ran past it returns an obviously wrong slice, which
+// TestCategoryBucketSetIsClosed then fails on, rather than looping forever.
+func walkCategories() []Category {
+	var cs []Category
+	for i := range 1024 {
+		c := Category(i)
+		if c.String() == fmt.Sprintf("category(%d)", i) {
+			break
+		}
+		cs = append(cs, c)
+	}
+	return cs
+}
+
+// categoryConstNames returns the identifiers of the Category enum's iota const
+// block, in declaration order, parsed out of the package's own non-test source.
+//
+// This is the half of the tripwire that a String method cannot fool. Walking
+// String only sees buckets someone remembered to add a case for; reading the
+// declaration sees every constant of type Category the package declares, in any
+// of its files, whether or not String knows about it.
+//
+// Anything about the declaration this cannot interpret unambiguously — a spec
+// declaring several names at once, an explicit value part-way down the block, a
+// Category const block that is not an iota run — fails the test rather than
+// being skipped, because a shape this does not understand is a shape it cannot
+// honestly claim to be guarding.
+func categoryConstNames(t *testing.T) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("reading the package directory: %v", err)
+	}
+
+	var files []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		files = append(files, name)
+	}
+	sort.Strings(files)
+
+	if len(files) == 0 {
+		t.Fatal("no non-test .go files found in the package directory")
+	}
+
+	fset := token.NewFileSet()
+
+	var (
+		names  []string
+		blocks int
+	)
+	for _, name := range files {
+		file, err := parser.ParseFile(fset, filepath.Clean(name), nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+
+		for _, decl := range file.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST || len(gd.Specs) == 0 {
+				continue
+			}
+
+			first, ok := gd.Specs[0].(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			if id, ok := first.Type.(*ast.Ident); !ok || id.Name != "Category" {
+				continue
+			}
+			if len(first.Values) != 1 {
+				t.Fatalf("%s: Category const block's first spec has %d values, want exactly iota", name, len(first.Values))
+			}
+			if id, ok := first.Values[0].(*ast.Ident); !ok || id.Name != "iota" {
+				t.Fatalf("%s: Category const block is not an iota run; this test cannot derive bucket values from it", name)
+			}
+
+			blocks++
+			if blocks > 1 {
+				t.Fatalf("%s: a second Category iota const block was found; iota restarts per block, so bucket values can no longer be derived from declaration order", name)
+			}
+
+			for i, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					t.Fatalf("%s: unexpected spec kind %T in the Category const block", name, spec)
+				}
+				if len(vs.Names) != 1 {
+					t.Fatalf("%s: spec %d of the Category const block declares %d names, want 1", name, i, len(vs.Names))
+				}
+				if i > 0 && len(vs.Values) != 0 {
+					t.Fatalf("%s: spec %d of the Category const block sets an explicit value, breaking the iota run", name, i)
+				}
+				names = append(names, vs.Names[0].Name)
+			}
+		}
+	}
+
+	return names
 }
 
 func isKnownCategory(c Category) bool {
@@ -278,26 +388,61 @@ func FuzzCategoryFromTorznab(f *testing.F) {
 }
 
 // The bucket set is closed, and this test is the tripwire on it: adding,
-// removing, or renaming a bucket fails here until someone updates this list on
-// purpose.
+// removing, or renaming a bucket fails here until someone updates the two lists
+// below on purpose.
 //
 // That is the point. Every bucket must name a kind of DATA — audio, video,
 // still images, text, software, datasets. A bucket that names subject matter
 // instead (a genre, a medium, a scene tag, a kind of material) is the
 // content-specific categorisation AGENT.md §2 forbids and §16 explains, and it
 // must not reach the enum by accident.
+//
+// Both sides of every comparison here come off the implementation, never off a
+// second copy of the bucket list kept in this file: wantNames and wantTokens
+// are the only hand-maintained lists, and a change to category.go alone moves
+// the other side. There are three checks because no single one of them sees
+// every way a bucket can arrive:
+//
+//   - the declared constants (parsed out of the package source) catch a bucket
+//     added to the enum whether or not String has a case for it;
+//   - the tokens those constants render as catch a bucket whose name is fine
+//     but whose String token is not;
+//   - the String walk that produces allCategories, compared against the
+//     declaration, catches a String case written for a value the enum never
+//     declared.
 func TestCategoryBucketSetIsClosed(t *testing.T) {
-	want := []string{"other", "audio", "video", "image", "text", "software", "data"}
+	wantNames := []string{
+		"CategoryOther",
+		"CategoryAudio",
+		"CategoryVideo",
+		"CategoryImage",
+		"CategoryText",
+		"CategorySoftware",
+		"CategoryData",
+	}
+	wantTokens := []string{"other", "audio", "video", "image", "text", "software", "data"}
 
-	var got []string
-	for _, c := range allCategories {
-		got = append(got, c.String())
+	const rule = "\nif this is a deliberate change: a bucket must name a kind of data, " +
+		"never subject matter (AGENT.md §2, §16)"
+
+	gotNames := categoryConstNames(t)
+	if strings.Join(gotNames, ",") != strings.Join(wantNames, ",") {
+		t.Errorf("Category constants declared in the package source = [%s], want [%s]%s",
+			strings.Join(gotNames, ", "), strings.Join(wantNames, ", "), rule)
 	}
 
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("bucket set = [%s], want [%s]\n"+
-			"if this is a deliberate change: a bucket must name a kind of data, "+
-			"never subject matter (AGENT.md §2, §16)",
-			strings.Join(got, ", "), strings.Join(want, ", "))
+	gotTokens := make([]string, len(gotNames))
+	for i := range gotNames {
+		gotTokens[i] = Category(i).String()
+	}
+	if strings.Join(gotTokens, ",") != strings.Join(wantTokens, ",") {
+		t.Errorf("bucket set = [%s], want [%s]%s",
+			strings.Join(gotTokens, ", "), strings.Join(wantTokens, ", "), rule)
+	}
+
+	if len(allCategories) != len(gotNames) {
+		t.Errorf("Category.String names %d consecutive values but the enum declares %d constants; "+
+			"the String switch and the const block disagree about what the buckets are%s",
+			len(allCategories), len(gotNames), rule)
 	}
 }
