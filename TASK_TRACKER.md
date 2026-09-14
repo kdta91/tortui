@@ -2148,6 +2148,38 @@ when it reaches it and does not start backlog items on its own.
   this tree. Requiring the matched value to look like a hostname — at least one dot-separated
   label followed by a plausible TLD, and not a known Go identifier shape — would keep the check
   meaningful without the false positives. Found while building T-020.
+- `T-927` `internal/logging`'s free-text masker misses `CookieHeader:` in a `%+v` struct dump. The
+  regex requires the sensitive word immediately followed by `[:=]`, so `APIKey:` is caught but
+  `CookieHeader:` is not — the `Header` sits between. Only bites when a caller formats a struct into
+  a string itself rather than passing it as a log attribute (reflection-based masking handles the
+  attribute path correctly). Found by QA on T-020 (PR #11); a defect in `internal/logging`, not in
+  `httpx`.
+- `T-928` `httpx`'s per-host limiter keys on the literal `url.URL.Host`, so `feed.example.org` and
+  `feed.example.org:80` are separate buckets and `checkRedirect` refuses a redirect that only adds
+  an explicit default port. Both fail closed — a doubled rate budget and a refused-but-safe
+  redirect, never a followed unsafe one. Normalising the default port per scheme fixes both. Found
+  by QA on T-020 (PR #11), disclosed in the `ErrCrossHostRedirect` godoc and DEC-064.
+- `T-929` `slog.Any` on an `httpx.Config` renders `!ERROR:json: unsupported type: func(...)` because
+  `Config.Jitter` is a function field. Fails safe — no credential is emitted — but the log line is
+  useless. A `LogValue` on `Config` (as `Credentials` already has) would fix it. Found by QA on
+  T-020 (PR #11).
+- `T-930` `httpx.checkRedirect` compares each hop's scheme against `via[0]`, the original request,
+  rather than the immediately preceding hop, so `http` -> `https` -> `http` is followed. No new
+  exposure versus the configured scheme — the first hop was already cleartext by the user's own
+  config, which is why DEC-064 follows an upgrade — but comparing against the previous hop would be
+  tighter. Found by QA on T-020 (PR #11).
+- `T-931` `httpx`'s `leakCases` table does not include the `ErrInsecureRedirect` path added in
+  T-020's round-1 remediation. That path is covered by its own dedicated tests, so this is a gap in
+  the systematic leak sweep rather than an uncovered behaviour. Found by QA on T-020 (PR #11).
+- `T-932` Harden the Windows `make check` CI leg against a Chocolatey CDN outage. T-020 (PR #11) was
+  blocked twice by `choco install shellcheck` failing with a 504 from
+  `community.chocolatey.org` -> the pinned shellcheck v0.9.0 release asset; the identical job passed
+  on re-run, so it is a transient upstream outage, not a code defect. Because a push and a
+  pull_request event each produce a `make check (windows-latest)` context on the same head commit
+  (DEC-042), BOTH runs must be re-run before the required context clears — re-running one leaves the
+  PR blocked with no obvious signal. Pinning a vendored shellcheck binary, caching it, or retrying
+  the install step would remove a recurring stall from every future PR.
+
 
 
 
