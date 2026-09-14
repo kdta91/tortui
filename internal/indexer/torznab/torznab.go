@@ -18,13 +18,32 @@
 //     credential, never builds an HTTP request by hand, and never calls
 //     net/http.
 //
-//   - No error, and no Result field that is not named for a URL, ever
-//     carries text this package received from the source. A Torznab request
-//     puts the user's api_key in the query string, so a server that echoed
-//     it back — into an error description, a guid, an uploader name — would
-//     otherwise land it in the user's log file in plaintext, which is the
-//     one leak internal/logging cannot mask. See DEC-066, and the
-//     credential test in torznab_credentials_test.go.
+//   - No error this package produces ever carries text it received from
+//     the source, and every Result field this package *derives* is clean of
+//     it too. A Torznab request puts the user's api_key in the query
+//     string, so a server that echoed it back — into an error description,
+//     a guid, an uploader name — would otherwise land it in the user's log
+//     file in plaintext, which is the one leak internal/logging cannot
+//     mask. ID prefers the infohash and strips the query and fragment off
+//     a URL-shaped fallback, Uploader refuses a link-shaped value, Extra
+//     copies only whitelisted attributes whose value parses as a number,
+//     and TorrentURL and SourceURL are named so internal/logging's
+//     key-name rule redacts them wholesale.
+//
+//     Two Result fields are **not** derived and cannot be. Title is the
+//     source's own text and Magnet is its magneturl attribute, both
+//     verbatim: the title is the value the user reads and the magnet has to
+//     reach the engine exactly as published. Neither name is on
+//     internal/logging's masked-key list and an opaque api_key has no value
+//     shape that package can match, so both carry whatever the source chose
+//     to put in them — a credential the source echoed back included — and
+//     logging either field, or a whole Result, writes it out in plaintext.
+//     Result.ID is that same text for an item that published no infohash,
+//     no guid, no comments and no link, because the title is then the only
+//     identity left. That residual gap is a property of the frozen §5
+//     Result contract rather than of this adapter; it is recorded as
+//     backlog T-934 (opened by QA on PR #12) and explained in DEC-071. See
+//     also DEC-066, and the credential test in credentials_test.go.
 //
 //   - Caps are probed, not assumed, and fixed for the lifetime of an
 //     Adapter. Caps.Latest in particular is set from a real request the
@@ -162,14 +181,25 @@ func New(opts Options) (*Adapter, error) {
 // The two return values are not the usual pair. The Adapter is nil only when
 // opts cannot produce one at all — no id, no usable endpoint — and in that
 // case the error says so. Every other error is a probe failure that arrives
-// **alongside a perfectly usable adapter** carrying the fail-closed
-// baseline caps, and wraps ErrCapsUnavailable. A caller that wants a working
-// source regardless of what the caps endpoint did may use the adapter and
-// report the error; a caller that is testing a source's configuration (the
-// settings screen) shows it. Discarding the adapter on error is the one
-// thing not to do.
+// **alongside a perfectly usable adapter**, and the two probe steps report
+// themselves differently on purpose:
 //
-// The probe makes two requests. See Adapter.probe.
+//   - a `t=caps` failure wraps ErrCapsUnavailable, and the adapter carries
+//     the fail-closed baseline caps because nothing was learned;
+//   - a Latest-probe failure does **not** wrap it — the caps document
+//     parsed fine — and the adapter carries everything that document said,
+//     with Caps.Latest and Caps.ProvidesMagnet left false.
+//
+// So errors.Is(err, ErrCapsUnavailable) is how a caller tells "this source
+// published no usable caps document" from "its caps are known and only the
+// recent-additions probe failed". A caller that wants a working source
+// regardless may use the adapter and report the error; a caller that is
+// testing a source's configuration (the settings screen) shows it.
+// Discarding the adapter on error is the one thing not to do.
+//
+// The probe makes one or two requests: `t=caps` always, and the keyword-less
+// `t=search` that decides Caps.Latest only when caps says search works. See
+// Adapter.probe.
 func Discover(ctx context.Context, opts Options) (*Adapter, error) {
 	a, err := New(opts)
 	if err != nil {

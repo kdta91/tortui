@@ -87,6 +87,48 @@ func echoingFeed() string {
 		`</item></channel></rss>`
 }
 
+// probeHash is a made-up infohash, used so the magnet in
+// echoingEverythingFeed is a well-formed one.
+const probeHash = "0123456789abcdef0123456789abcdef01234567"
+
+// echoingEverythingFeed is echoingFeed turned fully hostile: the same
+// credential-bearing links, plus the key echoed into the two places the
+// adapter passes through verbatim and therefore cannot clean — the <title>
+// and a magneturl's dn= parameter.
+//
+// It exists because echoingFeed does neither, which made
+// TestOnlyTheURLNamedResultFieldsCarryTheCredential's assertion vacuous for
+// exactly the two fields that can carry a credential (found by QA on
+// PR #12). The two are asserted here as *expected* to carry it, which is
+// what the code actually does and what DEC-071 records.
+func echoingEverythingFeed() string {
+	base := "https://feed.example.org"
+	download := base + "/dl/1?" + httpx.DefaultAPIKeyParam + "=" + testKey
+	magnet := magnetScheme + "?xt=" + btihPrefix + probeHash + "&amp;dn=" + testKey
+
+	return `<rss version="2.0"><channel><item>` +
+		`<title>Invented Release ` + testKey + `</title>` +
+		`<guid isPermaLink="true">` + download + `</guid>` +
+		`<comments>` + base + `/details/1?` + httpx.DefaultAPIKeyParam + `=` + testKey + `</comments>` +
+		`<link>` + download + `</link>` +
+		`<enclosure url="` + download + `" length="10" type="application/x-bittorrent"/>` +
+		`<attr name="magneturl" value="` + magnet + `"/>` +
+		`<attr name="seeders" value="1"/>` +
+		`<attr name="uploader" value="` + base + `/u/` + testKey + `"/>` +
+		`<attr name="grabs" value="` + testKey + `"/>` +
+		`</item></channel></rss>`
+}
+
+// titleOnlyEchoingFeed is an item that published no infohash, no magnet, no
+// guid, no comments and no link — so resultID has nothing left but the
+// title, which here carries the key.
+func titleOnlyEchoingFeed() string {
+	return `<rss version="2.0"><channel><item>` +
+		`<title>Invented Release ` + testKey + `</title>` +
+		`<attr name="seeders" value="1"/>` +
+		`</item></channel></rss>`
+}
+
 // leakCases builds one error per failure mode the adapter can produce, each
 // from an adapter configured with the user's credentials.
 func leakCases(t *testing.T) map[string]error {
@@ -204,10 +246,12 @@ func TestNoErrorFromThisAdapterCarriesTheCredential(t *testing.T) {
 	}
 }
 
-func TestOnlyTheURLNamedResultFieldsCarryTheCredential(t *testing.T) {
-	t.Parallel()
+// searchOnce runs one search against a source answering with body, and
+// returns the single result it produced.
+func searchOnce(t *testing.T, body string) (indexer.Result, *fakeSource) {
+	t.Helper()
 
-	src, opts := credentialledSource(t, map[string]reply{functionSearch: xmlReply(echoingFeed())})
+	src, opts := credentialledSource(t, map[string]reply{functionSearch: xmlReply(body)})
 
 	a, err := New(opts)
 	if err != nil {
@@ -223,32 +267,116 @@ func TestOnlyTheURLNamedResultFieldsCarryTheCredential(t *testing.T) {
 		t.Fatalf("parsed %d results, want 1", len(results))
 	}
 
-	r := results[0]
+	return results[0], src
+}
 
-	// The two fields that legitimately hold a credential-bearing URL. Both
-	// are named for internal/logging's key-name rule, which is what makes
-	// them safe to hold one, and the download URL has to carry the key or
-	// the file cannot be fetched.
-	if !strings.Contains(r.TorrentURL, testKey) {
-		t.Errorf("TorrentURL = %q, want the download address as published, key and all", r.TorrentURL)
+// TestWhichResultFieldsCanCarryTheCredential draws the real boundary, in
+// both directions, against a source that echoes the user's api_key into
+// every field it can reach.
+//
+// It replaced TestOnlyTheURLNamedResultFieldsCarryTheCredential, whose name
+// stated something untrue and whose assertion was vacuous where it mattered:
+// it forbade the key in Title and Magnet while feeding the adapter a
+// document that put the key in neither (QA, PR #12). Both directions are
+// asserted here, and the "does carry it" half is the load-bearing one — it
+// goes red if the adapter ever starts scrubbing either field, which is what
+// makes the "does not carry it" half mean something.
+//
+//   - TorrentURL and SourceURL carry the key and are safe doing so: their
+//     names are on internal/logging's masked-key list.
+//   - Title and Magnet carry the key and are NOT safe: they are the
+//     source's own text verbatim, by necessity, under names that package
+//     does not mask. This is the residual gap in DEC-071, whose structural
+//     fix is backlog T-934.
+//   - Everything else the adapter derives — ID (given any other identity),
+//     InfoHash, Uploader, Extra — is clean, and that is this adapter's own
+//     work rather than a property of the protocol.
+func TestWhichResultFieldsCanCarryTheCredential(t *testing.T) {
+	t.Parallel()
+
+	r, src := searchOnce(t, echoingEverythingFeed())
+
+	// Fields that must carry the key exactly as the source published it.
+	// Two are safe because internal/logging masks on their names; two are
+	// the disclosed gap. Either way, an adapter that quietly altered them
+	// would be a different (and, for Magnet, a broken) adapter.
+	carries := map[string]struct {
+		value  string
+		masked bool
+	}{
+		"TorrentURL": {r.TorrentURL, true},
+		"SourceURL":  {r.SourceURL, true},
+		"Title":      {r.Title, false},
+		"Magnet":     {r.Magnet, false},
 	}
 
-	if !strings.Contains(r.SourceURL, testKey) {
-		t.Errorf("SourceURL = %q, want the page address as published", r.SourceURL)
+	for field, want := range carries {
+		if strings.Contains(want.value, testKey) {
+			continue
+		}
+
+		if want.masked {
+			t.Errorf("Result.%s = %q, want the address as published, key and all", field, want.value)
+
+			continue
+		}
+
+		t.Errorf(
+			"Result.%s = %q no longer carries the source's own text verbatim; if that is deliberate, "+
+				"the package doc, DEC-071 and T-934 all describe the old behaviour and must be updated with it",
+			field, want.value,
+		)
 	}
 
-	// Everything else. None of these names is on internal/logging's list,
-	// so a credential in any of them would reach the log file in plaintext.
-	unmasked := map[string]string{
+	assertDerivedFieldsAreClean(t, r)
+
+	// ID is derived here even though the title carries the key, because
+	// the item published an identity the adapter prefers to the title.
+	if r.ID != probeHash {
+		t.Errorf("Result.ID = %q, want the infohash %q", r.ID, probeHash)
+	}
+
+	if len(src.requests()) != 1 {
+		t.Fatalf("Search made %d requests, want 1", len(src.requests()))
+	}
+
+	// The same sweep against an item whose only identity is a
+	// credential-bearing guid, so ID's URL-stripping is exercised rather
+	// than short-circuited by the infohash above. Dropping this case is
+	// what would make the ID half of the assertion vacuous in the other
+	// direction.
+	viaGUID, _ := searchOnce(t, echoingFeed())
+
+	assertDerivedFieldsAreClean(t, viaGUID)
+
+	if want := "https://feed.example.org/dl/1"; viaGUID.ID != want {
+		t.Errorf("Result.ID = %q, want the guid reduced to %q", viaGUID.ID, want)
+	}
+
+	if !strings.Contains(viaGUID.TorrentURL, testKey) || !strings.Contains(viaGUID.SourceURL, testKey) {
+		t.Errorf(
+			"TorrentURL = %q and SourceURL = %q, want both as published: an item whose links stopped "+
+				"carrying the key would make every assertion above vacuous",
+			viaGUID.TorrentURL, viaGUID.SourceURL,
+		)
+	}
+}
+
+// assertDerivedFieldsAreClean checks every Result field this adapter derives
+// rather than passes through. None of these names is on internal/logging's
+// list, so a credential in any of them would reach the log file in
+// plaintext — which is precisely why the adapter constrains each one.
+func assertDerivedFieldsAreClean(t *testing.T, r indexer.Result) {
+	t.Helper()
+
+	derived := map[string]string{
 		"ID":        r.ID,
-		"Title":     r.Title,
 		"InfoHash":  r.InfoHash,
-		"Magnet":    r.Magnet,
 		"Uploader":  r.Uploader,
 		"IndexerID": r.IndexerID,
 	}
 
-	for field, value := range unmasked {
+	for field, value := range derived {
 		if strings.Contains(value, testKey) {
 			t.Errorf("Result.%s = %q carries the api key and is not a field internal/logging masks", field, value)
 		}
@@ -263,12 +391,50 @@ func TestOnlyTheURLNamedResultFieldsCarryTheCredential(t *testing.T) {
 	if _, present := r.Extra["torznab."+attrGrabs]; present {
 		t.Error("a non-numeric grabs value reached Extra; the numeric whitelist is what keeps a URL out of it")
 	}
+}
 
-	if len(src.requests()) != 1 {
-		t.Fatalf("Search made %d requests, want 1", len(src.requests()))
+// TestResultIDFallsBackToTheTitleAndInheritsItsGap pins the one branch on
+// which a *derived* field carries source text verbatim: an item with no
+// infohash, no magnet, no guid, no comments and no link leaves resultID
+// nothing but the title.
+//
+// It is asserted rather than fixed. Dropping the fallback would leave such
+// an item with no identity at all and would remove a duplicate of text the
+// same Result already carries in Title, so it buys no safety; see DEC-071
+// and resultID's own doc comment. This test is what keeps that statement
+// true: it goes red if the fallback is removed or if the title stops
+// reaching ID.
+func TestResultIDFallsBackToTheTitleAndInheritsItsGap(t *testing.T) {
+	t.Parallel()
+
+	r, _ := searchOnce(t, titleOnlyEchoingFeed())
+
+	if r.ID != r.Title {
+		t.Fatalf("Result.ID = %q, want the title %q: the fallback is the documented behaviour", r.ID, r.Title)
+	}
+
+	if !strings.Contains(r.ID, testKey) {
+		t.Fatalf(
+			"Result.ID = %q no longer carries what the source put in the title; if that is deliberate, "+
+				"the package doc, resultID's comment and DEC-071 describe the old behaviour and must be updated",
+			r.ID,
+		)
 	}
 }
 
+// TestNoCredentialReachesTheLogFile drives everything this adapter produces
+// through the real internal/logging sink and greps the file.
+//
+// Its scope is exactly what this adapter controls, and no more: every error
+// it can return, and a Result whose credential-bearing text is confined to
+// the fields the adapter derives or names for masking. It deliberately uses
+// echoingFeed rather than echoingEverythingFeed, because a Result whose
+// Title or Magnet carries a key does put that key in the log file — proven
+// by QA on PR #12, disclosed in the package doc and DEC-071, and left to
+// backlog T-934, which is the only place it can be fixed since it is a
+// property of the frozen §5 Result type. Asserting the leak here instead
+// would pin a defect the moment T-934 lands; asserting the maskable surface
+// is what this package can actually promise.
 func TestNoCredentialReachesTheLogFile(t *testing.T) {
 	// Not parallel: logging.New installs the process-wide slog default.
 	path := filepath.Join(t.TempDir(), "tortui.log")

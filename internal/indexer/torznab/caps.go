@@ -101,7 +101,7 @@ type probeOutcome struct {
 
 // probe asks the source what it can do and returns the outcome.
 //
-// It makes two requests, in this order:
+// It makes one or two requests, in this order:
 //
 //  1. `t=caps`, which is parsed into Search, Categories, Pagination and the
 //     category id map.

@@ -248,6 +248,19 @@ func resultFrom(indexerID string, it feedItem) indexer.Result {
 // and path before it is used. Result.ID is not one of the names
 // internal/logging masks on, so a raw guid here would be a plaintext key in
 // the log file the moment anything logged a result (DEC-061, DEC-066).
+//
+// The last fallback is the title, and it is the one candidate that is *not*
+// reduced to anything: for an item that published no infohash, no guid, no
+// comments and no link, the title is the only identity left, and it is
+// whatever text the source sent. So an ID produced by that branch can carry
+// a credential a source echoed into its own title — the same residual gap
+// Result.Title itself has, one field wider. Keeping the fallback rather
+// than leaving such an item with an empty ID is deliberate: the leak is
+// already present in Title verbatim by necessity, so dropping the fallback
+// would remove a duplicate of text the Result carries anyway and buy no
+// safety, while costing the only identity an otherwise-unidentifiable item
+// has. Disclosed in the package doc and in DEC-071; the structural fix is
+// backlog T-934.
 func resultID(hash string, it feedItem) string {
 	if hash != "" {
 		return hash
