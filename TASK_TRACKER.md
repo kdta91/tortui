@@ -1963,6 +1963,18 @@ when it reaches it and does not start backlog items on its own.
   `internal/config` has `search_timeout` only; `indexer.Config`'s other two durations are
   code-level defaults. Nothing is wired either way yet — no composition root exists — so this is
   a note for whichever task builds one.
+- `T-923` `SearchAll` waits out the slowest source's full per-indexer timeout even once every other
+  source has answered. That is the documented meaning of a per-indexer timeout and not a bug, but
+  T-060/T-061 may want results delivered incrementally rather than at the slowest source's pace.
+  Found by QA on T-012 (PR #10).
+- `T-924` `reserveFetch` returns `false` for an id that is not registered, which surfaces to the
+  caller as an `ErrThrottled` skip rather than an unknown-source failure. Currently unreachable —
+  there is no deregistration API — so this is a latent misleading-message bug only, worth closing
+  before any API that can remove a source lands. Found by QA on T-012 (PR #10).
+- `T-925` Document the dedup seeder-tie survivor. When two candidate results tie on seeders the
+  first in selection order survives; verified deterministic by QA, but stated in neither DEC-056 nor
+  the `mergeResults` godoc, so a future reader cannot rely on it. Found by QA on T-012 (PR #10).
+
 
 
 ---
