@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture: the smallest caps document a server can publish and still be
+  usable (T-021) — search is available, and nothing else is declared: no
+  <limits>, no <categories>. Everything not declared must read as false.
+-->
+<caps>
+  <searching>
+    <search available="yes" supportedParams="q"/>
+  </searching>
+</caps>

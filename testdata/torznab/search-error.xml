@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture: the Newznab/Torznab error document, served with HTTP 200 in
+  place of a feed (T-021). The description is deliberately one that echoes
+  part of the request back: this adapter never repeats it, because a
+  server is free to echo the api key into it (DEC-066).
+-->
+<error code="201" description="Incorrect parameter: cat=nonsense (request was t=search&amp;q=example)"/>
