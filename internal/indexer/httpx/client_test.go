@@ -444,6 +444,99 @@ func TestCrossHostRedirectIsRefused(t *testing.T) {
 	}
 }
 
+func TestSchemeDowngradeRedirectIsRefused(t *testing.T) {
+	t.Parallel()
+
+	// Two real servers can never share one host:port across schemes, so the
+	// downgrade is staged at the transport: the https request is answered
+	// with a 302 whose Location keeps the host *and the query* and changes
+	// only the scheme, which is what an apex-to-www or path-rewrite
+	// redirect looks like. net/http's own redirect machinery then calls
+	// CheckRedirect exactly as it would against a real server.
+	var schemes []string
+
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		schemes = append(schemes, r.URL.Scheme)
+
+		cleartext := *r.URL
+		cleartext.Scheme = "http"
+
+		return &http.Response{
+			StatusCode: http.StatusFound,
+			Status:     "302 Found",
+			Header:     http.Header{"Location": []string{cleartext.String()}},
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    r,
+		}, nil
+	})
+
+	client := New(Config{MinHostInterval: -1, Transport: transport, Credentials: testCredentials()})
+
+	_, err := client.Get(testContext(t), "https://feed.example.org/api", nil)
+	if !errors.Is(err, ErrInsecureRedirect) {
+		t.Fatalf("error = %v, want ErrInsecureRedirect", err)
+	}
+
+	if len(schemes) != 1 || schemes[0] != "https" {
+		t.Fatalf("schemes requested = %v, want exactly one https request and no cleartext one", schemes)
+	}
+
+	if strings.Contains(err.Error(), testAPIKey) || strings.Contains(err.Error(), "apikey=") {
+		t.Fatalf("the refusal error carries the credential: %v", err)
+	}
+}
+
+func TestCheckRedirectSchemeAndHostRules(t *testing.T) {
+	t.Parallel()
+
+	mustParse := func(raw string) *url.URL {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("parse %q: %v", raw, err)
+		}
+
+		return u
+	}
+
+	cases := []struct {
+		name string
+		from string
+		to   string
+		want error
+	}{
+		{name: "same host same scheme", from: "https://feed.example.org/api", to: "https://feed.example.org/final"},
+		{name: "http stays http", from: "http://feed.example.org/api", to: "http://feed.example.org/final"},
+		{name: "upgrade to https is followed", from: "http://feed.example.org/api", to: "https://feed.example.org/api"},
+		{name: "downgrade to http is refused", from: "https://feed.example.org/api?apikey=k", to: "http://feed.example.org/api?apikey=k", want: ErrInsecureRedirect},
+		{name: "scheme case is ignored", from: "HTTPS://feed.example.org/api", to: "https://feed.example.org/api"},
+		{name: "different host is refused", from: "https://feed.example.org/api", to: "https://other.example.org/api", want: ErrCrossHostRedirect},
+		{name: "different port is refused", from: "https://feed.example.org/api", to: "https://feed.example.org:8443/api", want: ErrCrossHostRedirect},
+		{name: "host check wins over scheme check", from: "https://feed.example.org/api", to: "http://other.example.org/api", want: ErrCrossHostRedirect},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			origin := &http.Request{URL: mustParse(tc.from)}
+			next := &http.Request{URL: mustParse(tc.to)}
+
+			err := checkRedirect(next, []*http.Request{origin})
+			if tc.want == nil {
+				if err != nil {
+					t.Fatalf("checkRedirect(%s -> %s) = %v, want nil", tc.from, tc.to, err)
+				}
+
+				return
+			}
+
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("checkRedirect(%s -> %s) = %v, want %v", tc.from, tc.to, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestRedirectChainIsBounded(t *testing.T) {
 	t.Parallel()
 

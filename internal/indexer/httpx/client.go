@@ -140,7 +140,21 @@ var (
 	// user's api_key travels in the query string, so following a redirect
 	// off-host would hand their credential to a server they never
 	// configured.
+	//
+	// The comparison is on the URL host as written, so an explicit default
+	// port counts as a different host (example.org and example.org:80).
+	// That direction fails closed — a legitimate redirect is refused, no
+	// credential moves — and normalising it is backlog T-928.
 	ErrCrossHostRedirect = errors.New("refusing to follow a redirect to a different host")
+
+	// ErrInsecureRedirect reports a same-host redirect that would move the
+	// request from https to http. It is refused for the same reason as a
+	// cross-host one: the api_key travels in the query string, and a
+	// Location that preserves the query — the usual case for an
+	// apex-to-www or path-rewrite redirect — would put the user's
+	// credential on the wire in cleartext. The reverse direction, http to
+	// https, is followed.
+	ErrInsecureRedirect = errors.New("refusing to follow a redirect from https to http")
 
 	// ErrTooManyRedirects reports a redirect chain longer than the limit.
 	ErrTooManyRedirects = errors.New("too many redirects")
@@ -382,8 +396,18 @@ func newDialer(connect time.Duration) *net.Dialer {
 	}
 }
 
-// checkRedirect refuses to leave the host the request was addressed to, and
-// bounds the chain length. Neither error names a URL — only hosts.
+// checkRedirect refuses to leave the host the request was addressed to,
+// refuses to drop from https to http on the way, and bounds the chain
+// length. No error names a URL — only hosts and schemes.
+//
+// The scheme matters as much as the host here. The api_key travels in the
+// query string, and a Location that preserves the query is the common case,
+// so following https -> http on the same host puts the credential on the
+// wire in cleartext — the same harm the cross-host check exists to prevent.
+// http -> https is the opposite: the destination is the host the user
+// configured and the hop only adds TLS, so it is followed rather than
+// broken (an apex http URL upgraded by the server is an ordinary,
+// widespread redirect). See DEC-062.
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxRedirects {
 		return fmt.Errorf("httpx: %w (%d hops)", ErrTooManyRedirects, len(via))
@@ -394,7 +418,18 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 		return fmt.Errorf("httpx: %w (%s to %s)", ErrCrossHostRedirect, hostOf(origin), hostOf(req.URL))
 	}
 
+	if isSchemeDowngrade(origin.Scheme, req.URL.Scheme) {
+		return fmt.Errorf("httpx: %w (at %s)", ErrInsecureRedirect, hostOf(req.URL))
+	}
+
 	return nil
+}
+
+// isSchemeDowngrade reports whether moving from one scheme to the other
+// loses transport security. Only https -> http does; http -> https and any
+// same-scheme hop do not.
+func isSchemeDowngrade(from, to string) bool {
+	return strings.EqualFold(from, "https") && !strings.EqualFold(to, "https")
 }
 
 // Request is one outbound HTTP request.
@@ -740,13 +775,18 @@ func (c *Client) resolveURL(rawURL string, extra url.Values) (*url.URL, error) {
 // backoff schedule — including a zero one, which means "now". A Retry-After
 // longer than MaxRetryAfter returns false: the caller stops rather than
 // either sleeping for it or ignoring it.
+//
+// A negative RetryAfter is clamped to zero rather than handed to Sleep.
+// parseRetryAfter cannot produce one — it saturates instead of wrapping —
+// but StatusError is exported and a negative delay must never silently
+// become "no wait at all", which is what Clock.Sleep does with one.
 func (c *Client) retryDelay(n int, statusErr *StatusError) (time.Duration, bool) {
 	if statusErr.RetryAfterSet {
 		if statusErr.RetryAfter > c.maxRetryAfter {
 			return 0, false
 		}
 
-		return statusErr.RetryAfter, true
+		return max(statusErr.RetryAfter, 0), true
 	}
 
 	delay := backoffFor(n, c.baseBackoff, c.maxBackoff)

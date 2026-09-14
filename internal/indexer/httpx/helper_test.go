@@ -122,9 +122,13 @@ func testContext(t *testing.T) context.Context {
 	return ctx
 }
 
-// roundTripFunc adapts a function to http.RoundTripper, for the handful of
-// cases a real server cannot produce — a response whose Content-Length lies
-// about its body, and a transport error that already carries a *url.Error.
+// roundTripFunc adapts a function to http.RoundTripper, for the five cases
+// httptest.Server cannot stage: a response whose Content-Length lies about
+// its body, a body that fails mid-read, a body that fails both Read and
+// Close, a transport error that already carries a *url.Error, and a
+// same-host https-to-http redirect (a real server sends that Location
+// readily enough, but two httptest servers can never share one host:port
+// across two schemes).
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

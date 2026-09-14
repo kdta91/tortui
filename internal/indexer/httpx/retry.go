@@ -1,6 +1,8 @@
 package httpx
 
 import (
+	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,6 +12,18 @@ import (
 // maxDurationHalf is the largest duration that can be doubled without
 // overflowing time.Duration's int64.
 const maxDurationHalf = time.Duration(1) << 61
+
+// maxDuration is the longest representable time.Duration (~292 years).
+// An absurd Retry-After saturates here instead of wrapping negative.
+const maxDuration = time.Duration(math.MaxInt64)
+
+// maxRetryAfterSeconds is the largest delta-seconds value that still fits
+// in a time.Duration once multiplied by time.Second. Anything above it
+// would wrap: 31536000000 ("a thousand years") becomes -1488191h, which
+// then reads as *shorter* than MaxRetryAfter and is slept for no time at
+// all — MaxAttempts back-to-back requests at a server that just asked to be
+// left alone, the opposite of what DEC-059 says happens.
+const maxRetryAfterSeconds = int64(math.MaxInt64) / int64(time.Second)
 
 // isRetryableStatus reports whether a response status is worth trying
 // again: 429 Too Many Requests, or any 5xx.
@@ -37,15 +51,30 @@ func isRetryableStatus(code int) bool {
 // caller treats as "no advice given" and falls back to exponential backoff.
 // A value in the past, or a negative delta, is not malformed: the server is
 // saying "now", so it yields a zero delay rather than a negative one.
+//
+// The returned duration is never negative. A delta-seconds value too large
+// for a time.Duration saturates at maxDuration rather than wrapping, so an
+// absurd wait stays absurd all the way to retryDelay, which stops the
+// attempt loop on it (DEC-059). time.Time.Sub already saturates the same
+// way, so the HTTP-date form needs no separate guard.
 func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return 0, false
 	}
 
-	if secs, err := strconv.Atoi(value); err == nil {
+	// ErrRange is accepted alongside a clean parse: a run of digits too
+	// long for an int64 is still a delta-seconds value, just an enormous
+	// one, and ParseInt clamps it to MaxInt64 (or MinInt64) which lands on
+	// the saturating branches below. Only a syntactically malformed value
+	// falls through to the HTTP-date form.
+	if secs, err := strconv.ParseInt(value, 10, 64); err == nil || errors.Is(err, strconv.ErrRange) {
 		if secs <= 0 {
 			return 0, true
+		}
+
+		if secs > maxRetryAfterSeconds {
+			return maxDuration, true
 		}
 
 		return time.Duration(secs) * time.Second, true

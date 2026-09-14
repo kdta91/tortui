@@ -412,6 +412,46 @@ func TestSingleAttemptConfigurationDisablesRetrying(t *testing.T) {
 	}
 }
 
+func TestAbsurdRetryAfterStopsInsteadOfRetryingWithNoDelay(t *testing.T) {
+	t.Parallel()
+
+	// A delta-seconds value large enough to overflow time.Duration used to
+	// wrap to a negative delay, which compares as shorter than
+	// MaxRetryAfter and sleeps for no time at all — MaxAttempts requests
+	// back to back at a server that just asked to be left alone, the exact
+	// opposite of DEC-059 and the hammering AGENT.md §6.13 forbids.
+	server := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "31536000000")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+
+	clock := newFakeClock()
+	client := New(Config{MinHostInterval: -1, MaxAttempts: 4, MaxRetryAfter: 30 * time.Second, Clock: clock})
+
+	_, err := client.Get(testContext(t), server.URL, nil)
+
+	var statusErr *StatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("error = %v, want a *StatusError in the chain", err)
+	}
+
+	if statusErr.RetryAfter <= 0 {
+		t.Fatalf("RetryAfter = %s, want a positive duration: an absurd wait must not wrap negative", statusErr.RetryAfter)
+	}
+
+	if got, want := server.count(), 1; got != want {
+		t.Fatalf("requests = %d, want %d: an overflowing Retry-After must stop the loop, not retry with no delay", got, want)
+	}
+
+	if len(clock.sleeps()) != 0 {
+		t.Fatalf("sleeps = %v, want none", clock.sleeps())
+	}
+
+	if !strings.Contains(err.Error(), "longer than the 30s limit") {
+		t.Fatalf("error = %q, want it to say why it stopped", err)
+	}
+}
+
 func TestParseRetryAfter(t *testing.T) {
 	t.Parallel()
 
@@ -432,6 +472,17 @@ func TestParseRetryAfter(t *testing.T) {
 		{name: "http date in the future", value: now.Add(90 * time.Second).Format(http.TimeFormat), want: 90 * time.Second, ok: true},
 		{name: "http date in the past", value: now.Add(-time.Hour).Format(http.TimeFormat), want: 0, ok: true},
 		{name: "absurdly large", value: "31536000", want: 365 * 24 * time.Hour, ok: true},
+		// The overflow boundary and past it. time.Duration(secs) *
+		// time.Second wraps negative above ~9.22e9 seconds, and a negative
+		// delay reads as *shorter* than MaxRetryAfter, so it would be slept
+		// for no time at all instead of ending the attempt loop. These four
+		// saturate instead.
+		{name: "delta seconds at the duration ceiling", value: "9223372036", want: 9223372036 * time.Second, ok: true},
+		{name: "delta seconds one past the ceiling", value: "9223372037", want: maxDuration, ok: true},
+		{name: "delta seconds absurdly past the ceiling", value: "31536000000", want: maxDuration, ok: true},
+		{name: "delta seconds too long for an int64", value: "99999999999999999999999", want: maxDuration, ok: true},
+		{name: "negative delta too long for an int64", value: "-99999999999999999999999", want: 0, ok: true},
+		{name: "http date beyond the duration ceiling", value: "Fri, 01 Jan 9999 00:00:00 GMT", want: maxDuration, ok: true},
 		{name: "malformed word", value: "soon", want: 0, ok: false},
 		{name: "malformed float", value: "1.5", want: 0, ok: false},
 		{name: "malformed date", value: "Wed, 99 Foo 2026 07:28:00 GMT", want: 0, ok: false},
