@@ -1268,10 +1268,121 @@ string because `Jitter` is a func field; fails safe).
 
 ### T-021 · Torznab adapter
 ```
-status: in-progress
+status: done
 depends: T-020
 ```
-**Files:** `internal/indexer/torznab/`
+**Files:** `internal/indexer/torznab/` — `torznab.go`, `caps.go`, `feed.go`, `decode.go`,
+`errors.go` and their tests (`torznab_test.go`, `caps_test.go`, `feed_test.go`,
+`credentials_test.go`, `helper_test.go`), plus twelve XML fixtures in `testdata/torznab/`.
+
+**What landed.** `torznab.New(Options) (*Adapter, error)` builds an adapter without touching the
+network; `torznab.Discover(ctx, Options) (*Adapter, error)` builds one and probes the source for
+its real capabilities. `*Adapter` satisfies the frozen §5 `indexer.Indexer`, asserted at compile
+time in `torznab.go`. No §5 type was touched — `git diff --stat origin/main` lists five new
+source files, five new test files, twelve fixtures, and this tracker. Nothing outside
+`internal/indexer/torznab/` imports the package (§4). Every request goes through T-020's `httpx`,
+so this package never touches `net/http`, never sees a credential, and writes no log lines at
+all. Package coverage is **100.0% of statements**, the level the rest of `internal/indexer` sits
+at; `make check` and `go test -race ./... -count=1` are both green.
+
+**Criterion by criterion.**
+- *Implements `Indexer` against the Torznab/Newznab XML API* — `ID`, `Name`, `Caps`, `Search`,
+  `Resolve`. `Search` sends `t=search` with `extended=1` (an optional newznab search parameter,
+  §2 of `docs/newznab_api_specification.txt` in the nZEDb/nZEDb repository, branch dev), plus
+  `q`, `limit`, `offset` and `cat` as the query and the source's caps allow.
+  `TestSearchSendsTheRequestTheQueryDescribes` asserts the parameter set for seven queries.
+  `MinSeeders` is applied locally — Torznab has no parameter for it, which `indexer.Query`
+  explicitly allows.
+- *Parses `caps` into `Caps`; handles servers that omit it* — `caps.go` reads `<searching>`,
+  `<limits>` and `<categories>` into Search, Pagination and Categories.
+  `TestDiscoverHandlesAServerThatOmitsCaps` covers seven ways a server can fail to publish one
+  (404, 500, an empty body, an HTML page, truncated XML, a feed in place of caps, an `<error>`
+  document): each returns the **fail-closed baseline caps and a usable adapter** alongside an
+  error wrapping `ErrCapsUnavailable`, and each case then runs a successful search through that
+  adapter to prove it. See DEC-069 for why the adapter comes back with the error.
+- *`ModeLatest` probed, not assumed* — see "The caps probe" below and DEC-067.
+- *Maps `seeders`, `peers`, `size`, `pubDate`, `category`, `magneturl`, `infohash`* — plus
+  `leechers`, `uploader`/`poster`, the trust attributes, and the plain `<size>`, `<files>`,
+  `<grabs>` elements Jackett writes outside the torznab namespace. `search-full.xml` asserts
+  every field of a fully populated item; `search-messy.xml` asserts seven items' worth of
+  missing, duplicated, non-numeric, negative and contradictory attributes. Every numeric field is
+  parsed by hand rather than by `encoding/xml`, because a struct field typed `int` makes one
+  `seeders="n/a"` fail the **whole document** and lose every other result in it. Categories go
+  through `indexer.CategoryFromTorznab` and `CategoryFromString` — the mapping is not duplicated
+  here (§13) — and an unplaceable one is `CategoryOther`, never a dropped result.
+- *`Trust` from any uploader/verified attribute, `TrustUnknown` when absent* — see DEC-068. No
+  Torznab implementation publishes one, so `TrustUnknown` is the honest answer for every server
+  that exists today; the mapping is there for one that invents an attribute. An attribute that is
+  present and false yields `TrustNone`, which `indexer.Trust` documents as different information
+  from absent.
+- *`Resolve` is a no-op when a magnet is present* — checked first, before anything else on the
+  result is looked at, so it holds regardless. `TestResolveIsANoOpWhenAMagnetIsPresent` passes a
+  result whose `InfoHash` deliberately contradicts its magnet and asserts nothing changed and
+  that no request was made. `Resolve` makes **no network call at all** — Torznab has no per-item
+  endpoint — and derives a magnet from an infohash when there is no magnet yet.
+- *Malformed XML, HTTP errors and empty result sets without panicking* —
+  `TestDecodeRejectsEveryUnusableDocument` covers thirteen documents: empty, whitespace,
+  declaration-only, comment-only, plain text, truncated, mismatched tags, an entity bomb, an HTML
+  page, a caps document, an unknown root, a nested `<rss>`, and 60,000 levels of nesting through
+  both the mapped and the skipped path. `TestSearchOutcomes` covers twelve responses end to end.
+  Go's `encoding/xml` refuses an entity the document declared itself (a DOCTYPE internal subset
+  is a `Directive` token, its entity definitions are never applied), so the billion-laughs
+  fixture fails with a syntax error rather than expanding — asserted, not assumed.
+- *Fixture-driven tests from `testdata/torznab/*.xml`, no network* — twelve fixtures at the
+  repository root, per §4's layout and this criterion's own path. Every test replays them through
+  `httptest.Server`; the package makes no real network call anywhere.
+
+**The caps probe.** Torznab has no way to ask whether a recent-additions feed exists: there is no
+`latest` function and the caps document has no field for it. What it has is a documented
+behaviour — the newznab specification says "if the input string for search is empty all items
+(within the server/query limits) are returned", Jackett names the case `IsRssSearch`
+(`src/Jackett.Common/Models/TorznabQuery.cs`, branch master), and neither Jackett's nor
+Prowlarr's controller rejects a request with no `q`. So the probe **makes that exact request**
+(`t=search`, no `q`, `limit=1`, `extended=1`) and reads the answer: `Caps.Latest` is true only
+for a feed that parsed and had at least one item in it. An empty feed, a parse failure, an HTTP
+failure and an error document all leave it false, because a server that ignores an empty keyword
+and a server whose index is empty are indistinguishable and a "latest" key that silently returns
+nothing is worse than a source the registry skips and reports (§6.3). `Caps.ProvidesMagnet` is
+set by the same request and needs **every** returned item to carry a magnet. The probe is skipped
+entirely when the caps document says search is unavailable, so such a source costs one request,
+not two (`TestDiscoverDoesNotProbeLatestWhenTheSourceCannotSearch`). See DEC-067.
+
+**`peers` is the total, not the leecher count.** Verified in three primary sources rather than
+recalled; the derivation and the ambiguous case are DEC-065.
+
+**Credentials cannot reach an error string, a log line, or a `Result` field that is not named for
+a URL.** A Torznab request carries the api_key in its *query string*, so every URL this adapter
+handles is credential-bearing, and `internal/logging` masks by key name — which means an opaque
+key under an unremarkable name is written out in plaintext. The rule here is therefore
+structural: **no text the source sent appears in any error**. That costs the server's own error
+description, the `encoding/xml` message (the line number is kept), and the name of an unexpected
+root element (classified, not quoted); it buys an adapter with nothing to redact. On the `Result`
+side, `TorrentURL` and `SourceURL` legitimately hold credential-bearing URLs and are safe because
+both names are on `internal/logging`'s list; everything else is kept clean — `ID` prefers the
+infohash and strips the query and fragment off any URL-shaped fallback, `Uploader` refuses a
+link-shaped value, and `Extra` takes only whitelisted attributes whose value parses as a number.
+See DEC-066. `TestNoErrorFromThisAdapterCarriesTheCredential` runs fifteen failure modes —
+including an error document that echoes the api_key back, a root element *named* after the key,
+and an entity named after it — and asserts for each error, each `%v`/`%+v` rendering and each
+unwrapped cause that neither the key, nor an `apikey=` parameter, nor **any absolute URL** is
+present. `TestNoCredentialReachesTheLogFile` puts all of it plus a parsed `Result` through the
+real `internal/logging` sink and greps the file. This sweep **caught a live leak while it was
+being written**: `Resolve` was naming the failing result with `%q` on `Result.ID`, and a caller
+can hand it a result whose ID is a raw download URL. Fixed by not naming the result at all.
+
+**Proved by breaking it.** Twelve deliberate mutations were applied one at a time, the relevant
+test run, and the mutation reverted: naming the result in `Resolve`'s error, keeping the `<error>`
+description, reading `peers` below `seeders` as a leecher count, assuming `Caps.Latest` in the
+baseline, setting `Latest` on an empty probe feed, printing `xml.SyntaxError.Msg`, quoting an
+unrecognised root element, keeping a guid's query string, dropping the numeric restriction on
+`Extra`, accepting a link as `Uploader`, rebuilding a magnet that was already present, and
+falling back to the enclosure for `SourceURL`. Every one turned a test red, and the tree is green
+again after the reverts.
+
+**Deliberately not done.** No `tv-search`/`movie-search` modes (subject-matter searches tortui has
+no concept of, §2). No category UI (backlog `T-905`). No local re-filtering of results by
+category, and no result caching — the registry owns both. `Discover` is not wired into any
+composition root, because there is no config or app layer to wire it into yet.
 
 **Acceptance**
 - Implements `Indexer` against the Torznab/Newznab XML API.
@@ -2180,6 +2291,22 @@ when it reaches it and does not start backlog items on its own.
   PR blocked with no obvious signal. Pinning a vendored shellcheck binary, caching it, or retrying
   the install step would remove a recurring stall from every future PR.
 
+- `T-933` `scripts/check-indexer-hostnames.sh` flags the value of an XML namespace declaration.
+  A Torznab feed identifies its extension attributes with an `xmlns:torznab` declaration whose
+  value is an http URL on the protocol's own domain, and an RSS document often carries an
+  `xmlns:atom` one pointing at the W3C (neither is written out here, for the same reason the
+  fixtures cannot write them). Both are namespace
+  *names* — identifiers compared as strings, never dereferenced by any parser — but the script's
+  scheme scan sees a hostname inside a `testdata/` file and fails the check. T-021's fixtures
+  therefore omit the declarations and say so in their headers, which costs nothing functionally
+  (Go's `encoding/xml` accepts an undeclared prefix and this adapter matches `<attr>` by local
+  name regardless of namespace, both asserted by
+  `TestAttrElementParsesUnderAnyNamespacePrefix`) but does make the fixtures slightly less
+  faithful to the wire. Skipping the quoted value of an attribute literally named `xmlns` or
+  `xmlns:<prefix>`, and nothing else on the line, would fix it. Deliberately **not** done inside
+  T-021: it is a change to a §2 safety gate, and one belongs in its own reviewed task rather than
+  as a side effect of an adapter. Every scraper fixture in T-022 will hit the same wall. Found
+  while building T-021.
 
 
 
@@ -2255,6 +2382,12 @@ when it reaches it and does not start backlog items on its own.
 | DEC-062 | 2026-09-14 | **Corrected twice on 2026-09-14 (QA remediation of PR #11, rounds 1 and 2) — round 1: this row described the check as host-only and said same-host redirects are simply followed, which left a hole the row's own rationale argues against. Round 2: the round-1 correction itself asserted, falsely, that `net/http` strips the `Cookie` header across a scheme change. Both are rewritten in place, matching how DEC-040, DEC-046 and DEC-050 were corrected.** A redirect that leaves the host the request was addressed to is refused (`ErrCrossHostRedirect`), not followed. A same-host redirect that drops from `https` to `http` is refused too (`ErrInsecureRedirect`). A same-host `http` to `https` upgrade is followed, as is any same-scheme hop; the chain is bounded at five hops | Not in T-020's criteria, and added anyway because the credential design makes it load-bearing: the api_key travels in the query string, so following a redirect off-host hands the user's own credential to a server they never configured, and `net/http` only strips *header*-borne credentials on a cross-host redirect, not query parameters. Refusing is also the conservative reading of §2 — tortui talks to exactly the sources the user configured. The cost is a source that legitimately redirects to a different hostname (a CDN, an apex-to-www move) failing until the user updates the URL, which is visible and fixable from the settings screen; the alternative failure mode is invisible and hands out a credential **What was false:** the round-1 check compared only `req.URL.Host`, so `https://feed.example.org/api?apikey=…` redirecting to `http://feed.example.org/api?apikey=…` returned `nil` and was followed — and a `Location` that preserves the query is the common case for exactly the apex-to-www and path-rewrite redirects this row is about. The api_key then travels in cleartext, which is the same harm the cross-host refusal exists to prevent, and none of the godoc, this row, or the PR body said so. **Corrected again 2026-09-14 (QA remediation of PR #11, round 2, finding D0):** this passage originally continued "(`net/http` does strip the `Cookie` header across a scheme change, so it was the api_key half only)", and that was false — `net/http` strips nothing on a scheme change. Read in the Go source on the machine this was written on (`shouldCopyHeaderOnRedirect` in `src/net/http/client.go`, go1.27.1): the decision is `isDomainOrSubdomain` over the punycoded, lower-cased `initial.Hostname()` and `dest.Hostname()`, and since `Hostname()` drops the port, neither the scheme nor the port is ever consulted. That function is only reached when `reqs[0].URL.Host != req.URL.Host`, so a same-host downgrade does not even test it and `stripSensitiveHeaders` stays false. Confirmed on the wire too, against the round-1 code with both a `Cookie` header and an `apikey` query set: both arrived at the `http` hop in cleartext. The round-1 defect therefore exposed **both** credentials `httpx` injects — every credential this package can carry — not the api_key half only. The shipped code refuses that hop, so nothing in the fix changes; what was understated was the blast radius of the defect this row exists to record. QA (PR #11, D1) reproduced it. Corrected in `checkRedirect` via `isSchemeDowngrade`; see DEC-064 for why the upgrade direction is followed rather than refused with it | T-020, T-021, T-022 |
 | DEC-063 | 2026-09-14 | A response body over the cap is an **error** (`ErrBodyTooLarge`), never a truncated body, and the cap is enforced twice: a declared `Content-Length` above it is refused before any read, and the read itself runs through `io.LimitReader(body, cap+1)` | Truncation is the dangerous option and it is dangerous quietly: a torznab XML feed cut off mid-document parses as a *shorter* feed rather than as a failure, so the user silently loses results and nothing anywhere reports a problem. Refusing turns that into one visible failed source, which §6.3 already degrades around. The double enforcement is because neither check alone is sufficient: `Content-Length` is absent on any chunked response (so the limited read is what actually holds the line, and is what a test drives with a flushing handler), while the pre-read check avoids pulling 8 MB off the wire from a server that already declared it would send more. A server that declares a small length and sends a large body is caught by the limited read, proven with an injected `RoundTripper` because `net/http`'s own server will not emit that lie | T-020, T-021, T-022 |
 | DEC-064 | 2026-09-14 | The redirect scheme rule is asymmetric on purpose: a same-host `https` to `http` hop is refused, a same-host `http` to `https` hop is followed, and a change of port is a change of host (the comparison is on the host as written, so `example.org` and `example.org:443` are different hosts and the hop is refused) | Refusing every scheme change would be the simpler rule and it was rejected on what the check is actually for: the api_key in the query string. A downgrade puts that credential on the wire in cleartext, which is the harm; an upgrade moves the *same* request to the *same* host the user configured and only adds TLS, so refusing it would break an ordinary, widespread redirect (a source configured by its apex `http` URL whose server upgrades every request) while protecting nothing — the first hop already went out in cleartext by the user's own configuration, and refusing the upgrade would leave them on the worse of the two schemes. Symmetry would be a rule that reads tidier and defends less. The port literal is the opposite trade: `example.org` and `example.org:443` are the same server, so refusing that hop is a false positive, but it fails **closed** — a legitimate redirect stops with a named error the user can see and fix from the settings screen, and no credential moves — so normalising it is backlog `T-928` rather than round-2 work. A non-http scheme in a `Location` is treated as a downgrade from `https` for the same reason, though `net/http` refuses to follow one anyway | T-020, T-021, T-022 |
+| DEC-065 | 2026-09-14 | A Torznab item's `peers` attribute is the **total** swarm (seeders + leechers), so `Result.Leechers` is `peers - seeders`. An explicit `leechers` attribute, when present, wins over the subtraction. A `peers` value **below** `seeders` yields `Leechers = 0` rather than being read as a leecher count | This is the classic Torznab trap and the semantics were read on 2026-09-14 in three primary sources rather than recalled: (1) Prowlarr's `schemas/torznab.xsd` (branch `develop`) annotates the attribute in the schema itself — `<xs:enumeration value="peers" />` carries the comment `seeders + leechers`; (2) Jackett builds it that way, e.g. `release.Peers = release.Seeders + <leechers cell>` in `src/Jackett.Common/Indexers/Definitions/XSpeeds.cs` and the same accumulation in the generic Cardigann engine (`src/Jackett.Common/Indexers/Definitions/CardigannIndexer.cs`), branch `master`; (3) on the consumer side, `GetPeers` in `src/NzbDrone.Core/Indexers/.../Torznab/TorznabRssParser.cs` (Prowlarr and Sonarr, branch `develop`) returns `peers` when present and otherwise **computes** `seeders + leechers`, which only makes sense if the two are the same quantity. `leechers` is honoured first because the same `torznab.xsd` lists it and both consumers read it, even though Jackett's `ResultPage.cs` does not write one. The third case is the interesting one: since `peers` is *defined* as a total, a value below `seeders` is a contradiction, not a second dialect. Reading it as a leecher count would be inventing a meaning the attribute does not have, on no evidence, and would put a plausible-looking wrong number in the S/L column; zero is what `indexer.Result` already means by "the source reports none". Tested at, above and below the boundary in `TestSwarmCounts` and in the `search-messy.xml` fixture | T-021 |
+| DEC-066 | 2026-09-14 | No text a Torznab source sent ever appears in an error this adapter produces, and no `Result` field that is not named for a URL ever carries a credential-bearing value. Concretely: the `<error>` document's `description` is never read into memory; an `xml.SyntaxError` contributes its **line number** and not its message; an unexpected root element is classified (`<html>`, `<rss>`, `<caps>`, `<error>`, or "an unrecognised element") rather than quoted; `Result.ID` prefers the infohash and strips the query and fragment from any URL-shaped fallback; `Result.Uploader` refuses a value containing `://`; and `Result.Extra` copies only whitelisted attributes whose value parses as a number | T-020's DEC-061 closed this from the `httpx` side; this row is the same rule one layer up, and it is needed because the *content* of a Torznab response is attacker-influenced in a way `httpx` never sees. Every request carries the user's api_key in its query string, `internal/logging` masks by key name and value shape, and none of `ID`, `Title`, `Uploader` or an `Extra` key is on that list — so a credential in any of them is a plaintext key in the user's log file. The description is the sharpest case and it is not hypothetical: Jackett puts a whole .NET exception in it (`GetErrorXML(900, e.ToString())`, `src/Jackett.Server/Controllers/ResultsController.cs`, branch `master`) and Prowlarr puts `ex.Message` (`src/Prowlarr.Api.V1/Indexers/NewznabController.cs`, branch `develop`), both unfiltered, both able to contain the request. Rather than scrub it — this package has no access to the credential to scrub *with*, by design — the field is simply never decoded. The same reasoning covers element and entity names, which a hostile source could name after the key it was just sent. The cost is diagnostic detail: a malformed feed reports a line number rather than "element <item> closed by </channel>", and a wrong endpoint is diagnosed from the settings screen rather than the error text. The alternative is a log file with a working credential in it. `TestNoErrorFromThisAdapterCarriesTheCredential` and `TestOnlyTheURLNamedResultFieldsCarryTheCredential` enforce every clause, and they earned their keep during T-021 itself: `Resolve`'s "nothing to resolve" error was naming the result with `%q` on `Result.ID`, which for a caller-supplied result can be a raw download URL, and the sweep caught it before the first commit | T-021, T-022 |
+| DEC-067 | 2026-09-14 | `Caps.Latest` is set by **making a real keyword-less `t=search` request** during `Discover`, and is true only when that request returned a well-formed feed containing at least one item. An empty feed, a parse failure, an HTTP failure, or an error document all leave it false. `Caps.ProvidesMagnet` is decided by the same response and requires every returned item to carry a magnet | The criterion says to probe rather than assume, and Torznab offers nothing to read: there is no `latest` function, and `<searching><search available="yes"/>` speaks to keyword search only. What exists is a documented behaviour — "if the input string for search is empty all items (within the server/query limits) are returned for the matching categories" (§3 of `docs/newznab_api_specification.txt`, nZEDb/nZEDb, branch `dev`), Jackett's `TorznabQuery.IsRssSearch` (branch `master`), and no empty-`q` rejection in either Jackett's `ResultsController` or Prowlarr's `NewznabController` — so the only honest probe is to send the request a `ModeLatest` query would send and look at the answer. The ambiguous case decides the design: a server that returns an empty feed for an empty keyword is indistinguishable from a server whose index is empty, and there is no third signal to break the tie. Failing **closed** makes the registry skip the source for `ModeLatest` and *report the skip* (§6.3), which the user can see and act on; failing open gives them an `L` key that returns nothing for that source on every press, with nothing anywhere saying why. The probe costs exactly one extra request per source at construction, asks for `limit=1`, and is skipped entirely when caps says search is unavailable (§6.13) | T-021 |
+| DEC-068 | 2026-09-14 | There is no uploader-trust attribute anywhere in the Torznab/Newznab protocol, so a Torznab source's results are `TrustUnknown` unless the server invented an attribute of its own. The adapter maps `vip`, `trusted` and `verified` if it sees them, and reads `uploader`/`poster` for the name | Stated as a finding rather than a guess, because the criterion asks for trust "from any uploader/verified attribute the server exposes" and the correct answer turned out to be "there is not one". Checked on 2026-09-14 in Jackett's `src/Jackett.Common/Models/ResultPage.cs` (branch `master`), which writes `category, rageid, tvdbid, imdb, imdbid, tmdbid, tvmazeid, traktid, doubanid, genre, language, subs, year, author, booktitle, publisher, artist, album, label, track, seeders, peers, coverurl, infohash, magneturl, minimumratio, minimumseedtime, downloadvolumefactor, uploadvolumefactor` and nothing trust-shaped; in Prowlarr's `schemas/torznab.xsd` (branch `develop`); and in the attribute list in §4.1 of `docs/newznab_api_specification.txt` (nZEDb/nZEDb, branch `dev`), whose closest entry is `poster` — the **NNTP poster**, a Usenet posting identity, not an image and not a badge. So `poster` is read as an uploader name and the three badge names are supported speculatively, at a cost of about fifteen lines, for a private tracker that adds one. The distinction the code does make is real and worth having: an attribute present and false is `TrustNone`, absent is `TrustUnknown`, which `indexer.Trust` documents as different information that sorts differently. Trust remains display metadata that gates nothing (§2) | T-021 |
+| DEC-069 | 2026-09-14 | Construction is split in two. `New` never touches the network and returns fail-closed caps (search only). `Discover` probes, and returns a **usable adapter alongside its error** when the probe fails: the `*Adapter` is nil only when the options themselves are unusable, and every other error wraps `ErrCapsUnavailable` | Two constraints pull against each other. `indexer.Indexer` requires `Caps()` to do no I/O, never block, and stay constant for the lifetime of the value, so the probe cannot live inside `Caps()` and cannot mutate an adapter afterwards without breaking the "constant" half. But a source that is offline, or simply does not publish a caps document, must not become unconfigurable — refusing to build the adapter would take a perfectly searchable source away from the user over metadata (§6.3), and Jackett's own caps output omits `<limits>` and `<registration>` entirely, so partial documents are normal. Returning both is unusual enough to be a documented contract rather than an accident: the godoc says the adapter is nil only for bad options, says discarding it on error is the one thing not to do, and the sentinel lets a caller tell the two apart with `errors.Is`. The settings screen shows the error; the search path uses the adapter. The alternative designs were rejected: a mutable `Probe()` method breaks the frozen contract's constancy guarantee, and a three-value return puts the awkwardness in every call site instead of one godoc | T-021 |
+| DEC-070 | 2026-09-14 | A category filter is translated into **only the category ids the source published in its own caps document**, sent as `cat=`, and the results are not filtered again locally. A query naming categories that the source declared none of returns zero results without making a request | tortui's taxonomy is deliberately coarse (seven data-kind buckets) and a Torznab server's is not, so the translation has to happen against that server's own numbering — which the caps document conveniently hands over. Building the map from the document means tortui never invents an id for a server, and `indexer.CategoryFromTorznab` interprets the numbering exactly once, in the adapter, where §13 puts it. Not re-filtering locally is the deliberate half: the source's classification is authoritative for its own ids, and re-checking against tortui's buckets would drop precisely the items the source has a custom id for — those map to `CategoryOther` on the way in and would fail a filter the source itself considered satisfied. The no-intersection case answers without a request because the answer is knowable without one, and one fewer request to someone else's server is the right default (§6.13). A source that declared no categories at all reports `Caps.Categories = false` and its `cat` parameter is omitted, which `indexer.Query` explicitly permits | T-021 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
