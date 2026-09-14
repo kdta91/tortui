@@ -1087,7 +1087,7 @@ multi-source search. No `Resolve` fan-out — nothing calls it yet.
 
 ### T-020 · Shared HTTP client
 ```
-status: todo
+status: in-progress
 depends: T-012
 ```
 **Files:** `internal/indexer/httpx/`
