@@ -119,6 +119,28 @@ func echoingEverythingFeed() string {
 		`</item></channel></rss>`
 }
 
+// bareTokenEchoingFeed is the case both feeds above miss: a source that
+// echoes the key back as an opaque token rather than inside a link.
+//
+// Its uploader attribute is the bare key, so uploaderFrom's "://" refusal
+// does not fire, and its guid is a non-permalink bare key, so withoutQuery
+// returns it as it stands. Both land in the Result verbatim. The title here
+// deliberately does NOT carry the key, so a failure on ID names the guid
+// branch rather than being satisfiable by the title fallback.
+//
+// It exists because echoingFeed and echoingEverythingFeed both write the
+// uploader as a URL, which made assertDerivedFieldsAreClean's Uploader entry
+// vacuous in exactly the way the Title and Magnet entries were before the
+// round-1 remediation (found by QA on PR #12, round 2).
+func bareTokenEchoingFeed() string {
+	return `<rss version="2.0"><channel><item>` +
+		`<title>Invented Release</title>` +
+		`<guid isPermaLink="false">` + testKey + `</guid>` +
+		`<attr name="uploader" value="` + testKey + `"/>` +
+		`<attr name="seeders" value="1"/>` +
+		`</item></channel></rss>`
+}
+
 // titleOnlyEchoingFeed is an item that published no infohash, no magnet, no
 // guid, no comments and no link — so resultID has nothing left but the
 // title, which here carries the key.
@@ -284,13 +306,21 @@ func searchOnce(t *testing.T, body string) (indexer.Result, *fakeSource) {
 //
 //   - TorrentURL and SourceURL carry the key and are safe doing so: their
 //     names are on internal/logging's masked-key list.
-//   - Title and Magnet carry the key and are NOT safe: they are the
-//     source's own text verbatim, by necessity, under names that package
-//     does not mask. This is the residual gap in DEC-071, whose structural
-//     fix is backlog T-934.
-//   - Everything else the adapter derives — ID (given any other identity),
-//     InfoHash, Uploader, Extra — is clean, and that is this adapter's own
-//     work rather than a property of the protocol.
+//   - Title, Magnet and Uploader carry the key and are NOT safe: they are
+//     the source's own text verbatim, under names that package does not
+//     mask. So is ID, when the item's only identity is a non-URL guid.
+//     This is the residual gap in DEC-071, whose structural fix is backlog
+//     T-934.
+//   - Everything the adapter derives — ID given an infohash or a
+//     URL-shaped guid, InfoHash, IndexerID, Extra — is clean, and that is
+//     this adapter's own work rather than a property of the protocol.
+//
+// Uploader sat in the clean half until QA's round-2 review of PR #12, and
+// the assertion could not have caught it: both feeds it ran against write
+// the uploader as a URL, so uploaderFrom's "://" refusal always fired.
+// That refusal is still pinned — assertLinkShapedUploaderIsRefused — and
+// the case it does not cover is asserted beside it, on
+// bareTokenEchoingFeed.
 func TestWhichResultFieldsCanCarryTheCredential(t *testing.T) {
 	t.Parallel()
 
@@ -329,6 +359,7 @@ func TestWhichResultFieldsCanCarryTheCredential(t *testing.T) {
 	}
 
 	assertDerivedFieldsAreClean(t, r)
+	assertLinkShapedUploaderIsRefused(t, r)
 
 	// ID is derived here even though the title carries the key, because
 	// the item published an identity the adapter prefers to the title.
@@ -348,6 +379,7 @@ func TestWhichResultFieldsCanCarryTheCredential(t *testing.T) {
 	viaGUID, _ := searchOnce(t, echoingFeed())
 
 	assertDerivedFieldsAreClean(t, viaGUID)
+	assertLinkShapedUploaderIsRefused(t, viaGUID)
 
 	if want := "https://feed.example.org/dl/1"; viaGUID.ID != want {
 		t.Errorf("Result.ID = %q, want the guid reduced to %q", viaGUID.ID, want)
@@ -360,19 +392,64 @@ func TestWhichResultFieldsCanCarryTheCredential(t *testing.T) {
 			viaGUID.TorrentURL, viaGUID.SourceURL,
 		)
 	}
+
+	// And the sweep neither of the two feeds above can run: a source that
+	// echoes the key back as a bare token rather than inside a link. Both
+	// of these are pass-throughs and both are asserted as such, so this
+	// half goes red the day the adapter starts altering either one — which
+	// is what keeps the package doc's field list honest.
+	bare, _ := searchOnce(t, bareTokenEchoingFeed())
+
+	if !strings.Contains(bare.Uploader, testKey) {
+		t.Errorf(
+			"Result.Uploader = %q no longer carries an uploader attribute the source sent verbatim; if that "+
+				"is deliberate, the package doc, DEC-066, DEC-071 and T-934 all describe the old behaviour "+
+				"and must be updated with it",
+			bare.Uploader,
+		)
+	}
+
+	if !strings.Contains(bare.ID, testKey) {
+		t.Errorf(
+			"Result.ID = %q no longer carries a non-URL guid verbatim; withoutQuery reduces URL-shaped "+
+				"candidates only, which the package doc, DEC-066 and DEC-071 all state",
+			bare.ID,
+		)
+	}
+
+	// The bare-token item's title does not carry the key, so the ID
+	// assertion above cannot be satisfied by the title fallback.
+	if strings.Contains(bare.Title, testKey) {
+		t.Errorf("bareTokenEchoingFeed's title carries the key (%q); the ID assertion above is then ambiguous", bare.Title)
+	}
+
+	// Everything genuinely derived is still clean on this item too.
+	assertDerivedFieldsAreClean(t, bare)
 }
 
-// assertDerivedFieldsAreClean checks every Result field this adapter derives
-// rather than passes through. None of these names is on internal/logging's
-// list, so a credential in any of them would reach the log file in
-// plaintext — which is precisely why the adapter constrains each one.
+// assertDerivedFieldsAreClean checks the Result fields this adapter derives
+// on every item, whatever the source sent. None of these names is on
+// internal/logging's list, so a credential in any of them would reach the
+// log file in plaintext — which is precisely why the adapter constrains each
+// one.
+//
+// Two fields the earlier version of this helper listed are deliberately not
+// here, because they are not clean on every item and asserting otherwise is
+// how the round-2 defect happened:
+//
+//   - Uploader is a pass-through for any value without a "://" in it, so it
+//     is asserted at each call site: refused where the feed writes a link
+//     (assertLinkShapedUploaderIsRefused), expected to carry the key where
+//     the feed writes a bare token.
+//   - ID is derived from an infohash or a URL-shaped candidate and passed
+//     through otherwise, so each call site asserts the exact value it
+//     expects instead — which pins the stripping rather than merely
+//     checking for the key.
 func assertDerivedFieldsAreClean(t *testing.T, r indexer.Result) {
 	t.Helper()
 
 	derived := map[string]string{
-		"ID":        r.ID,
 		"InfoHash":  r.InfoHash,
-		"Uploader":  r.Uploader,
 		"IndexerID": r.IndexerID,
 	}
 
@@ -393,10 +470,36 @@ func assertDerivedFieldsAreClean(t *testing.T, r indexer.Result) {
 	}
 }
 
-// TestResultIDFallsBackToTheTitleAndInheritsItsGap pins the one branch on
-// which a *derived* field carries source text verbatim: an item with no
-// infohash, no magnet, no guid, no comments and no link leaves resultID
-// nothing but the title.
+// assertLinkShapedUploaderIsRefused pins uploaderFrom's one actual guard: a
+// value with a "://" in it is dropped, so a credential-bearing profile link
+// never becomes Result.Uploader.
+//
+// It is the half of the uploader story that is real, and it is asserted
+// separately from the bare-token half so neither can hide the other:
+// removing the guard turns this red, and starting to scrub every uploader
+// value turns the bare-token assertion in
+// TestWhichResultFieldsCanCarryTheCredential red.
+func assertLinkShapedUploaderIsRefused(t *testing.T, r indexer.Result) {
+	t.Helper()
+
+	if r.Uploader != "" {
+		t.Errorf(
+			"Result.Uploader = %q, want it dropped: the feed wrote a link there and uploaderFrom's "+
+				"\"://\" refusal is what keeps a credential-bearing URL out of an unmasked field",
+			r.Uploader,
+		)
+	}
+}
+
+// TestResultIDFallsBackToTheTitleAndInheritsItsGap pins the last-resort
+// branch of resultID: an item with no infohash, no magnet, no guid, no
+// comments and no link leaves it nothing but the title.
+//
+// It is not the only branch on which ID carries source text — a present but
+// non-URL guid does too, which
+// TestWhichResultFieldsCanCarryTheCredential asserts on
+// bareTokenEchoingFeed. Scoping ID's gap to this branch alone is the
+// understatement QA found in round 2 of PR #12.
 //
 // It is asserted rather than fixed. Dropping the fallback would leave such
 // an item with no identity at all and would remove a duplicate of text the
@@ -428,13 +531,18 @@ func TestResultIDFallsBackToTheTitleAndInheritsItsGap(t *testing.T) {
 // Its scope is exactly what this adapter controls, and no more: every error
 // it can return, and a Result whose credential-bearing text is confined to
 // the fields the adapter derives or names for masking. It deliberately uses
-// echoingFeed rather than echoingEverythingFeed, because a Result whose
-// Title or Magnet carries a key does put that key in the log file — proven
-// by QA on PR #12, disclosed in the package doc and DEC-071, and left to
-// backlog T-934, which is the only place it can be fixed since it is a
-// property of the frozen §5 Result type. Asserting the leak here instead
-// would pin a defect the moment T-934 lands; asserting the maskable surface
-// is what this package can actually promise.
+// echoingFeed rather than echoingEverythingFeed or bareTokenEchoingFeed,
+// because a Result whose Title, Magnet or Uploader carries a key — or whose
+// ID came from a non-URL guid — does put that key in the log file: proven
+// by QA on PR #12 (rounds 1 and 2), disclosed in the package doc and
+// DEC-071, and left to backlog T-934, which is the only place it can be
+// fixed since it is a property of the frozen §5 Result type. Asserting the
+// leak here instead would pin a defect the moment T-934 lands; asserting
+// the maskable surface is what this package can actually promise.
+//
+// echoingFeed is the feed that stays inside that scope: its uploader is a
+// link (refused), its guid is a URL (stripped), and its title and magnet
+// carry nothing.
 func TestNoCredentialReachesTheLogFile(t *testing.T) {
 	// Not parallel: logging.New installs the process-wide slog default.
 	path := filepath.Join(t.TempDir(), "tortui.log")

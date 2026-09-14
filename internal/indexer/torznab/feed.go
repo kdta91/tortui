@@ -242,25 +242,38 @@ func resultFrom(indexerID string, it feedItem) indexer.Result {
 // resultID is the stable identity of an item within this source.
 //
 // The infohash comes first because it is the strongest identity a torrent
-// has and it cannot carry a credential. Everything after it can: a Torznab
-// guid is frequently a URL, and a download URL carries the user's api_key in
-// its query string — so any URL-shaped candidate is reduced to scheme, host
-// and path before it is used. Result.ID is not one of the names
-// internal/logging masks on, so a raw guid here would be a plaintext key in
-// the log file the moment anything logged a result (DEC-061, DEC-066).
+// has and it cannot carry a credential: normaliseInfoHash returns a value
+// only when it is 40 hex or 32 base32 characters, so no other text survives
+// it. Everything after it can carry one, and only some of it is reduced:
 //
-// The last fallback is the title, and it is the one candidate that is *not*
-// reduced to anything: for an item that published no infohash, no guid, no
-// comments and no link, the title is the only identity left, and it is
-// whatever text the source sent. So an ID produced by that branch can carry
-// a credential a source echoed into its own title — the same residual gap
-// Result.Title itself has, one field wider. Keeping the fallback rather
-// than leaving such an item with an empty ID is deliberate: the leak is
-// already present in Title verbatim by necessity, so dropping the fallback
-// would remove a duplicate of text the Result carries anyway and buy no
-// safety, while costing the only identity an otherwise-unidentifiable item
-// has. Disclosed in the package doc and in DEC-071; the structural fix is
-// backlog T-934.
+//   - A URL-shaped guid, comments or link is reduced to scheme, host and
+//     path by withoutQuery. That is the case worth reducing, because a
+//     Torznab download URL carries the user's api_key in its query string
+//     by protocol design.
+//   - A guid, comments or link that is *not* URL-shaped is returned as it
+//     stands. `<guid isPermaLink="false">…</guid>` is an opaque
+//     source-chosen string and an api_key is an opaque token, so a source
+//     that echoes the key there puts it in Result.ID verbatim — the item
+//     does not have to be identity-less for that to happen. Reproduced by
+//     QA on PR #12.
+//   - The last fallback is the title, reduced to nothing either: for an
+//     item that published no infohash, no guid, no comments and no link,
+//     the title is the only identity left, and it is whatever text the
+//     source sent.
+//
+// Result.ID is not one of the names internal/logging masks on, so any of
+// those unreduced values is a plaintext key in the log file the moment
+// anything logs the result (DEC-061, DEC-066).
+//
+// Keeping the title fallback rather than leaving such an item with an empty
+// ID is deliberate: the leak is already present in Title verbatim by
+// necessity, so dropping the fallback would remove a duplicate of text the
+// Result carries anyway and buy no safety, while costing the only identity
+// an otherwise-unidentifiable item has. Refusing a non-URL guid instead
+// would throw away the source's own stable identity — the thing this
+// function exists to produce — on a value shape that is ordinary rather
+// than suspicious. Disclosed in the package doc and in DEC-071; the
+// structural fix is backlog T-934.
 func resultID(hash string, it feedItem) string {
 	if hash != "" {
 		return hash
@@ -276,7 +289,10 @@ func resultID(hash string, it feedItem) string {
 }
 
 // withoutQuery trims a candidate identifier and, when it is an absolute URL,
-// strips its query and fragment. A non-URL is returned as it stands.
+// strips its query and fragment. A non-URL is returned as it stands —
+// including one that is an api_key a source echoed back, which is why
+// resultID's doc comment lists this branch as a pass-through rather than a
+// derivation.
 func withoutQuery(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -432,6 +448,22 @@ func publishedFrom(idx attrIndex, it feedItem) time.Time {
 // Result.Uploader is not a name internal/logging masks on, so a source that
 // put a link there would otherwise write it — and any api_key in it — to the
 // user's log file (DEC-066).
+//
+// What that guard does NOT do is make this a derived field. Any value
+// without a "://" in it is returned exactly as the source wrote it, and an
+// api_key is an opaque token with no "://" in it — so a source that echoes
+// the key into <attr name="uploader" value="…"/> puts it in
+// Result.Uploader verbatim, and logging the Result writes it out in
+// plaintext. Reproduced by QA on PR #12 against the real internal/logging
+// sink. The refusal is still worth keeping — a Torznab download URL is the
+// one value here that carries the user's credential by protocol design, so
+// keeping links out removes the likely case — but Uploader belongs with
+// Title and Magnet on the pass-through side of the package doc's list, not
+// with ID's stripping or Extra's numeric whitelist. Scrubbing it is not
+// available: this package never sees the credential (DEC-061) and an
+// uploader's name is legitimately an opaque token, so there is nothing to
+// match on. Disclosed in the package doc, DEC-066 and DEC-071; the
+// structural fix is backlog T-934.
 func uploaderFrom(idx attrIndex) string {
 	for _, name := range []string{attrUploader, attrPoster} {
 		value := idx.first(name)

@@ -19,31 +19,13 @@
 //     net/http.
 //
 //   - No error this package produces ever carries text it received from
-//     the source, and every Result field this package *derives* is clean of
-//     it too. A Torznab request puts the user's api_key in the query
-//     string, so a server that echoed it back — into an error description,
-//     a guid, an uploader name — would otherwise land it in the user's log
-//     file in plaintext, which is the one leak internal/logging cannot
-//     mask. ID prefers the infohash and strips the query and fragment off
-//     a URL-shaped fallback, Uploader refuses a link-shaped value, Extra
-//     copies only whitelisted attributes whose value parses as a number,
-//     and TorrentURL and SourceURL are named so internal/logging's
-//     key-name rule redacts them wholesale.
-//
-//     Two Result fields are **not** derived and cannot be. Title is the
-//     source's own text and Magnet is its magneturl attribute, both
-//     verbatim: the title is the value the user reads and the magnet has to
-//     reach the engine exactly as published. Neither name is on
-//     internal/logging's masked-key list and an opaque api_key has no value
-//     shape that package can match, so both carry whatever the source chose
-//     to put in them — a credential the source echoed back included — and
-//     logging either field, or a whole Result, writes it out in plaintext.
-//     Result.ID is that same text for an item that published no infohash,
-//     no guid, no comments and no link, because the title is then the only
-//     identity left. That residual gap is a property of the frozen §5
-//     Result contract rather than of this adapter; it is recorded as
-//     backlog T-934 (opened by QA on PR #12) and explained in DEC-071. See
-//     also DEC-066, and the credential test in credentials_test.go.
+//     the source. A Torznab request puts the user's api_key in the query
+//     string, so a server that echoed it back — into an error
+//     description, an element name, an entity name — would otherwise land
+//     it in the user's log file in plaintext, which is the one leak
+//     internal/logging cannot mask. What happens to source text on the
+//     Result side is field by field; the section below says which field
+//     gets which treatment.
 //
 //   - Caps are probed, not assumed, and fixed for the lifetime of an
 //     Adapter. Caps.Latest in particular is set from a real request the
@@ -52,6 +34,61 @@
 // This package writes no log lines at all. Every failure is returned as an
 // error the caller can log, which keeps the number of places a credential
 // could reach a log file from inside this package at zero.
+//
+// # What each Result field carries
+//
+// This is written out field by field on purpose. Two earlier versions of
+// this comment summarised it as a count instead — "no field that is not
+// named for a URL", then "two fields are not derived" — and QA found both
+// to be wrong by at least one field (PR #12, rounds 1 and 2). Every field
+// of the frozen §5 indexer.Result, and what this adapter puts in it:
+//
+//	IndexerID   Derived. The id the user configured for this adapter; no
+//	            source text reaches it.
+//	ID          Derived, with two exceptions. The infohash wins and is
+//	            validated as 40 hex or 32 base32 characters; a URL-shaped
+//	            guid, comments or link is reduced to scheme, host and
+//	            path. PASSED THROUGH: a guid, comments or link that is not
+//	            URL-shaped, and the last-resort fallback to the title.
+//	Title       PASSED THROUGH, whitespace-trimmed and otherwise verbatim.
+//	InfoHash    Derived. Only 40 hex or 32 base32 characters survive
+//	            normaliseInfoHash, so no other text can reach it.
+//	Magnet      PASSED THROUGH. The magneturl attribute, or a <link> that
+//	            is itself a magnet, exactly as published — including its
+//	            dn= parameter. (Resolve derives one from the infohash for
+//	            an item that published no magnet; that one is clean.)
+//	TorrentURL  The source's own download URL, verbatim — and safe:
+//	            internal/logging masks on the name.
+//	SizeBytes   Derived. Parsed as an integer.
+//	Seeders     Derived. Parsed as an integer.
+//	Leechers    Derived. Parsed, or peers - seeders (DEC-065).
+//	Category    Derived. An indexer.Category enum value.
+//	Published   Derived. A parsed time.Time.
+//	Uploader    PASSED THROUGH, except that a value containing "://" is
+//	            dropped. That refusal keeps a link out. It cannot keep an
+//	            opaque token out, and an api_key is an opaque token.
+//	Trust       Derived. An indexer.Trust enum value.
+//	SourceURL   The source's own page URL, verbatim — and safe:
+//	            internal/logging masks on the name.
+//	Extra       Derived. Fixed "torznab."-prefixed keys, and only values
+//	            that parse as a number.
+//
+// The fields that carry source text under a name internal/logging does not
+// mask are therefore, exhaustively: Title, Magnet, Uploader, and ID on its
+// two unreduced branches. A source that echoes the user's api_key into a
+// <title>, a magnet's dn=, an <attr name="uploader">, or a non-URL guid
+// puts it in that field verbatim, and logging the field — or the whole
+// Result — writes it to the log file in plaintext. Each was reproduced
+// against the real internal/logging sink by QA on PR #12.
+//
+// None of that is fixable from inside this adapter. The title is the value
+// the user reads, the magnet must reach the engine as published, an
+// uploader's name is legitimately an opaque token, and a non-URL guid is
+// the source's own stable identity — and this package never sees the
+// credential it would have to scrub with (DEC-061). The gap is a property
+// of the frozen §5 Result contract; it is recorded as backlog T-934
+// (opened by QA on PR #12) and explained in DEC-071. See also DEC-066, and
+// the credential test in credentials_test.go.
 package torznab
 
 import (
