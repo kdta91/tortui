@@ -1268,7 +1268,7 @@ string because `Jitter` is a func field; fails safe).
 
 ### T-021 · Torznab adapter
 ```
-status: todo
+status: in-progress
 depends: T-020
 ```
 **Files:** `internal/indexer/torznab/`
