@@ -1087,10 +1087,174 @@ multi-source search. No `Resolve` fan-out — nothing calls it yet.
 
 ### T-020 · Shared HTTP client
 ```
-status: in-progress
+status: done
 depends: T-012
 ```
-**Files:** `internal/indexer/httpx/`
+**Files:** `internal/indexer/httpx/` — `client.go`, `retry.go`, `ratelimit.go`, `clock.go`,
+`redact.go` and their tests (`client_test.go`, `retry_test.go`, `ratelimit_test.go`,
+`redact_test.go`, `helper_test.go`).
+
+**What landed.** `httpx.New(Config) *Client` plus `Do(ctx, Request) (*Response, error)` and a
+`Get` convenience. Like `NewRegistry`, every `Config` field is optional and any zero field takes
+its documented default, so the zero `Config` is the documented client. No adapter consumes it yet
+— T-021 and T-022 are untouched — and no frozen §5 type was involved: `git diff --stat origin/main`
+lists exactly the five new source files, their five test files, and this tracker.
+
+**Criterion by criterion.**
+- *Configurable user-agent* — `Config.UserAgent`, default `tortui` (deliberately not a URL:
+  AGENT.md §2 keeps hostnames out of `internal/indexer` and a user-agent is not worth an
+  exception). A `User-Agent` the caller sets on the `Request` wins.
+  `TestUserAgentIsConfigurable` covers all three cases against `httptest.Server`.
+- *Connect/read timeouts* — `Config.ConnectTimeout` reaches `net.Dialer.Timeout` and
+  `Transport.TLSHandshakeTimeout`; `Config.ReadTimeout` reaches `Transport.ResponseHeaderTimeout`;
+  their sum is also applied as a per-attempt context deadline, so a body that trickles is bounded
+  too. The read timeout is proven behaviourally (`TestReadTimeoutEndsAStalledResponse`, against a
+  handler that never answers). The **connect** timeout is asserted structurally
+  (`TestTransportCarriesTheConfiguredTimeouts`) and *not* behaviourally: exercising it needs a
+  host that swallows connection attempts, and §6.7 bars the network from unit tests.
+- *Per-host rate limiter* — `hostLimiter`, keyed on the lowercased `host:port`, claiming each
+  slot under the lock before waiting. **Seven** unit tests in `ratelimit_test.go`: spacing,
+  per-host independence, case folding, disable, two separate cancellation tests
+  (`TestHostLimiterReturnsContextErrorWithoutWaiting` and
+  `TestHostLimiterWaitIsInterruptedByCancellation` — counted as one in round 1, which QA caught),
+  and eight concurrent claimants; plus two through the client
+  (`TestClientRateLimitsPerHostAcrossRequests`, `TestClientRateLimitAppliesAcrossRetries` — the
+  limiter applies to retries, not only to the first attempt).
+- *Retry on 429/5xx only, never 4xx* — `isRetryableStatus`. `TestRetriesOn5xxStatuses` covers
+  500/502/503/504/501, `TestNeverRetriesAnyClientError` covers 400/401/403/404/**408**/410/422/418
+  and asserts exactly one request each. 408 is not retried; see DEC-058.
+- *Exponential backoff* — `backoffFor`, doubling from `BaseBackoff` and clamped at `MaxBackoff`.
+  `TestBackoffIsExponentialAndCapped` asserts the exact schedule `[100ms 200ms 300ms 300ms]`
+  through an injected clock, so the backoff path is tested without any wall-clock sleeping.
+- *Honours `Retry-After`* — both RFC 9110 forms plus the awkward ones: delta-seconds, HTTP-date,
+  malformed (falls back to backoff), a past date or `0` (retry now), and one longer than
+  `MaxRetryAfter` (stop, do not cap — DEC-059). One test each, plus an eighteen-case table on
+  `parseRetryAfter`. A delta-seconds value too large for a `time.Duration` **saturates** rather
+  than wrapping negative, so an absurd wait still ends the attempt loop; the round-1 code wrapped
+  and retried with no delay at all (QA D2, fixed in round 2 — see the round-2 note below and the
+  DEC-059 correction).
+- *Injects user-supplied `api_key` / `cookie`* — as a query parameter (name configurable,
+  default `apikey`) and as the `Cookie` request header (the field holding it is named
+  `Credentials.CookieHeader`, for the logging-mask reason below), only when the user configured
+  one, and only from
+  `Config.Credentials`. Nothing in the package discovers, harvests, guesses, or negotiates a
+  credential, and there is no challenge handling of any kind (AGENT.md §2).
+  `TestInjectsUserSuppliedCredentials`, `TestInjectsNothingWhenNoCredentialsAreConfigured`,
+  `TestAPIKeyParameterNameIsConfigurable`.
+- *Response body size cap, default 8 MB* — `Config.MaxBodyBytes`, `DefaultMaxBodyBytes = 8 << 20`.
+  Enforced twice over: a declared `Content-Length` above the cap is refused before a byte is read,
+  and the read itself goes through `io.LimitReader(body, cap+1)`, which is what actually catches a
+  chunked response with no declared length and a server that lies about the length it declared.
+  Over the cap is an **error, never a truncation** — a torznab feed cut off mid-document parses as
+  a short feed, which is silent data loss rather than a failure. Four tests including the
+  chunked and the lying-`Content-Length` cases.
+- *`httptest.Server` tests for each behaviour* — every test above runs against `httptest.Server`
+  except **five** that `httptest.Server` cannot stage, which use an injected `http.RoundTripper`
+  and are still zero network: a response whose `Content-Length` lies
+  (`TestBodyCapCatchesAServerLyingAboutContentLength`), a body that fails mid-read
+  (`TestBodyReadFailureIsReported`), a body that fails both `Read` and `Close`
+  (`TestDrainAndCloseFailuresAreLoggedNotSwallowed`), a staged `*url.Error`
+  (`TestURLErrorIsStrippedFromTheCauseChain`), and a same-host https-to-http redirect
+  (`TestSchemeDowngradeRedirectIsRefused` — a real server sends that `Location` readily enough,
+  but two `httptest` servers can never share one `host:port` across two schemes). The first four
+  were miscounted as three in round 1; QA caught it, and the fifth arrived with the round-2
+  redirect fix. Package coverage is **100.0% of statements**, the level the rest of
+  `internal/indexer` sits at.
+
+**Credentials cannot reach an error string or a log line, and that is enforced structurally.**
+T-003 masks by key name and value shape, and states in its own package doc that an opaque
+credential under an unremarkable key name is the case it cannot close. This package is the first
+one that holds such credentials, so it closes it from the other side, in four layers:
+1. **Naming.** The credential fields are `Credentials.APIKey` and `Credentials.CookieHeader` —
+   both contain a substring on `isSensitiveKey`'s list, so a `Credentials` walked through
+   `slog.Any` is redacted field by field. Renaming either to `Value`, `Auth`, or `Credential`
+   would silently reopen the hole; the godoc says so at the type.
+2. **`LogValue`.** `Credentials` implements `slog.LogValuer` and renders as a fixed string, which
+   `internal/logging` resolves before anything else.
+3. **Structural silence.** No error this package builds contains a URL, a query string, a request
+   or response header, or a body excerpt. Only the method, the `host:port`, and a status or
+   cause. `StatusError` has no URL field to print.
+4. **`*url.Error` is stripped from every cause chain.** `net/http` returns one from essentially
+   every failed request and its `Error()` prints the whole URL, api_key included — so
+   `unwrapURLError` removes that layer before the cause is stored. `errors.Is` still reaches
+   `context.DeadlineExceeded`, `net.Error`, and the rest; `errors.As(err, &urlErr)` deliberately
+   finds nothing. A final `scrub` pass replaces the configured values in the remaining text as a
+   backstop. See DEC-061.
+
+`TestNoErrorEverCarriesACredential` runs eight failure modes (4xx, exhausted 5xx retries,
+over-long `Retry-After`, over-cap body, refused redirect, dial failure, unparseable URL,
+cancellation) and asserts, for each — and for every error in its unwrap chain, and for `%v` and
+`%+v` — that neither credential, no `apikey=` parameter and **no absolute URL at all** appears.
+`TestURLErrorIsStrippedFromTheCauseChain` stages a `*url.Error` carrying the key and proves both
+that it is gone and that its cause is still reachable. `TestNoCredentialReachesTheLogFile` runs
+the whole thing through the real `internal/logging` file sink and greps the resulting file.
+
+**Waits are injectable, so nothing here sleeps on the wall clock.** `Clock` (`Now`, and a
+`Sleep` that takes a context) is behind both the rate limiter and the backoff. Tests drive a fake
+clock that records each duration and jumps forward, which is what makes the exact backoff
+schedule assertable rather than approximated. Two tests deliberately use the real clock, because
+they assert the opposite property — that a cancelled context abandons a pending wait instead of
+sleeping it out — and both allow a 2s margin against a 10s wait rather than racing a tight
+timing window.
+
+**Deadlines.** `Do` applies `RequestTimeout` (60s) on top of the caller's context, so a call
+always has a deadline even if the caller forgot one (§6.2), and a caller's shorter deadline still
+wins. Before each wait the client checks whether the delay would outlast the deadline and stops
+with the status error rather than sleeping into a cancellation. Each attempt additionally gets
+`ConnectTimeout + ReadTimeout`.
+
+**Beyond the criteria, deliberately.** A redirect that leaves the original host is refused rather
+than followed (`ErrCrossHostRedirect`), because the api_key travels in the query string and
+following one would hand the user's credential to a server they never configured. A same-host
+redirect that drops from https to http is refused for the same reason (`ErrInsecureRedirect`): a
+`Location` that preserves the query would put the api_key on the wire in cleartext. The reverse,
+http to https, is followed — the destination is the host the user configured and the hop only
+adds TLS. A change of port is a change of host and is refused, since the comparison is on the
+host as written. Same-host, same-scheme redirects still work, and the chain is bounded at five.
+See DEC-062 for the refusal and DEC-064 for why the two directions are treated differently.
+
+**Deliberately not done here:** no adapter, no config plumbing (nothing reads `config.Indexer`'s
+`api_key` yet — the composition root that would wire it does not exist), no `config.example.toml`
+or `README.md` change, since no user-visible key or default changed. No new dependency: the rate
+limiter is stdlib (DEC-060).
+
+**Round 2 — QA remediation (PR #11).** QA passed the credential work and both blocking defects
+were elsewhere. Both were reproduced against the round-1 code before anything was changed, and
+each fix has a test proven red against the unfixed code and green against the fixed one.
+
+1. *Scheme-blind redirect check (QA D1).* `checkRedirect` compared only `req.URL.Host`, so
+   `https://feed.example.org/api?apikey=…` → `http://feed.example.org/api?apikey=…` returned
+   `nil` and was followed — **both** credentials in cleartext, the api_key in the query and the
+   `Cookie` header (`net/http` strips neither on a same-host scheme change; DEC-062 records the
+   stdlib reading), the very harm the cross-host check exists to prevent, and disclosed nowhere. It now also refuses an https-to-http hop
+   (`ErrInsecureRedirect`), follows http-to-https, and is unchanged on same-scheme hops.
+   `TestSchemeDowngradeRedirectIsRefused` drives it through the real `*http.Client` redirect
+   machinery; `TestCheckRedirectSchemeAndHostRules` is an eight-case table over downgrade,
+   upgrade, same-scheme, scheme case, cross-host, port change, and host-check precedence.
+   DEC-062 corrected in place; DEC-064 records the upgrade/downgrade asymmetry and the port
+   literal.
+2. *`Retry-After` integer overflow (QA D2).* `parseRetryAfter("31536000000")` returned
+   `(-1488191h9m7s, true)`; `retryDelay` read that negative as *shorter* than `MaxRetryAfter`,
+   accepted it, and `Sleep` on a negative returns immediately — `MaxAttempts` requests back to
+   back with no delay at all, which is both the opposite of what DEC-059 claimed and the
+   hammering §6.13 forbids. An out-of-range delta now saturates at the longest representable
+   `time.Duration` (a `strconv.ErrRange` parse is treated as an enormous value rather than as
+   malformed, so digits past int64 land there too), and `retryDelay` clamps any negative
+   `RetryAfter` to zero as a second line of defence. Six table cases now sit at and past the
+   boundary, plus `TestAbsurdRetryAfterStopsInsteadOfRetryingWithNoDelay` end to end. DEC-059
+   corrected in place.
+3. *Tracker.* The `**Acceptance**` block below was deleted in round 1 — the only `done` task
+   missing one — and one criterion was silently reworded (`api_key` / `cookie` → "session
+   header"). Restored byte for byte from `main`, with these notes above it, matching T-012.
+4. *Counts.* Three injected-`RoundTripper` cases were really four, and "six" limiter tests were
+   really seven; both corrected above, in the PR body, and in `helper_test.go`'s own comment. The
+   round-2 redirect test makes the injected-transport count five.
+
+Not fixed here, deliberately, on QA's ruling: `T-927` (`internal/logging`'s free-text pattern
+misses `CookieHeader:` in a `%+v` dump — a defect in that package, not this one), `T-928`
+(limiter and redirect host keys treat `example.org` and `example.org:80` as different hosts;
+fails closed in the redirect case), and `T-929` (`slog.Any` on a whole `Config` yields an error
+string because `Jitter` is a func field; fails safe).
 
 **Acceptance**
 - Configurable user-agent, connect/read timeouts, and a per-host rate limiter.
@@ -1974,6 +2138,16 @@ when it reaches it and does not start backlog items on its own.
 - `T-925` Document the dedup seeder-tie survivor. When two candidate results tie on seeders the
   first in selection order survives; verified deterministic by QA, but stated in neither DEC-056 nor
   the `mergeResults` godoc, so a future reader cannot rely on it. Found by QA on T-012 (PR #10).
+- `T-926` `scripts/check-indexer-hostnames.sh`'s value-shape rule fires on ordinary Go inside
+  `internal/indexer/**`, which is a fully gated path so every line is scanned. Its regex is
+  `(url|host|endpoint|base_url)[:=]` followed by anything with a dot in it, so
+  `URL: server.URL`, `ErrEmptyURL = errors.New("...")` and even the prose `a URL: AGENT.md §2`
+  are all reported as new indexer hostnames (`server.url`, `errors.new`, `agent.md`). T-020
+  worked around it by renaming the sentinels prefix-first (`ErrURLEmpty`) and assigning through
+  a dotless local before a `URL:` struct key, which is a real cost on every future adapter in
+  this tree. Requiring the matched value to look like a hostname — at least one dot-separated
+  label followed by a plausible TLD, and not a known Go identifier shape — would keep the check
+  meaningful without the false positives. Found while building T-020.
 
 
 
@@ -2042,6 +2216,13 @@ when it reaches it and does not start backlog items on its own.
 | DEC-055 | 2026-09-13 | Each source's `Search` runs on a goroutine of its own with the answer handed back over a **buffered** channel, and that goroutine recovers a panicking adapter and turns it into that source's error (`ErrSourcePanic`) | Two things §6.2 and §6.3 ask for cannot be had from a direct call. An adapter that ignores its context would otherwise hold the whole fan-out open past its deadline, and Go offers no way to abandon a blocked call in place — so the deadline is honoured by ceasing to wait, not by killing anything, and the buffer is what keeps that honest: a late answer is delivered into the buffer and discarded, so the adapter's goroutine finishes instead of parking forever on a send nobody will receive. That distinction is not theoretical — with an unbuffered channel the goroutine leaks, and the first version of the timeout test did not catch it (it watched the fake's own call return, which still happens); the test now polls the goroutine dump for a goroutine parked in `callSearch`, and is red with the buffer removed. Recovering the panic is not a violation of §6.9: that rule bars *raising* a panic outside `main`, while §6.3 requires one broken source not to crash the application, and an adapter is exactly the untrusted code that might. The recover sits on the goroutine that can see the panic, and the recovered value is included in the error text | T-012, T-021, T-022 |
 | DEC-056 | 2026-09-13 | Dedup identity is the infohash (trimmed, lowercased) when present, else the normalised title (lowercased, every run of non-letter/non-digit collapsed to one space) plus `SizeBytes`. A result with neither an infohash nor a title containing a letter or digit is never merged with anything. The survivor is the copy with the most seeders; contributing ids are joined into `Result.Extra` under the exported key `tortui.sources`, always set, in the order the sources were queried | Sources differ in separators, bracketing and case far more often than they differ in words, so normalising those is what makes a title match at all; including the size keeps two genuinely different items with the same name apart. The 'no identity, no merge' rule exists because the empty key is otherwise shared by every unidentifiable row, which would fold unrelated results from different sources into one — the degenerate case is given a per-row unique key instead. Highest-seeders-wins is the criterion's own rule and is also the copy most likely to resolve into a live swarm. The key is exported (`ExtraKeySources`) rather than a bare string so the TUI has one name to read, and it is always set — including for a result only one source produced — so consumers have a single code path; the registry overwrites whatever an adapter put there, which is stated in the godoc. §5 says nothing outside an adapter may *depend on* a particular `Extra` key and no core logic may *branch* on one; writing a display-only annotation is neither, and the criterion requires the ids to be recorded in `Extra` specifically | T-012, T-061 |
 | DEC-057 | 2026-09-13 | `SetEnabled(id, bool)` was added alongside the four methods the criteria name, and naming ids explicitly in `SearchAll` queries those sources whether or not they are enabled | `Enabled()` is unanswerable without something that sets enablement — with no setter it would be a permanent synonym for `List()` — and `internal/config`'s `Indexer.Enabled` field — merged in T-002 (`internal/config/config.go`) with the comment 'controls whether the registry queries this source' — shows the flag is expected to exist. It is the minimum addition: no removal, no reordering, and a disabled source keeps its place in `List()` and its registration order. Explicit ids overriding the flag is the other half of the same decision: the enabled set is the *default* fan-out, and a caller that names sources (the search screen's multi-select, T-060) has made the more specific statement. The alternative — silently dropping a named-but-disabled source — would give the TUI a selection whose result depends on invisible state | T-012, T-002, T-060 |
+| DEC-058 | 2026-09-14 | Only 429 and 5xx are retried. Every other 4xx is permanent, **408 Request Timeout included**, and a transport-level failure (dial refused, connection reset, read timeout) is not retried either | T-020's criterion is "on 429/5xx only; never on 4xx", and 408 is the one 4xx where a retry is arguably useful, so the choice had to be made explicitly rather than left to fall out of the code. Retrying it would be an unwritten third case, which is exactly the two-reasonable-implementations-differ situation AGENT.md §12 says not to guess at; the criterion carves out 429 by name and does not carve out 408, so 408 stays permanent. The same "only" is why a transport error is not retried: a dial failure against a source the user configured is nearly always an outage, a typo in their URL, or DNS, and none of those improve within one backoff — meanwhile §6.3 already has the registry degrade gracefully around a source that failed, and §6.13 would rather tortui not re-dial a struggling server three more times. `StatusError.Retryable()` exposes the rule so an adapter never has to re-derive it | T-020, T-021, T-022 |
+| DEC-059 | 2026-09-14 | **Corrected 2026-09-14 (QA remediation of PR #11) — the "ends the attempt loop" claim in this column was false for one class of value and the row is rewritten in place, matching how DEC-040, DEC-046 and DEC-050 were corrected.** `Retry-After` in either RFC 9110 form beats the backoff schedule when it parses. Malformed is treated as no advice (fall back to backoff), a past HTTP-date or a non-positive delta is treated as "now" (zero delay, still one retry), and a value longer than `MaxRetryAfter` (default 30s) **ends the attempt loop** rather than being capped and retried or slept out, and a delta-seconds value too large for a `time.Duration` **saturates** at the longest representable duration instead of wrapping, so it lands on that same rule rather than under it | Three of the four cases have an obvious answer; the long one does not, and it is the one a real throttled source produces. Capping an hour-long `Retry-After` to 30s and retrying anyway is precisely the hammering §6.13 forbids — the server said when to come back and tortui would be ignoring it. Sleeping the full hour inside a search is not a retry either: the caller is a TUI search with a per-source timeout (`indexer.DefaultSearchTimeout`, 15s), so it would be cancelled long before, having reported nothing useful. Stopping reports the truth immediately, and the duration the server asked for is preserved on the `StatusError` (`RetryAfter`, `RetryAfterSet`) so the TUI can say "this source asked us to wait an hour" rather than "this source failed". `RetryAfterSet` exists as a separate bool because a zero duration that was sent and a zero duration that was not are different facts. Separately, no delay is ever slept if it would outlast the context deadline: the client returns the status error rather than sleeping into a cancellation, which turns a diagnosable 503 into a bare timeout **What was false:** as shipped in round 1 the rule held only up to ~9.22e9 seconds. `parseRetryAfter` computed `time.Duration(secs) * time.Second` with no range check, so `Retry-After: 31536000000` wrapped to `-1488191h9m7s`; `retryDelay` compared that negative against `MaxRetryAfter`, found it *shorter*, and returned it as valid advice, and `Clock.Sleep` on a negative duration returns immediately. A server answering 429 with an absurd delta therefore got `MaxAttempts` requests back to back with no delay at all — the exact opposite of what this row claimed, and the hammering §6.13 forbids. QA (PR #11, D2) reproduced it; the 12-case table missed it because its "absurdly large" value, 31536000, sits just under the overflow boundary. Corrected: an out-of-range delta saturates at `maxDuration`, a `strconv.ErrRange` parse is treated as an enormous value rather than as malformed (so a run of digits too long for an int64 saturates too, instead of falling back to backoff), and `retryDelay` clamps any negative `RetryAfter` to zero as a second line of defence. Saturating rather than rejecting is deliberate: rejecting would mean "no advice given", which falls back to backoff and retries a server that just asked to be left alone for a year. Six table cases now sit at the boundary (`9223372036`), one past it (`9223372037`), absurdly past it, past int64 in both directions, and on an HTTP-date beyond the duration ceiling, plus `TestAbsurdRetryAfterStopsInsteadOfRetryingWithNoDelay` end to end; both were proven red against the unfixed parse and green against the fixed one | T-020, T-061 |
+| DEC-060 | 2026-09-14 | The per-host rate limiter is ~60 lines of `sync.Mutex` + `map[string]time.Time` in `ratelimit.go`. No dependency was added — in particular not `golang.org/x/time/rate`, whose source was **not** read, so nothing here is claimed about its API or behaviour | The decision rests on the requirement and on AGENT.md §3, not on a comparison with a library this agent did not open. What T-020 needs is a minimum interval between requests to one host, with the wait interruptible by context and the time source injectable so the backoff and spacing tests are deterministic rather than wall-clock-timed — that is a map, a mutex, and a `Sleep` behind the `Clock` interface, all of which this package needs anyway for the retry path. Against that, §3 locks the stack and any addition costs a license verification, a `NOTICE` regeneration, and a new module in the dependency graph for every platform `make licenses` checks. A dependency justified by "probably fits" and an unread LICENSE file is the shape of mistake T-011's QA already caught once in this repo, so the honest options were "read the library first" or "don't claim anything about it"; the second was cheaper than the first for sixty lines. If a future task needs real token-bucket burst behaviour, that is the moment to open the library, read its LICENSE, and file a DEC row that can actually justify it | T-020 |
+| DEC-061 | 2026-09-14 | Credential safety in `httpx` is structural, not incidental: credential fields are named so `internal/logging`'s key-name rule fires on them (`APIKey`, `CookieHeader`), `Credentials` implements `slog.LogValuer`, no error message ever contains a URL / query string / header / body excerpt, and `unwrapURLError` strips every `*url.Error` out of the cause chain before it is stored | T-003's own package doc states the gap this closes: masking by key name and value shape cannot catch an opaque credential logged under an unremarkable key, and every tortui source is user-supplied, so an api_key has no fixed shape to match. `httpx` is the first package to hold one. Layer by layer: the field names are the only thing that makes the *one* guarantee that does not depend on guessing a value's shape apply, which is why the godoc warns against renaming them; `LogValue` catches a `Credentials` logged whole; the structural rule means there is nothing to mask in the first place; and the `*url.Error` strip exists because `net/http` returns one from essentially every failed request and its `Error()` prints the entire URL — with the api_key in the query string — so leaving it reachable would put a plaintext credential one `fmt.Errorf("%v", cause)` away from the user's log file, however careful this package's own strings were. Dropping that layer costs `errors.As(err, &urlErr)`, which no caller needs, and keeps `errors.Is` working for `context.DeadlineExceeded` and `net.Error`. A `scrub` of the configured values over the remaining text is the backstop, with no minimum length: a short credential garbling a message is a better outcome than a leaked one. Cost accepted: an error names only the method and `host:port`, so a URL-level mistake (wrong path, wrong parameter) is diagnosed from the config screen rather than the error text — the alternative is a log file with a working credential in it | T-020, T-021, T-022, T-003 |
+| DEC-062 | 2026-09-14 | **Corrected twice on 2026-09-14 (QA remediation of PR #11, rounds 1 and 2) — round 1: this row described the check as host-only and said same-host redirects are simply followed, which left a hole the row's own rationale argues against. Round 2: the round-1 correction itself asserted, falsely, that `net/http` strips the `Cookie` header across a scheme change. Both are rewritten in place, matching how DEC-040, DEC-046 and DEC-050 were corrected.** A redirect that leaves the host the request was addressed to is refused (`ErrCrossHostRedirect`), not followed. A same-host redirect that drops from `https` to `http` is refused too (`ErrInsecureRedirect`). A same-host `http` to `https` upgrade is followed, as is any same-scheme hop; the chain is bounded at five hops | Not in T-020's criteria, and added anyway because the credential design makes it load-bearing: the api_key travels in the query string, so following a redirect off-host hands the user's own credential to a server they never configured, and `net/http` only strips *header*-borne credentials on a cross-host redirect, not query parameters. Refusing is also the conservative reading of §2 — tortui talks to exactly the sources the user configured. The cost is a source that legitimately redirects to a different hostname (a CDN, an apex-to-www move) failing until the user updates the URL, which is visible and fixable from the settings screen; the alternative failure mode is invisible and hands out a credential **What was false:** the round-1 check compared only `req.URL.Host`, so `https://feed.example.org/api?apikey=…` redirecting to `http://feed.example.org/api?apikey=…` returned `nil` and was followed — and a `Location` that preserves the query is the common case for exactly the apex-to-www and path-rewrite redirects this row is about. The api_key then travels in cleartext, which is the same harm the cross-host refusal exists to prevent, and none of the godoc, this row, or the PR body said so. **Corrected again 2026-09-14 (QA remediation of PR #11, round 2, finding D0):** this passage originally continued "(`net/http` does strip the `Cookie` header across a scheme change, so it was the api_key half only)", and that was false — `net/http` strips nothing on a scheme change. Read in the Go source on the machine this was written on (`shouldCopyHeaderOnRedirect` in `src/net/http/client.go`, go1.27.1): the decision is `isDomainOrSubdomain` over the punycoded, lower-cased `initial.Hostname()` and `dest.Hostname()`, and since `Hostname()` drops the port, neither the scheme nor the port is ever consulted. That function is only reached when `reqs[0].URL.Host != req.URL.Host`, so a same-host downgrade does not even test it and `stripSensitiveHeaders` stays false. Confirmed on the wire too, against the round-1 code with both a `Cookie` header and an `apikey` query set: both arrived at the `http` hop in cleartext. The round-1 defect therefore exposed **both** credentials `httpx` injects — every credential this package can carry — not the api_key half only. The shipped code refuses that hop, so nothing in the fix changes; what was understated was the blast radius of the defect this row exists to record. QA (PR #11, D1) reproduced it. Corrected in `checkRedirect` via `isSchemeDowngrade`; see DEC-064 for why the upgrade direction is followed rather than refused with it | T-020, T-021, T-022 |
+| DEC-063 | 2026-09-14 | A response body over the cap is an **error** (`ErrBodyTooLarge`), never a truncated body, and the cap is enforced twice: a declared `Content-Length` above it is refused before any read, and the read itself runs through `io.LimitReader(body, cap+1)` | Truncation is the dangerous option and it is dangerous quietly: a torznab XML feed cut off mid-document parses as a *shorter* feed rather than as a failure, so the user silently loses results and nothing anywhere reports a problem. Refusing turns that into one visible failed source, which §6.3 already degrades around. The double enforcement is because neither check alone is sufficient: `Content-Length` is absent on any chunked response (so the limited read is what actually holds the line, and is what a test drives with a flushing handler), while the pre-read check avoids pulling 8 MB off the wire from a server that already declared it would send more. A server that declares a small length and sends a large body is caught by the limited read, proven with an injected `RoundTripper` because `net/http`'s own server will not emit that lie | T-020, T-021, T-022 |
+| DEC-064 | 2026-09-14 | The redirect scheme rule is asymmetric on purpose: a same-host `https` to `http` hop is refused, a same-host `http` to `https` hop is followed, and a change of port is a change of host (the comparison is on the host as written, so `example.org` and `example.org:443` are different hosts and the hop is refused) | Refusing every scheme change would be the simpler rule and it was rejected on what the check is actually for: the api_key in the query string. A downgrade puts that credential on the wire in cleartext, which is the harm; an upgrade moves the *same* request to the *same* host the user configured and only adds TLS, so refusing it would break an ordinary, widespread redirect (a source configured by its apex `http` URL whose server upgrades every request) while protecting nothing — the first hop already went out in cleartext by the user's own configuration, and refusing the upgrade would leave them on the worse of the two schemes. Symmetry would be a rule that reads tidier and defends less. The port literal is the opposite trade: `example.org` and `example.org:443` are the same server, so refusing that hop is a false positive, but it fails **closed** — a legitimate redirect stops with a named error the user can see and fix from the settings screen, and no credential moves — so normalising it is backlog `T-928` rather than round-2 work. A non-http scheme in a `Location` is treated as a downgrade from `https` for the same reason, though `net/http` refuses to follow one anyway | T-020, T-021, T-022 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
