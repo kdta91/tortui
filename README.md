@@ -116,7 +116,7 @@ yet signed with an Apple or Windows certificate.
 
 ### From source
 
-Requires Go 1.23 or newer.
+Requires Go 1.25 or newer.
 
 ```sh
 go install github.com/kdta91/tortui/cmd/tortui@latest
