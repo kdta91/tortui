@@ -1494,10 +1494,41 @@ user already runs, which delivers source-agnosticism immediately without writing
 
 ---
 
+### T-941 · Raise the minimum Go version to 1.25
+
+```
+status: todo
+depends: T-020
+```
+**Files:** `AGENT.md`, `go.mod`, `go.sum`, `.github/workflows/ci.yml`, `README.md`, `NOTICE`
+
+**Why this exists.** T-022 is `blocked` on it — see the Blocked section for the full finding.
+`govulncheck` resolves seven `golang.org/x/net` advisories into the scraper's own `html.Parse`
+call, including `GO-2026-4441`, an infinite parsing loop on a code path whose entire job is
+parsing a page an arbitrary source served. The first release fixing all seven, `x/net v0.55.0`,
+declares `go 1.25.0`, which the repository's pinned `go 1.23` cannot take. This is a change to a
+locked AGENT.md §3 stack row and was **explicitly authorised by the project owner** on
+2026-09-15 after the block was raised and independently verified; §3's "do not re-litigate" does
+not apply to a change the owner directed.
+
+**Acceptance**
+- AGENT.md §3 Language row reads `Go 1.25+`; no other §3 row changes.
+- `go.mod` declares `go 1.25.0` and `golang.org/x/net` is at `v0.55.0` or later.
+- `.github/workflows/ci.yml` sets `GO_VERSION: "1.25"`.
+- `README.md`'s stated requirement matches; every other `1.23` reference in the repo is found by
+  a sweep and updated or justified.
+- `make licenses` re-run and `NOTICE` regenerated; the licenses gate passes.
+- `govulncheck ./...` reports **0 vulnerabilities** on the whole module.
+- `make check` green and `go test -race ./... -count=1` green; the §14 support matrix is
+  reviewed against Go 1.25's own platform requirements and any change to it is stated.
+- A `DEC-` row records the authorisation, the advisories, and the 1.24-versus-1.25 choice.
+
+---
+
 ### T-022 · Scraper adapter framework
 ```
 status: blocked
-depends: T-020
+depends: T-020, T-941
 ```
 **Files:** `internal/indexer/scraper/`, `docs/indexer-definitions.md`
 
