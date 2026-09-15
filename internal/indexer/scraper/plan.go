@@ -107,7 +107,7 @@ var trustLevels = map[string]indexer.Trust{
 // Placeholders a path or a param template may contain. There is
 // deliberately no credential placeholder: an api key or a cookie comes
 // from the user's config through httpx, never from the definition
-// (DEC-073).
+// (DEC-074).
 const (
 	placeholderQuery  = "query"
 	placeholderLimit  = "limit"
@@ -170,7 +170,7 @@ func (d *Definition) plan() (*plan, error) {
 // user wrote, it is free to carry a query string, and a query string is
 // free to carry their own api key — which is exactly the value
 // internal/logging cannot mask once it is inside an error string
-// (DEC-072).
+// (DEC-073).
 func parseBase(raw string) (*url.URL, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {

@@ -1494,10 +1494,116 @@ user already runs, which delivers source-agnosticism immediately without writing
 
 ---
 
+### T-941 · Raise the minimum Go version to 1.25
+
+```
+status: done
+depends: T-020
+```
+**Files:** `AGENT.md`, `go.mod`, `go.sum`, `.github/workflows/ci.yml`, `README.md`, `NOTICE`
+
+**Why this exists.** T-022 is `blocked` on it — see the Blocked section for the full finding.
+`govulncheck` resolves seven `golang.org/x/net` advisories into the scraper's own `html.Parse`
+call, including `GO-2026-4441`, an infinite parsing loop on a code path whose entire job is
+parsing a page an arbitrary source served. The first release fixing all seven, `x/net v0.55.0`,
+declares `go 1.25.0`, which the repository's pinned `go 1.23` cannot take. This is a change to a
+locked AGENT.md §3 stack row and was **explicitly authorised by the project owner** on
+2026-09-15 after the block was raised and independently verified; §3's "do not re-litigate" does
+not apply to a change the owner directed.
+
+**What landed.** Four one-line edits and nothing else: AGENT.md §3's Language row (`Go 1.23+` →
+`Go 1.25+`, the only row touched), `go.mod`'s directive (`go 1.23` → `go 1.25.0`),
+`.github/workflows/ci.yml`'s `GO_VERSION` (`"1.23"` → `"1.25"`, still quoted), and `README.md`'s
+"Requires Go 1.23 or newer." `go mod tidy` under go1.27.1 produced **no further change** and
+`go.sum` is untouched — raising the language version alone neither adds nor upgrades a module,
+and no `toolchain` line was introduced. `NOTICE` is byte-identical for the same reason, and
+`make licenses` was re-run to prove it rather than assumed: the allowed-license check passed for
+`GOOS=darwin`, `linux` and `windows`, and the regenerated file matched. No source file, no §5
+type, no other §3 row and no other task's `**Acceptance**` block changed;
+`scripts/check-indexer-hostnames.sh` is byte-identical (md5 `3e274870651abefe8a860690677b05a6`).
+
+**`golang.org/x/net` is not on `main`, so that criterion is handed to T-022.** `main`'s `go.mod`
+requires only `BurntSushi/toml`, `adrg/xdg` and an indirect `x/sys` — `x/net` arrives with
+goquery on `task/T-022-scraper-framework`. Adding it here would be an unused requirement
+`go mod tidy` strips on sight, and building ahead into T-022. What this task does instead is
+remove the blocker and verify the target, in a throwaway module whose only content is the
+scraper's own `html.Parse` call:
+
+- `x/net v0.39.0` reproduces **all seven** advisories the Blocked section lists, with the same
+  `Fixed in` versions: `GO-2026-4440` and `GO-2026-4441` at `v0.45.0`; `GO-2026-5025`, `-5027`,
+  `-5028`, `-5029` and `-5030` at `v0.55.0`. Independently re-run here, not taken on trust.
+- Each release's own `go.mod`, read from `proxy.golang.org`: `v0.39.0` declares `go 1.23.0`,
+  `v0.45.0` declares `go 1.24.0`, `v0.55.0`/`v0.56.0`/`v0.57.0`/`v0.58.0` declare `go 1.25.0`,
+  and **`v0.59.0` declares `go 1.26.0`**.
+- **T-022 should pin `x/net v0.58.0` — not `v0.55.0`, and not `@latest`.** `v0.55.0` itself
+  still carries `GO-2026-5942` (a panic parsing an invalid SVCB or HTTPS RR in
+  `golang.org/x/net/dns/dnsmessage`, fixed in `v0.56.0`). An HTML-only consumer never calls it,
+  so govulncheck's headline stays `No vulnerabilities found`, but the same run still reports
+  "1 vulnerability in modules you require" — which reads badly against a criterion written as
+  "0 vulnerabilities". `v0.58.0` is the newest release that is clean on both counts **and**
+  still declares `go 1.25.0`; `v0.59.0` would raise the floor to Go 1.26, past what the owner
+  authorised. Verified: a `go 1.25.0` module requiring `x/net v0.58.0` keeps its directive at
+  `1.25.0`, builds, and reports `No vulnerabilities found` with no trailing module-level count.
+- `go get golang.org/x/net@v0.55.0` does not *fail* under a `go 1.23` directive — it silently
+  rewrites it (`go: upgraded go 1.23 => 1.25.0`). The block's substance holds unchanged; the
+  mechanism is an automatic bump rather than a refusal, which is precisely the "raise the
+  minimum Go version by side effect" the T-022 branch avoided by staying pinned at `v0.39.0`.
+
+**§14 support matrix: reviewed, no change needed, none made.** Checked against Go's own release
+notes rather than memory. Go 1.25's Ports section reads "Go 1.25 requires macOS 12 Monterey or
+later. Support for previous versions has been discontinued" — §14 already floors macOS at **13**,
+which is stricter, so nothing in the matrix is dropped. Go 1.24's Ports section (crossed on the
+way from 1.23) adds "Go 1.24 requires Linux kernel version 3.2 or later" and marks the 32-bit
+`windows/arm` port broken; §14 states no Linux kernel floor and lists Windows on **amd64 and
+arm64** only, never 32-bit `arm`, so neither touches it. Go 1.25's own Windows note is about
+that same broken 32-bit port ("the last release that contains" it). `go.dev/wiki/MinimumRequirements`
+gives Windows as "Windows 10 and higher or Windows Server 2016 and higher" for **Go 1.21 and
+later** — unchanged across this bump, and equal to §14's `Windows 10+`. All six tier-1
+GOOS/GOARCH pairs still cross-compile: `make build-all` green.
+
+**CI is the real risk here, and two of its three legs are NOT VERIFIED.** `make check`,
+`go test -race ./... -count=1`, `make build-all`, `make licenses` and `govulncheck ./...` are all
+green on **darwin/arm64 with go1.27.1 only**. Nothing in this task was run on a Linux or Windows
+runner and nothing here can be. What *was* verified about the workflow itself: `1.25` is a
+documented `go-version` value for `actions/setup-go` — its README lists "Specific versions:
+`1.25`, `1.24.11`, …" — and the value stays quoted, which that same README specifically warns
+about ("the YAML parser's behavior interprets non-wrapped values as numbers and, in the case of
+version `1.20`, trims it down to `1.2`"). Go 1.25 is long released: `proxy.golang.org`'s
+`golang.org/toolchain` list carries `go1.25.0` onward for `darwin-arm64`, `linux-amd64` and
+`windows-amd64`, so setup-go has a real version to resolve on every leg. The residual unknown is
+`GOTOOLCHAIN`: if a runner ever provisions a Go older than the `go 1.25.0` directive, the
+default `GOTOOLCHAIN=auto` must download 1.25 mid-build instead of failing, and a runner without
+module-proxy access would fail there rather than at the setup step. Pinning `GO_VERSION`
+explicitly is what keeps that path cold, and it is why step 2 of the Blocked section's remedy
+exists.
+
+**DEC-072 number collision at merge time.** `main`'s highest decision row is `DEC-071`, so
+`DEC-072` is the next free number and is what this task used. The unmerged
+`task/T-022-scraper-framework` branch already adds `DEC-072` through `DEC-076`, so whichever of
+the two merges second needs its rows renumbered — flagged rather than pre-empted, because
+renumbering T-022's rows from here would mean editing a branch this task must not touch.
+**Resolved on the T-022 branch (2026-09-16):** T-941 merged first, so T-022's five rows moved to
+`DEC-073`–`DEC-077` when `main` was merged into `task/T-022-scraper-framework`. This row's own
+`DEC-072` is unchanged.
+
+**Acceptance**
+- AGENT.md §3 Language row reads `Go 1.25+`; no other §3 row changes.
+- `go.mod` declares `go 1.25.0` and `golang.org/x/net` is at `v0.55.0` or later.
+- `.github/workflows/ci.yml` sets `GO_VERSION: "1.25"`.
+- `README.md`'s stated requirement matches; every other `1.23` reference in the repo is found by
+  a sweep and updated or justified.
+- `make licenses` re-run and `NOTICE` regenerated; the licenses gate passes.
+- `govulncheck ./...` reports **0 vulnerabilities** on the whole module.
+- `make check` green and `go test -race ./... -count=1` green; the §14 support matrix is
+  reviewed against Go 1.25's own platform requirements and any change to it is stated.
+- A `DEC-` row records the authorisation, the advisories, and the 1.24-versus-1.25 choice.
+
+---
+
 ### T-022 · Scraper adapter framework
 ```
-status: blocked
-depends: T-020
+status: done
+depends: T-020, T-941
 ```
 **Files:** `internal/indexer/scraper/` — `scraper.go`, `definition.go`, `plan.go`, `template.go`,
 `html.go`, `jsonmode.go`, `result.go`, `errors.go` and their tests (`scraper_test.go`,
@@ -1506,16 +1612,29 @@ depends: T-020
 (`search.html`, `latest.html`, `api.json`, `fixture-archive.yml`,
 `fixture-archive-search-only.yml`, `fixture-api.yml`).
 
-**BLOCKED — read this before the rest.** The framework is written, tested and documented, and
-every acceptance criterion below is met. It is **not** ready to merge, because taking
-`PuerkitoBio/goquery` (the §3 stack's HTML parser, and the only way to satisfy the "Supports
-HTML (goquery)" criterion) takes `golang.org/x/net/html` with it, and **every `golang.org/x/net`
-version this module can compile under the project's pinned Go 1.23 carries seven vulnerabilities
-that `govulncheck` reports as reachable from the exact call this package makes**. AGENT.md §12
-makes "a required dependency … has an open CVE" a stop condition, and the fix requires changing
-AGENT.md §3's locked `Go 1.23+` row and CI's `GO_VERSION`, which is a decision this task may not
-take. The precise finding, the evidence and the exact input that would unblock it are in the
-**Blocked** section at the foot of this file and in DEC-076.
+**Was blocked; unblocked on 2026-09-16.** This task stopped on AGENT.md §12 ("a required
+dependency … has an open CVE"): `PuerkitoBio/goquery` (the §3 stack's HTML parser, and the only
+way to satisfy the "Supports HTML (goquery)" criterion) takes `golang.org/x/net/html` with it,
+and every `golang.org/x/net` release the module could compile under the then-pinned Go 1.23
+carried seven advisories `govulncheck` resolved into this package's own `html.Parse` call. The
+project owner authorised raising the Go floor; `T-941` landed it (PR #14, `69d5d07`) and `main`
+now declares `go 1.25.0`. See the **Blocked → Resolved** section at the foot of this file.
+
+**What the unblock changed on this branch, and nothing else.** `main` was merged in, and three
+dependency lines moved: `golang.org/x/net v0.39.0` → **`v0.58.0`**,
+`github.com/PuerkitoBio/goquery v1.10.3` → **`v1.13.0`**, and its selector library
+`github.com/andybalholm/cascadia v1.3.3` → **`v1.3.4`** — the three that goquery `v1.13.0`'s own
+`go.mod` pairs together, all three declaring `go 1.25.0` so the floor is matched, not raised
+(`v0.59.0` of `x/net` declares `go 1.26.0` and is deliberately not taken). `go.mod`'s own
+directive moved `go 1.23.0` → `go 1.25.0` to match `main`. **No source file changed for the
+upgrade**; the only Go edit is the `maxHTMLDepth` doc comment in `html.go`, which described the
+old pin. `NOTICE` was regenerated by `make licenses` and the allowed-license check passed for
+`GOOS=darwin`, `linux` and `windows`; goquery `v1.13.0` is BSD-3-Clause and cascadia `v1.3.4` is
+BSD-2-Clause, both read from the modules' own `LICENSE` files rather than inferred.
+`govulncheck ./...` (v1.8.0, DB 2026-09-10) now reports `No vulnerabilities found.` with no
+trailing module-level count, on darwin/arm64 under go1.27.1. The branch's five decision rows were
+renumbered `DEC-072`–`DEC-076` → **`DEC-073`–`DEC-077`**, because `T-941` merged first and took
+`DEC-072`. `DEC-078` records the three pins and why `@latest` is refused.
 
 **What landed.** `scraper.Parse([]byte) (*Definition, error)` decodes and validates a
 user-supplied YAML definition; `scraper.New(Options) (*Adapter, error)` compiles one into an
@@ -1563,7 +1682,7 @@ branch, which `golang.org/x/net/html` cannot reach from a byte slice); `make che
   gjson-style path subset (dotted keys, numeric array indices, `\.` escape) and reads it with
   `encoding/json`. `TestJSONModeMapsEveryResultField` runs the json mode end to end against
   `testdata/scraper/api.json`. The path expression is hand-written rather than a dependency;
-  DEC-075 says why.
+  DEC-076 says why.
 - *Definition validation produces actionable errors naming the failing field and selector* —
   `*ValidationError` carries the dotted location of the failing key and the selector.
   `TestValidationNamesTheFailingFieldAndSelector` runs twenty-four bad definitions and asserts,
@@ -1622,12 +1741,12 @@ forces this row, the package doc and DEC-071 to be revisited.
 `base_url` — the three places a user plausibly writes their own credential into a definition. A
 `ValidationError` does carry a key the user wrote (a field name, a param key, a trust mapping
 key), a selector, a regex, a transform name or a mode, which is what the "actionable errors"
-criterion asks for; DEC-072 states that boundary exactly. A YAML decode failure is reported by
+criterion asks for; DEC-073 states that boundary exactly. A YAML decode failure is reported by
 line and column only, because `goccy`'s own message quotes the offending source line back
 verbatim (verified against the library, not assumed: `yaml.FormatError(err, false, false)` was
 run against seven malformed documents and each one embedded the source line). The schema has no
 credential placeholder and refuses every `{{…}}` it does not define, so `{{apikey}}` is a
-validation error rather than a feature (DEC-073).
+validation error rather than a feature (DEC-074).
 `TestNoErrorFromThisAdapterCarriesTheCredential` sweeps twenty failure modes — every validation
 failure, every query refusal, every response-shape failure, a 401, a cancelled context — with
 the key configured on the client, hardcoded into a param value and written into the base
@@ -1663,7 +1782,7 @@ mutation is red.
 **Hostile input.** The response is the source's and the definition is user-supplied, so both are
 treated as hostile, and each case below is a test in `hostile_test.go` rather than a claim.
 A document nested 100 000 deep is refused by a linear pre-scan before the parser sees it
-(`ErrDocumentTooDeep`; see the measurements in `html.go` and DEC-076) while a page with
+(`ErrDocumentTooDeep`; see the measurements in `html.go` and DEC-077) while a page with
 thousands of *unclosed* `<li>`, `<tr>` and `<p>` elements — which HTML5 closes implicitly and
 which therefore nest not at all — still parses. Tag-shaped text inside `<script>`, `<style>` and
 comments is skipped rather than counted. A selector matching 3000 rows is capped at 1000, in
@@ -2725,11 +2844,13 @@ when it reaches it and does not start backlog items on its own.
 | DEC-069 | 2026-09-14 | **Corrected 2026-09-15 (QA remediation of PR #12) — the last clause of this column was false and is rewritten in place, matching how DEC-040, DEC-046, DEC-050 and DEC-062 were corrected.** Construction is split in two. `New` never touches the network and returns fail-closed caps (search only). `Discover` probes, and returns a **usable adapter alongside its error** when the probe fails: the `*Adapter` is nil only when the options themselves are unusable. The two probe steps then report themselves **differently, on purpose** — a `t=caps` failure wraps `ErrCapsUnavailable` and leaves the adapter on the fail-closed baseline, while a Latest-probe failure deliberately does **not** wrap it and leaves the adapter carrying everything the caps document said, with `Caps.Latest` and `Caps.ProvidesMagnet` false. `errors.Is(err, ErrCapsUnavailable)` is therefore how a caller tells "this source published no usable caps document" from "its caps are known and only the recent-additions probe failed" | Two constraints pull against each other. `indexer.Indexer` requires `Caps()` to do no I/O, never block, and stay constant for the lifetime of the value, so the probe cannot live inside `Caps()` and cannot mutate an adapter afterwards without breaking the "constant" half. But a source that is offline, or simply does not publish a caps document, must not become unconfigurable — refusing to build the adapter would take a perfectly searchable source away from the user over metadata (§6.3), and Jackett's own caps output omits `<limits>` and `<registration>` entirely, so partial documents are normal. Returning both is unusual enough to be a documented contract rather than an accident: the godoc says the adapter is nil only for bad options, says discarding it on error is the one thing not to do, and the sentinel lets a caller tell the two apart with `errors.Is`. The settings screen shows the error; the search path uses the adapter. The alternative designs were rejected: a mutable `Probe()` method breaks the frozen contract's constancy guarantee, and a three-value return puts the awkwardness in every call site instead of one godoc. **What was false:** this row originally ended "and every other error wraps `ErrCapsUnavailable`", and `Discover`'s godoc said the same, adding that every such error arrives with an adapter "carrying the fail-closed baseline caps". Neither holds for the Latest probe. `probe` returns `fmt.Errorf("probing for a recent-additions feed: %w", err)` with no sentinel in it, because at that point the caps document has already parsed and its contents are on the adapter — and the code's own `TestALatestProbeFailureLeavesTheRestOfCapsIntact` asserts both halves: `!errors.Is(err, ErrCapsUnavailable)`, and `Caps{Search: true, Categories: true, Pagination: true}` rather than the baseline. Re-run on 2026-09-15 against a source serving `caps-full.xml` and a 503 on `t=search`, `Discover` returned `torznab fixture-feed: probing for a recent-additions feed: httpx: GET <host>: HTTP 503 Service Unavailable (1 attempt)`, `errors.Is(err, ErrCapsUnavailable) = false`, and `Caps{Search:true Latest:false Categories:true Pagination:true}`. So the design was right and the description was wrong, in the direction that matters: a caller following this row would have read a Latest-probe failure as "the caps document is fine" being impossible, and lost the one discrimination the sentinel exists to give. Corrected in this column and in `Discover`'s godoc; nothing in the code changed. QA (PR #12, BLOCKING 3) found it | T-021 |
 | DEC-070 | 2026-09-14 | A category filter is translated into **only the category ids the source published in its own caps document**, sent as `cat=`, and the results are not filtered again locally. A query naming categories that the source declared none of returns zero results without making a request | tortui's taxonomy is deliberately coarse (seven data-kind buckets) and a Torznab server's is not, so the translation has to happen against that server's own numbering — which the caps document conveniently hands over. Building the map from the document means tortui never invents an id for a server, and `indexer.CategoryFromTorznab` interprets the numbering exactly once, in the adapter, where §13 puts it. Not re-filtering locally is the deliberate half: the source's classification is authoritative for its own ids, and re-checking against tortui's buckets would drop precisely the items the source has a custom id for — those map to `CategoryOther` on the way in and would fail a filter the source itself considered satisfied. The no-intersection case answers without a request because the answer is knowable without one, and one fewer request to someone else's server is the right default (§6.13). A source that declared no categories at all reports `Caps.Categories = false` and its `cat` parameter is omitted, which `indexer.Query` explicitly permits | T-021 |
 | DEC-071 | 2026-09-15 | **Corrected 2026-09-15 (QA remediation of PR #12, round 2) — this row was written on the round-1 finding and named two pass-through fields; there are four sites, and the correction is in place in the style of DEC-040/046/050/062/066.** `Result.Title`, `Result.Magnet` and `Result.Uploader` keep carrying the source's own text **verbatim**, as does `Result.ID` whenever the identity it picks is a non-URL guid, comments or link value or the title fallback, and the remediation of PR #12 is a disclosure rather than a fix: the package doc, DEC-066 and the PR body are scoped to what the adapter actually guarantees, the credential test is rewritten to assert both directions of the real boundary, and the structural fix is left to backlog `T-934` (now a filed row, along with `T-935` and `T-936`). `resultID`'s last-resort fallback to the title is kept as well, so an item that published no infohash, no guid, no comments and no link still has an identity, and that identity inherits `Title`'s gap | QA (PR #12) reproduced the leak this row exists to record: a source that echoes the user's api_key into a `<title>` or into a magnet's `dn=` parameter gets it written to the log file in plaintext the moment anything logs the `Result`, because neither field name is on `internal/logging`'s `sensitiveKeySubstrings` list and an opaque key has no value shape `maskText` matches. Reproduced again on the remediation branch before anything was written here. Three routes were open. **Stripping or scrubbing the fields** is wrong on its own terms: the title is the value the user reads in the results table, and the magnet has to reach the engine exactly as published or the torrent does not start — and this package has no access to the credential to scrub with, by design (DEC-061). **Fixing it properly** means a `LogValue()` on `indexer.Result`, or a registry-level rule that a result is only ever logged under a masked key. Both touch the frozen §5 `Result` contract, which AGENT.md §12 makes a stop condition and §5 makes a `DEC-` plus a note on every affected task; it is also not a Torznab problem — every adapter T-022 onward produces the same `Result` — so doing it inside an adapter task would put a cross-cutting change behind a review that is looking at one adapter. That is `T-934`. **Disclosing it accurately** is what is left, and it is what was actually missing: the code was already correct, and the only defect QA found in this PR was prose claiming a guarantee the code does not provide. So the claim is now scoped to derived fields, the two exceptions are named wherever the old claim appeared, and the test that appeared to cover them — and did not, because `echoingFeed()` put the key in neither — asserts that they **do** carry the source's text, which turns red if a future change ever alters that and forces this row to be revisited with it. The `resultID` fallback was evaluated for removal on the same occasion and kept, on the merits rather than for convenience: the leaked text is already present in `Title` verbatim by necessity, so removing the duplicate narrows nothing an attacker can reach, while an item with no other identity would be left with an empty `Result.ID`. It is asserted by `TestResultIDFallsBackToTheTitleAndInheritsItsGap` rather than left implicit, so `T-934` inherits a written record of every field in the gap. Cost accepted: until `T-934` lands, a caller that logs a whole `Result` from a hostile or broken source can write a credential to the log file, and nothing in `internal/logging` will catch it. **What was false:** this row originally said "the two exceptions are named wherever the old claim appeared", and the fields it named were `Title` and `Magnet` only. `Result.Uploader` is a third: `uploaderFrom` refuses a value containing `://`, which stops a link and not an opaque token, so an api_key echoed into `<attr name="uploader" value="KEY"/>` is passed through verbatim under a name `internal/logging` does not mask. And ID's gap is wider than the last-resort title branch this row described: `withoutQuery` reduces URL-shaped candidates only, so a present `<guid isPermaLink="false">KEY</guid>` reaches `Result.ID` as it stands. QA reproduced both against the real `internal/logging` sink on round 2 of PR #12, and both were reproduced again on the remediation branch first. The same three routes were re-weighed for each. **Scrubbing** is no more available here than it was for `Title`: this package never sees the credential (DEC-061), an uploader's name is legitimately an opaque token so there is no shape to match on, and refusing a non-URL guid would throw away the source's own stable identity — the very thing `resultID` exists to produce — leaving items with an identity that changes whenever their title does. **Fixing it properly** is the same `LogValue()`-on-`Result` change, so the same §12 stop condition, and `T-934`'s description now covers all four sites. **Disclosing it accurately** is again what was missing, and the lesson taken is a mechanical one: the package doc, DEC-066 and the T-021 row now write out every `Result` field and what the adapter does with it, because both false claims were counts ("no field not named for a URL", then "two fields"), and a count is what nobody re-derives when the code moves. `bareTokenEchoingFeed` and `assertLinkShapedUploaderIsRefused` make both halves of the uploader story fail loudly if either changes | T-021, T-022 |
-| DEC-072 | 2026-09-15 | No error the scraper package produces ever contains a param **value**, a `path`, or the `base_url` out of a definition, and no text out of a response. What a `ValidationError` does contain is a **key the user wrote** — a field name, a param key, a trust mapping key — plus a selector, a regex, a transform name or a mode. A YAML decode failure is reported as `(at line L, column C)` and nothing else; a JSON decode failure as a byte offset; an HTML response contributes nothing at all | Same rule as DEC-061 (`httpx`) and DEC-066 (`torznab`), one layer up, and it has a second source of hostile text that neither of those has: the **definition itself**. A definition is user-supplied config, nothing stops a user hardcoding their own api key into `params: {token: "…"}` or into a query string on `base_url`, and `internal/logging` masks by key name and value shape — an error string is neither. The YAML half is not hypothetical and was not assumed: `goccy/go-yaml`'s error text **embeds the offending source line verbatim**, verified by running `yaml.FormatError(err, false, false)` and `err.Error()` against seven malformed documents on 2026-09-15 and reading the output (`err.Error()` prints the line with a caret under the column; `FormatError(..., false, false)` drops the excerpt but can still name a key). So only the `[line:column]` prefix is kept, mirroring the XML line number `torznab` keeps. The cost is diagnostic detail on a syntax error; the user is editing a local file and has the line. The three things the claim protects are exactly the three a credential plausibly sits in, which is why they are named individually rather than covered by "no definition content": naming the failing **key** is what the T-022 acceptance criterion asks for and a key is not where a secret goes. One design change came out of this: the unknown-placeholder error originally printed `{{%s}}` with the placeholder's own name, which is text out of a param value; it now names the param key and lists the legal placeholders instead. `TestNoErrorFromThisAdapterCarriesTheCredential` sweeps twenty failure modes with the credential configured on the client, hardcoded in a param and written into the base address, and checks the whole unwrap chain; proved non-vacuous by mutation (making `parseBase` echo its input, and restoring the `{{%s}}` echo, each turn it red) | T-022 |
-| DEC-073 | 2026-09-15 | A scraper definition **cannot** carry a credential. The schema has no placeholder for one, and validation refuses every `{{…}}` it does not define, so `{{apikey}}`, `{{cookie}}` and `{{passkey}}` are validation errors rather than features. The credential a request carries comes from the user's own config through `httpx`, which injects it as a query parameter and a `Cookie` header | The alternative — a `credentials:` or `{{apikey}}` key in the definition — is how a definition stops being a file you can read, edit, and hand to someone else, and it puts a live secret in a document whose whole purpose is to be shared when a site's markup changes. It also multiplies the leak surface this task is already fighting: a credential inside the definition would be one edit away from an error message, a validation location, or a `params` dump. Refusing unknown placeholders rather than passing them through gets the property for free and has an independent justification of its own: a typo would otherwise be sent to the site as the literal text `{{quary}}` and look like a site-side failure. What this does **not** do is stop a user hardcoding a literal key into a param value, which nothing can; DEC-072 is the rule that keeps such a value out of every error. `TestTheCredentialIsSentByHTTPXAndNotByTheDefinition` asserts both halves: the key `httpx` injects reaches the source, and a definition naming `{{apikey}}` is refused | T-022 |
-| DEC-074 | 2026-09-15 | A definition is decoded **strictly**: an unknown key, a duplicate key and a value of the wrong type are all errors | Two reasons, and the second is the load-bearing one. A mistyped key in a definition is indistinguishable, from the user's chair, from a selector that has rotted — and they are editing the file precisely because something stopped working, so silence is the worst possible answer. Second, it bounds a YAML alias bomb: the anchors a billion-laughs document needs have to hang off *keys*, and an unknown top-level key is refused before anything is expanded. That second property was measured rather than assumed, on 2026-09-15: a nine-level, fan-nine bomb (9⁹ = 387,420,489 notional leaves) decoded by `goccy/go-yaml` into `map[string]any` in **under a millisecond with no measurable allocation**, because the decoder shares the aliased value rather than expanding it — the result is a DAG, not a tree — and the same bomb attached to a schema-defined key is bounded by the schema's own shape, since `transform` is a list of strings and an alias to a list of lists cannot become one. Strictness is therefore belt and braces rather than the only guard. Cost accepted: a definition written for a future version of the schema fails on this version instead of degrading, which is the right direction for a file the user is debugging. `TestAYAMLAliasBombIsRefused` and `TestParseIsStrictAboutTheShapeOfTheFile` pin both | T-022 |
-| DEC-075 | 2026-09-15 | The json mode's "gjson-style path" is **hand-written** against `encoding/json` — dot-separated keys, an all-digit segment as an array index, `\.` and `\\` escapes — rather than taking `tidwall/gjson` as a dependency | The acceptance criterion's words are "JSON (gjson-style path)", which describes the *syntax shape* a user types, not a library to import. What a scraper definition needs out of a path expression is "walk to this key" and "take this array element", and that is nineteen lines of `switch` over `map[string]any` and `[]any`. Taking gjson would buy wildcards, queries, modifiers and multipaths — an expression language evaluated against attacker-influenced data, inside the one package whose input is attacker-influenced by design — in exchange for a dependency, a `DEC-` row, a `NOTICE` entry and a licence review, to support syntax no definition in this repository uses. AGENT.md §3 requires a decision either way; this is the decision. The subset is small enough to validate exhaustively at parse time (`TestCompilePath` covers six accepted and six rejected expressions) and small enough that nothing in it can recurse, backtrack or evaluate. `encoding/json`'s own nesting limit was verified rather than assumed: a 100,000-deep array is refused as an ordinary syntax error in constant time, not a stack overflow | T-022 |
-| DEC-076 | 2026-09-15 | `maxHTMLDepth` refuses an HTML response nested deeper than **512** elements before `html.Parse` is called, using a linear, allocation-free pre-scan that excludes the elements HTML5 closes implicitly (`li`, `tr`, `td`, `p`, …) and skips comments, doctypes and raw-text elements. 512 is deliberately the same bound `golang.org/x/net v0.45.0+` puts on its own open-element stack | Measured, not assumed, on 2026-09-15 (darwin/arm64, Go 1.27.1) against `golang.org/x/net v0.39.0`: a document that is nothing but nested `<div>` elements costs 8.5ms at depth 1000, 119ms at 5000, 400ms at 10 000, 1.6s at 20 000, 6.4s at 40 000 and **39s at 100 000** — the last two being 440KB and 1.1MB of input, well inside `httpx`'s 8MB cap. The page is written by the source, the parse is one uninterruptible call, and a context deadline does not touch it, so a source can burn a minute of a user's CPU per search with a small page. Excluding the optional-end-tag elements is correctness rather than pragmatism: the parser does not nest them, so counting them would refuse ordinary pages full of unclosed `<li>` and `<tr>` while doing nothing about the case the bound exists for, which needs an element that really does nest. The number matches upstream's so the guard behaves identically before and after the `x/net` upgrade the **Blocked** section asks for; the whole test suite passes against `x/net v0.39.0` and `v0.55.0` with no source change. This is also, discovered afterwards, published as `GO-2026-4440`; the guard mitigates that advisory and does **not** mitigate `GO-2026-4441` (an infinite parse loop), which is why the dependency still blocks the task | T-022 |
+| DEC-072 | 2026-09-15 | The project's minimum Go version rises from **1.23 to 1.25** — AGENT.md §3's Language row, `go.mod`'s directive (`go 1.25.0`), `.github/workflows/ci.yml`'s `GO_VERSION` and `README.md`'s from-source requirement all move together. This is a deliberate change to a **locked §3 stack row**, made only because the **project owner explicitly authorised it on 2026-09-15** after the T-022 build agent raised the block and the orchestrator independently verified every claim in it; §3's "do not re-litigate" and §12's "a required dependency … has an open CVE" stop condition do not apply to a change the owner directed, and no other §3 row and no §5 type was touched. **1.25 was chosen over the 1.24 half-step.** Separately, T-022 should pin **`x/net v0.58.0`**, not `v0.55.0` and not `@latest` | AGENT.md §3 locks `PuerkitoBio/goquery`, goquery requires `golang.org/x/net/html`, and `govulncheck` (`golang.org/x/vuln` v1.8.0, DB of 2026-09-10) resolves **seven** advisories in the pinned `x/net v0.39.0` into the T-022 scraper's own `html.Parse` call: `GO-2026-4440` (quadratic parsing complexity) and `GO-2026-4441` (**infinite** parsing loop), both fixed in `v0.45.0`; and `GO-2026-5025`, `GO-2026-5027`, `GO-2026-5028`, `GO-2026-5029`, `GO-2026-5030` (namespaced and HTML elements in foreign content, DoS parsing arbitrary HTML, character references in DOCTYPE nodes, duplicate-attribute XSS), all five fixed in `v0.55.0`. All seven were reproduced from scratch for this task in a throwaway module containing nothing but that `html.Parse` call, with the same `Fixed in` versions the Blocked section records — not taken on trust from the blocking report. **Why 1.25 and not 1.24:** `v0.45.0` closes only the first two and declares `go 1.24.0`; `v0.55.0` closes all seven and declares `go 1.25.0` (each read from that release's own `go.mod` on `proxy.golang.org`). Stopping at 1.24 would knowingly ship five open advisories on a code path whose entire job is parsing a page an arbitrary source served, to save one minor version of toolchain floor — and `GO-2026-4441` is the reason the half-step is not tempting anyway: an infinite loop is not mitigated by T-022's `guardHTMLDepth`, which bounds depth and not iteration. The owner chose the full fix. **Why `v0.58.0` for T-022 rather than the `v0.55.0` the criterion names as a floor:** `v0.55.0` still carries `GO-2026-5942` (panic parsing an invalid SVCB/HTTPS RR in `dns/dnsmessage`, fixed in `v0.56.0`) — uncalled by an HTML-only consumer, so govulncheck's headline stays clean, but the run still prints "1 vulnerability in modules you require", which is a poor answer to a criterion worded "0 vulnerabilities". `v0.56.0`, `v0.57.0` and `v0.58.0` all still declare `go 1.25.0`, so `v0.58.0` is the newest clean release inside the authorised floor; **`v0.59.0` declares `go 1.26.0`** and taking `@latest` would quietly raise the minimum again, past what was authorised. **Cost accepted:** anyone building from source now needs Go 1.25, two minor versions newer than before, and `go.mod` will rewrite its own directive if a future `go get` pulls a module that needs more — the `v0.59.0` case is a live example, so dependency bumps need the directive watched. **What did not change:** `go mod tidy` added nothing and `go.sum` and `NOTICE` are byte-identical (`main` has no `x/net` dependency; it arrives with T-022), and AGENT.md §14's support matrix needs no edit — Go 1.25 requires macOS 12 while §14 already floors at 13, Go's Windows minimum is unchanged at Windows 10 for every release since 1.21, and Go 1.25's only Windows port note concerns the broken 32-bit `windows/arm` port, which §14 does not list. All six tier-1 cross-compiles are green | T-941, T-022, and every future task — this is the toolchain floor |
+| DEC-073 | 2026-09-15 | No error the scraper package produces ever contains a param **value**, a `path`, or the `base_url` out of a definition, and no text out of a response. What a `ValidationError` does contain is a **key the user wrote** — a field name, a param key, a trust mapping key — plus a selector, a regex, a transform name or a mode. A YAML decode failure is reported as `(at line L, column C)` and nothing else; a JSON decode failure as a byte offset; an HTML response contributes nothing at all | Same rule as DEC-061 (`httpx`) and DEC-066 (`torznab`), one layer up, and it has a second source of hostile text that neither of those has: the **definition itself**. A definition is user-supplied config, nothing stops a user hardcoding their own api key into `params: {token: "…"}` or into a query string on `base_url`, and `internal/logging` masks by key name and value shape — an error string is neither. The YAML half is not hypothetical and was not assumed: `goccy/go-yaml`'s error text **embeds the offending source line verbatim**, verified by running `yaml.FormatError(err, false, false)` and `err.Error()` against seven malformed documents on 2026-09-15 and reading the output (`err.Error()` prints the line with a caret under the column; `FormatError(..., false, false)` drops the excerpt but can still name a key). So only the `[line:column]` prefix is kept, mirroring the XML line number `torznab` keeps. The cost is diagnostic detail on a syntax error; the user is editing a local file and has the line. The three things the claim protects are exactly the three a credential plausibly sits in, which is why they are named individually rather than covered by "no definition content": naming the failing **key** is what the T-022 acceptance criterion asks for and a key is not where a secret goes. One design change came out of this: the unknown-placeholder error originally printed `{{%s}}` with the placeholder's own name, which is text out of a param value; it now names the param key and lists the legal placeholders instead. `TestNoErrorFromThisAdapterCarriesTheCredential` sweeps twenty failure modes with the credential configured on the client, hardcoded in a param and written into the base address, and checks the whole unwrap chain; proved non-vacuous by mutation (making `parseBase` echo its input, and restoring the `{{%s}}` echo, each turn it red) | T-022 |
+| DEC-074 | 2026-09-15 | A scraper definition **cannot** carry a credential. The schema has no placeholder for one, and validation refuses every `{{…}}` it does not define, so `{{apikey}}`, `{{cookie}}` and `{{passkey}}` are validation errors rather than features. The credential a request carries comes from the user's own config through `httpx`, which injects it as a query parameter and a `Cookie` header | The alternative — a `credentials:` or `{{apikey}}` key in the definition — is how a definition stops being a file you can read, edit, and hand to someone else, and it puts a live secret in a document whose whole purpose is to be shared when a site's markup changes. It also multiplies the leak surface this task is already fighting: a credential inside the definition would be one edit away from an error message, a validation location, or a `params` dump. Refusing unknown placeholders rather than passing them through gets the property for free and has an independent justification of its own: a typo would otherwise be sent to the site as the literal text `{{quary}}` and look like a site-side failure. What this does **not** do is stop a user hardcoding a literal key into a param value, which nothing can; DEC-073 is the rule that keeps such a value out of every error. `TestTheCredentialIsSentByHTTPXAndNotByTheDefinition` asserts both halves: the key `httpx` injects reaches the source, and a definition naming `{{apikey}}` is refused | T-022 |
+| DEC-075 | 2026-09-15 | A definition is decoded **strictly**: an unknown key, a duplicate key and a value of the wrong type are all errors | Two reasons, and the second is the load-bearing one. A mistyped key in a definition is indistinguishable, from the user's chair, from a selector that has rotted — and they are editing the file precisely because something stopped working, so silence is the worst possible answer. Second, it bounds a YAML alias bomb: the anchors a billion-laughs document needs have to hang off *keys*, and an unknown top-level key is refused before anything is expanded. That second property was measured rather than assumed, on 2026-09-15: a nine-level, fan-nine bomb (9⁹ = 387,420,489 notional leaves) decoded by `goccy/go-yaml` into `map[string]any` in **under a millisecond with no measurable allocation**, because the decoder shares the aliased value rather than expanding it — the result is a DAG, not a tree — and the same bomb attached to a schema-defined key is bounded by the schema's own shape, since `transform` is a list of strings and an alias to a list of lists cannot become one. Strictness is therefore belt and braces rather than the only guard. Cost accepted: a definition written for a future version of the schema fails on this version instead of degrading, which is the right direction for a file the user is debugging. `TestAYAMLAliasBombIsRefused` and `TestParseIsStrictAboutTheShapeOfTheFile` pin both | T-022 |
+| DEC-076 | 2026-09-15 | The json mode's "gjson-style path" is **hand-written** against `encoding/json` — dot-separated keys, an all-digit segment as an array index, `\.` and `\\` escapes — rather than taking `tidwall/gjson` as a dependency | The acceptance criterion's words are "JSON (gjson-style path)", which describes the *syntax shape* a user types, not a library to import. What a scraper definition needs out of a path expression is "walk to this key" and "take this array element", and that is nineteen lines of `switch` over `map[string]any` and `[]any`. Taking gjson would buy wildcards, queries, modifiers and multipaths — an expression language evaluated against attacker-influenced data, inside the one package whose input is attacker-influenced by design — in exchange for a dependency, a `DEC-` row, a `NOTICE` entry and a licence review, to support syntax no definition in this repository uses. AGENT.md §3 requires a decision either way; this is the decision. The subset is small enough to validate exhaustively at parse time (`TestCompilePath` covers six accepted and six rejected expressions) and small enough that nothing in it can recurse, backtrack or evaluate. `encoding/json`'s own nesting limit was verified rather than assumed: a 100,000-deep array is refused as an ordinary syntax error in constant time, not a stack overflow | T-022 |
+| DEC-077 | 2026-09-15 | `maxHTMLDepth` refuses an HTML response nested deeper than **512** elements before `html.Parse` is called, using a linear, allocation-free pre-scan that excludes the elements HTML5 closes implicitly (`li`, `tr`, `td`, `p`, …) and skips comments, doctypes and raw-text elements. 512 is deliberately the same bound `golang.org/x/net v0.45.0+` puts on its own open-element stack | Measured, not assumed, on 2026-09-15 (darwin/arm64, Go 1.27.1) against `golang.org/x/net v0.39.0`: a document that is nothing but nested `<div>` elements costs 8.5ms at depth 1000, 119ms at 5000, 400ms at 10 000, 1.6s at 20 000, 6.4s at 40 000 and **39s at 100 000** — the last two being 440KB and 1.1MB of input, well inside `httpx`'s 8MB cap. The page is written by the source, the parse is one uninterruptible call, and a context deadline does not touch it, so a source can burn a minute of a user's CPU per search with a small page. Excluding the optional-end-tag elements is correctness rather than pragmatism: the parser does not nest them, so counting them would refuse ordinary pages full of unclosed `<li>` and `<tr>` while doing nothing about the case the bound exists for, which needs an element that really does nest. The number matches upstream's so the guard behaves identically before and after the `x/net` upgrade the **Blocked** section asks for; the whole test suite passes against `x/net v0.39.0` and `v0.55.0` with no source change. This is also, discovered afterwards, published as `GO-2026-4440`; the guard mitigates that advisory and does **not** mitigate `GO-2026-4441` (an infinite parse loop), which is why the dependency still blocks the task | T-022 |
+| DEC-078 | 2026-09-16 | The scraper's HTML stack is pinned as the set goquery itself pairs: `golang.org/x/net v0.58.0`, `github.com/PuerkitoBio/goquery v1.13.0` and `github.com/andybalholm/cascadia v1.3.4`. Not `x/net@latest`, and not goquery `v1.10.3` kept in place | This is the pin that closes the block DEC-072 authorised the fix for, so the version is load-bearing and each bound was checked against the release's own `go.mod` rather than assumed. **Upper bound:** `x/net v0.59.0` declares `go 1.26.0`, which would raise the language floor past the 1.25 the owner authorised, so `@latest` is refused on purpose; `v0.58.0` is the newest release still declaring `go 1.25.0`. **Lower bound:** `v0.55.0` fixes all seven advisories reachable from `html.Parse` but still carries `GO-2026-5942` (a panic on an invalid SVCB/HTTPS RR in `dns/dnsmessage`, fixed in `v0.56.0`) — an HTML-only consumer never calls it, so the headline would stay clean, but the same run still reports "1 vulnerability in modules you require", which reads badly against a criterion written as 0. **goquery moved too**, and deliberately: `v1.13.0` is the first release whose own `go.mod` requires `x/net v0.58.0` and `cascadia v1.3.4`, so the pin becomes the pairing upstream ships rather than this repository holding a `v1.10.3` (whose declared `x/net` is `v0.39.0`) nineteen minors above what its author declared — an untested combination in the one package whose input is hostile by design. The constraint that kept T-022 on `v1.10.3` was that `v1.11`/`v1.12`/`v1.13` declare `go 1.24.0`/`1.25.0`/`1.25.0`; after T-941 that constraint is gone and `v1.13.0` matches the floor exactly. Cost accepted: goquery `v1.11`–`v1.13` refactor `array.go`, `filter.go`, `property.go`, `query.go`, `traversal.go`, `type.go` and `utilities.go`, so the move is a real surface — the whole suite, `-race`, and the package's 99.9% coverage are green across it with **no change to any source file**, and the eight goquery calls this package makes (`NewDocumentFromNode`, `Selection`, `FindMatcher`, `Length`, `EachWithBreak`, `First`, `AttrOr`, `Text`) are unchanged in signature and semantics upstream. Licences re-read from the modules' own `LICENSE` files: goquery BSD-3-Clause, cascadia BSD-2-Clause, `x/net` BSD-3-Clause; `make licenses` passes for `GOOS=darwin`, `linux` and `windows` and `NOTICE` is regenerated. `govulncheck ./...` reports `No vulnerabilities found.` with no trailing module count | T-022 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
@@ -2738,73 +2859,17 @@ inherited from the initial plan.
 
 ## Blocked
 
-### `T-022` — the HTML parser the §3 stack mandates cannot be taken without a known-vulnerable
-### dependency under the project's pinned Go version
+*(empty — append `T-0NN` blocks here with the exact input needed to unblock)*
 
-**What is blocked.** Merging `T-022`. The scraper framework is complete, tested (99.9% statement
-coverage) and documented on branch `task/T-022-scraper-framework`, and every acceptance
-criterion is met. What it cannot do is ship without a dependency AGENT.md §12 forbids.
+### Resolved
 
-**The finding.** AGENT.md §3 locks `PuerkitoBio/goquery` as the HTML scraping library, and the
-T-022 criteria require a goquery HTML mode. `goquery` requires `golang.org/x/net/html`.
-`govulncheck` (`golang.org/x/vuln` v1.8.0, run on 2026-09-15 against this branch) reports the
-pinned `golang.org/x/net v0.39.0` as carrying **seven vulnerabilities whose call traces it
-resolves into this package's own `html.Parse` call** (`internal/indexer/scraper/html.go:80`):
-
-| ID | Summary | Fixed in |
-|---|---|---|
-| `GO-2026-4440` | Quadratic parsing complexity in `golang.org/x/net/html` | `v0.45.0` |
-| `GO-2026-4441` | Infinite parsing loop in `golang.org/x/net` | `v0.45.0` |
-| `GO-2026-5025` | Incorrect handling of namespaced elements in foreign content | `v0.55.0` |
-| `GO-2026-5027` | Incorrect handling of HTML elements in foreign content | `v0.55.0` |
-| `GO-2026-5028` | Denial of service when parsing arbitrary HTML | `v0.55.0` |
-| `GO-2026-5029` | Incorrect handling of character references in DOCTYPE nodes | `v0.55.0` |
-| `GO-2026-5030` | Duplicate attributes can cause XSS | `v0.55.0` |
-
-These are not theoretical for this package: its entire job is calling `html.Parse` on a page an
-arbitrary source served. `GO-2026-4440` is the quadratic behaviour this task measured
-independently before knowing the advisory existed (39 seconds to parse a 1.1MB page of nested
-`<div>` elements), and `guardHTMLDepth` mitigates exactly that one. `GO-2026-4441`, an
-**infinite** parsing loop, is not mitigated by a depth bound and would hang a search goroutine
-for the life of the process.
-
-**Why it cannot be fixed inside this task.** The first fixed release, `x/net v0.45.0`, declares
-`go 1.24.0`; the release that fixes all seven, `v0.55.0`, declares `go 1.25.0` (read from each
-module's own `go.mod` in the module cache). This repository declares `go 1.23.0` and CI pins
-`GO_VERSION: "1.23"`, matching AGENT.md §3's `Go 1.23+` row. Taking a fixed `x/net` therefore
-requires raising the project's minimum Go version in `go.mod`, in `.github/workflows/ci.yml`,
-and in AGENT.md §3 — a change to a locked stack row with consequences for the support matrix,
-for CI, and for anyone building from source, which AGENT.md §3 ("do not re-litigate") and §12
-("a change would alter the frozen contracts", "a required dependency … has an open CVE") both
-put outside a single adapter task.
-
-**What would unblock it — exactly one decision.** Approve raising the project's minimum Go
-version to **1.25** and the accompanying edits:
-
-1. AGENT.md §3, the Language row: `Go 1.23+` → `Go 1.25+`.
-2. `.github/workflows/ci.yml`: `GO_VERSION: "1.23"` → `"1.25"`.
-3. `go.mod`: `go 1.23.0` → `go 1.25.0`, and `golang.org/x/net v0.39.0` → `v0.55.0` or later.
-4. `make licenses` re-run (`x/net` stays BSD-3-Clause, so `NOTICE` changes only in the version
-   inside its license URL).
-
-Approving **1.24** instead closes `GO-2026-4440` and `GO-2026-4441` — the two that matter most
-here, since they are the denial-of-service pair — and leaves the five `GO-2026-502x` advisories
-open; four of them are correctness bugs in foreign-content and DOCTYPE handling and the fifth is
-an XSS vector that does not apply to a program that never renders the HTML it parses. It is a
-defensible half-step, but it is still a knowing ship of open advisories and the decision is not
-this task's to take.
-
-**What the branch already does about it, so the change is small.** The branch was tested against
-both versions. `maxHTMLDepth` is set to **512**, deliberately the same bound `x/net v0.45.0+`
-imposes on its own open-element stack (`html: open stack of elements exceeds 512 nodes` in
-`parse.go`), so the guard behaves identically before and after the upgrade. With `go.mod` moved
-to `go 1.25.0` and `x/net v0.55.0`, `go build ./...`, the full package test suite and
-`govulncheck ./...` (`0 vulnerabilities`) were all green on this machine with no change to any
-source file. The branch is left pinned at `v0.39.0` so that it does not raise the project's
-minimum Go version by side effect.
-
-**Not verified.** Only the darwin/arm64 leg was run here. Whether a GitHub `ubuntu`/`windows`
-runner provisioned with Go 1.23 would auto-upgrade its toolchain from a `go 1.25.0` directive
-under the default `GOTOOLCHAIN=auto`, rather than failing, was **not** tested — which is why
-step 2 above changes `GO_VERSION` explicitly rather than relying on it.
-
+- `T-022` (2026-09-15 → 2026-09-16). Blocked on seven `golang.org/x/net` advisories reachable from
+  the scraper's `html.Parse` under the pinned Go 1.23. The project owner authorised raising the
+  minimum Go version; `T-941` landed that as PR #14 (`69d5d07`) and `main` now declares
+  `go 1.25.0`. T-022 returned to `in-progress`. Note for its branch: pin `x/net v0.58.0`, not
+  `v0.55.0` (which still carries `GO-2026-5942`) and not `@latest` (`v0.59.0` declares
+  `go 1.26.0`, past what was authorised). **Done on 2026-09-16:** `main` was merged into
+  `task/T-022-scraper-framework`, which now pins `x/net v0.58.0` alongside `goquery v1.13.0` and
+  `cascadia v1.3.4` (DEC-078). `govulncheck ./...` reports `No vulnerabilities found.` with no
+  trailing module-level count, on darwin/arm64 under go1.27.1; the CI legs are not verifiable
+  from here.

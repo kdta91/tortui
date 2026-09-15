@@ -499,7 +499,7 @@ func TestNoCredentialReachesTheLogFile(t *testing.T) {
 }
 
 // TestTheCredentialIsSentByHTTPXAndNotByTheDefinition is the other half of
-// DEC-073: the schema has no credential placeholder, and the credential
+// DEC-074: the schema has no credential placeholder, and the credential
 // that does reach the source comes from the client's configuration.
 func TestTheCredentialIsSentByHTTPXAndNotByTheDefinition(t *testing.T) {
 	t.Parallel()

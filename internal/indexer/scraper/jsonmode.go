@@ -24,7 +24,7 @@ const (
 // a key. There are no wildcards, no queries, no modifiers and no
 // multipaths, so the expression is read by a loop over a slice of strings
 // and there is nothing in it that can recurse, backtrack, or evaluate.
-// See DEC-075 for why this is hand-written rather than a dependency.
+// See DEC-076 for why this is hand-written rather than a dependency.
 func compilePath(raw string) ([]string, error) {
 	var (
 		segments []string
@@ -194,7 +194,7 @@ func scalar(value any) string {
 
 // describeJSON names the kind of a decoded value, for the one error that
 // needs to say what was there instead of an array. It names the kind and
-// never the content: the content is the source's (DEC-072).
+// never the content: the content is the source's (DEC-073).
 func describeJSON(value any) string {
 	switch value.(type) {
 	case map[string]any:
@@ -219,7 +219,7 @@ func describeJSON(value any) string {
 // error, the struct field and Go type — and the response is written by the
 // source. So a syntax error and a type error contribute their byte offset
 // and not their message, for the same reason torznab reports an XML line
-// number and not the syntax error's text (DEC-072). A failure that is
+// number and not the syntax error's text (DEC-073). A failure that is
 // neither — a body that simply stops, which arrives as io.ErrUnexpectedEOF
 // and carries no offset — contributes only its Go type, which is built
 // from nothing the source wrote.

@@ -64,11 +64,11 @@ func (s substitution) value(name string) (string, bool) {
 // "{{quary}}" text and look like a site-side failure; and a definition
 // must not be able to name a placeholder the schema deliberately does not
 // have, which is how "{{apikey}}" stays a validation error instead of a
-// credential path through a definition file (DEC-073).
+// credential path through a definition file (DEC-074).
 //
 // The error names the key. It never names any of the template's text, the
 // placeholder's own name included: a param value is one of the three places
-// a user may have written their own credential (DEC-072).
+// a user may have written their own credential (DEC-073).
 func checkTemplate(where, tmpl string) error {
 	rest := tmpl
 
@@ -91,7 +91,7 @@ func checkTemplate(where, tmpl string) error {
 			// The placeholder's own name is not echoed. It is text out
 			// of a param value, and a param value is one of the three
 			// places a user may have written their own credential
-			// (DEC-072). The key is named instead, which is the one
+			// (DEC-073). The key is named instead, which is the one
 			// line they have to look at.
 			return invalid(where, fmt.Errorf(
 				"a {{placeholder}} in this value is %w (they are %s)",
@@ -199,7 +199,7 @@ func (b *blockPlan) request(base *url.URL, q indexer.Query) (string, url.Values,
 		ref, err := url.Parse(path)
 		if err != nil {
 			// The path is a definition value and is never repeated
-			// back; see DEC-072.
+			// back; see DEC-073.
 			return "", nil, ErrBaseAddressInvalid
 		}
 

@@ -11,26 +11,28 @@ import (
 
 // maxHTMLDepth is the deepest element nesting this package will parse.
 //
-// It is a cost bound, not a correctness one. golang.org/x/net/html at the
-// version this module pins (v0.39.0) parses a deeply nested document in
-// time quadratic in its depth — measured on this machine (darwin/arm64, Go
-// 1.27.1) with a document that is nothing but nested <div> elements: depth
-// 1000 took 8.5ms, 5000 took 119ms, 10000 took 400ms, 20000 took 1.6s,
-// 40000 took 6.4s, and 100000 took 39s, for only 440KB and 1.1MB of input
-// at the last two. Both sit comfortably inside httpx's 8MB body cap, and
-// the document is written by the source, so a source that wants to burn a
-// minute of tortui's CPU on one search needs no more than a small page to
-// do it. A context deadline does not help: the parse is one uninterruptible
-// call.
+// It is a cost bound, not a correctness one. golang.org/x/net/html at
+// v0.39.0 — the version this module pinned while it was written — parses a
+// deeply nested document in time quadratic in its depth, measured on
+// darwin/arm64 under Go 1.27.1 with a document that is nothing but nested
+// <div> elements: depth 1000 took 8.5ms, 5000 took 119ms, 10000 took 400ms,
+// 20000 took 1.6s, 40000 took 6.4s, and 100000 took 39s, for only 440KB and
+// 1.1MB of input at the last two. Both sit comfortably inside httpx's 8MB
+// body cap, and the document is written by the source, so a source that
+// wants to burn a minute of tortui's CPU on one search needs no more than a
+// small page to do it. A context deadline does not help: the parse is one
+// uninterruptible call.
 //
 // That measured behaviour is a published vulnerability in its own right —
 // GO-2026-4440, "Quadratic parsing complexity in golang.org/x/net/html",
-// fixed upstream in x/net v0.45.0, which this module cannot take while the
-// project pins Go 1.23 (see the T-022 tracker notes and DEC-076). The
-// upstream fix caps the parser's own open-element stack at 512, so this
-// limit is deliberately the same number: the guard behaves identically
-// before and after that upgrade, and the test suite passes against both
-// v0.39.0 and v0.55.0 unchanged.
+// fixed upstream in x/net v0.45.0. The module now pins v0.58.0 (T-941
+// raised the language floor to Go 1.25, which is what the fixed releases
+// require; see the T-022 tracker notes and DEC-077), so the upstream fix is
+// in place and govulncheck reports nothing against this call. The guard
+// stays as defence in depth and because the upstream fix caps the parser's
+// own open-element stack at 512: this limit is deliberately the same
+// number, so the guard behaves identically before and after the upgrade.
+// The whole test suite passes at v0.58.0 with no change to any source file.
 //
 // 512 costs about 2ms in the same measurement and is far past any real
 // page. Depth is counted by guardHTMLDepth before the parser is handed
@@ -92,7 +94,7 @@ func htmlRows(body []byte, rows matcher) ([]row, error) {
 		// x/net/html recovers from anything a byte slice can contain,
 		// so this is unreachable in practice. It is reported without
 		// the cause's text all the same: the cause is built from the
-		// document, and the document is the source's (DEC-072).
+		// document, and the document is the source's (DEC-073).
 		return nil, ErrDocumentMalformed
 	}
 

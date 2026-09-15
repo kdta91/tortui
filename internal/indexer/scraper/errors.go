@@ -25,7 +25,7 @@ var (
 	// ErrBaseAddressInvalid reports a base_url that will not parse. The
 	// value is never repeated back: a user is free to write a query
 	// string into it and that query string is free to hold their own
-	// api key (DEC-072).
+	// api key (DEC-073).
 	ErrBaseAddressInvalid = errors.New("definition base_url is not usable")
 
 	// ErrBaseAddressSchemeUnsupported reports a base_url that is not http
@@ -44,7 +44,7 @@ var (
 	// decode as YAML in the schema's shape: a syntax error, a value of
 	// the wrong type, a duplicate key, or a key the schema does not
 	// define. It is reported by line and column and never by content
-	// (DEC-072).
+	// (DEC-073).
 	ErrDefinitionMalformed = errors.New("the definition is not valid YAML for this schema")
 
 	// ErrSearchBlockMissing reports a definition with no search block. A
@@ -119,7 +119,7 @@ var (
 	// param that this package does not substitute. It is refused rather
 	// than passed through so a typo cannot be sent to the source
 	// verbatim — and so that a definition cannot name a credential
-	// placeholder the schema deliberately does not have (DEC-073).
+	// placeholder the schema deliberately does not have (DEC-074).
 	ErrPlaceholderUnknown = errors.New("not a placeholder this schema substitutes")
 
 	// ErrPlaceholderUnterminated reports a "{{" with no closing "}}".
@@ -149,7 +149,7 @@ var (
 
 	// ErrDocumentMalformed reports a response body this package could not
 	// parse in the definition's mode. It is reported by byte offset and
-	// never by content (DEC-072).
+	// never by content (DEC-073).
 	ErrDocumentMalformed = errors.New("the source returned a document this definition cannot parse")
 
 	// ErrRowsNotAList reports a JSON response whose rows path does not
@@ -174,7 +174,7 @@ var (
 // their own api key (a hardcoded token in a param, a query string on the
 // base address), internal/logging masks by key name and by value shape,
 // and an error string is neither a masked key nor a recognisable shape
-// (DEC-072). A selector, a regex and a transform name are echoed because
+// (DEC-073). A selector, a regex and a transform name are echoed because
 // the acceptance criterion for this task asks for exactly that and because
 // none of them is a place a credential goes.
 type ValidationError struct {

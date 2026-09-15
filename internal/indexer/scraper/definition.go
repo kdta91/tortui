@@ -75,7 +75,7 @@ const maxTransforms = 8
 // request (AGENT.md §2); the schema has no placeholder for one and
 // validation refuses any placeholder it does not define, so there is no
 // spelling of "put my api key here" that this schema accepts. See
-// docs/indexer-definitions.md and DEC-073.
+// docs/indexer-definitions.md and DEC-074.
 type Definition struct {
 	// ID is the stable identifier for this source: the registry key, the
 	// config key, and Result.IndexerID. Required.
@@ -219,12 +219,12 @@ var yamlPosition = regexp.MustCompile(`^\[(\d+):(\d+)\]`)
 // user is editing this file precisely because something stopped working.
 // It also bounds what a hostile definition can do: the anchors a YAML
 // alias bomb needs somewhere to attach to, and an unknown top-level key is
-// refused before anything is expanded (DEC-074).
+// refused before anything is expanded (DEC-075).
 //
 // The error never contains any of the file's content. goccy's own message
 // quotes the offending source line back, and a user is free to have
 // written their own api key into a param value on that line, so only the
-// line and column survive (DEC-072).
+// line and column survive (DEC-073).
 func Parse(data []byte) (*Definition, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, fmt.Errorf("scraper: %w", ErrDefinitionEmpty)

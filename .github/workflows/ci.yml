@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.23"
+  GO_VERSION: "1.25"
   GOLANGCI_LINT_VERSION: "v2.13.2"
   GOFUMPT_VERSION: "v0.12.0"
   GITLEAKS_VERSION: "v8.30.1"

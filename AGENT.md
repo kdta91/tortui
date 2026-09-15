@@ -89,7 +89,7 @@ These are not negotiable and not subject to task-level override.
 
 | Concern | Choice | Notes |
 |---|---|---|
-| Language | Go 1.23+ | Fast compile loop, single static binary, stable APIs |
+| Language | Go 1.25+ | Fast compile loop, single static binary, stable APIs |
 | TUI framework | `charmbracelet/bubbletea` | Elm-style; `bubbles` for widgets, `lipgloss` for style |
 | Torrent engine | `anacrolix/torrent` | Embedded — **no external daemon, no transmission/qbit dependency** |
 | HTTP scraping | `net/http` + `PuerkitoBio/goquery` | Only inside scraper adapters |

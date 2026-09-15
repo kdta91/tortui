@@ -25,7 +25,7 @@
 //     placeholder for one and validation refuses every placeholder it does
 //     not define, so "{{apikey}}" is an error rather than a feature: an api
 //     key or a session cookie lives in the user's own config and is
-//     injected by httpx (DEC-073). Nothing here discovers a credential,
+//     injected by httpx (DEC-074). Nothing here discovers a credential,
 //     harvests a session, solves a challenge, or negotiates around an
 //     access control (AGENT.md §2).
 //
@@ -36,7 +36,7 @@
 //     user's own api key, and a response is written by the source, so
 //     both are treated as text that must never reach a log line:
 //     internal/logging masks by key name and by value shape, and an
-//     opaque token inside an error string has neither (DEC-072).
+//     opaque token inside an error string has neither (DEC-073).
 //
 //   - The response is hostile input. An HTML document nested deeper than
 //     maxHTMLDepth is refused before the parser sees it, because parsing
@@ -44,7 +44,7 @@
 //     regexes are RE2 and cannot backtrack catastrophically; a transform
 //     chain is a bounded list walked once; and the definition itself is
 //     decoded strictly, so an unknown key is an error rather than a place
-//     to hang a YAML alias bomb (DEC-074).
+//     to hang a YAML alias bomb (DEC-075).
 //
 // This package writes no log lines at all. Every failure is returned as an
 // error the caller can log, which keeps the number of places a credential
