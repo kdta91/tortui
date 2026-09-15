@@ -1497,7 +1497,7 @@ user already runs, which delivers source-agnosticism immediately without writing
 ### T-941 · Raise the minimum Go version to 1.25
 
 ```
-status: todo
+status: in-progress
 depends: T-020
 ```
 **Files:** `AGENT.md`, `go.mod`, `go.sum`, `.github/workflows/ci.yml`, `README.md`, `NOTICE`
