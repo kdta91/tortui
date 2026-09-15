@@ -1,0 +1,46 @@
+# The same invented operator's JSON endpoint, to exercise the json response
+# mode. Selectors are path expressions instead of CSS selectors; everything
+# else about the schema is identical.
+
+id: fixture-api
+name: Fixture Archive API
+base_url: https://api.example.org
+mode: json
+
+rows: page.items
+
+fields:
+  id:
+    selector: id
+  title:
+    selector: name
+  size:
+    selector: bytes
+  seeders:
+    selector: swarm.seed
+  leechers:
+    selector: swarm.leech
+  category:
+    selector: kind
+  published:
+    selector: added
+  uploader:
+    selector: by
+  magnet:
+    selector: links.magnet
+  torrent_url:
+    selector: links.torrent
+  source_url:
+    selector: page
+
+trust:
+  selector: flag
+  values:
+    gold: vip
+    plain: none
+
+search:
+  path: /api/search
+  params:
+    q: "{{query}}"
+    offset: "{{offset}}"

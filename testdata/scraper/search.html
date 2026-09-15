@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head><title>Fixture Archive — search</title></head>
+<body>
+<h1>Fixture Archive</h1>
+
+<!-- An invented listing page for an invented site. Nothing here refers to
+     any real source: AGENT.md section 2 keeps this repository free of any
+     site whose primary use is distributing infringing content, and the
+     hostname check in scripts/check-indexer-hostnames.sh gates testdata/
+     as a fully scanned path. Every link below is either relative or on an
+     RFC 2606 reserved domain. -->
+
+<table class="results">
+  <tr class="head">
+    <th>Name</th><th>Size</th><th>S</th><th>L</th><th>Kind</th><th>Added</th><th>By</th><th>Get</th>
+  </tr>
+
+  <tr class="row">
+    <td class="name"><a href="/item/1001" data-item="1001">Invented Reference Corpus 2026</a></td>
+    <td class="size">1.4 GiB</td>
+    <td class="seeders">1,204</td>
+    <td class="leechers">37</td>
+    <td class="kind">Data</td>
+    <td class="added" datetime="2026-03-04 11:20:00">4 March 2026</td>
+    <td class="by">avery <span class="badge" data-trust="gold">VIP</span></td>
+    <td class="links">
+      <a class="magnet" data-infohash="0123456789ABCDEF0123456789ABCDEF01234567"
+         href="magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&amp;dn=Invented+Reference+Corpus+2026">magnet</a>
+      <a class="torrent" href="/dl/1001.torrent">torrent</a>
+    </td>
+  </tr>
+
+  <tr class="row">
+    <td class="name"><a href="/item/1002" data-item="1002">Invented Distro Image 42.1</a></td>
+    <td class="size">700 MB</td>
+    <td class="seeders">42</td>
+    <td class="leechers">3</td>
+    <td class="kind">Software</td>
+    <td class="added" datetime="2026-02-17">17 February 2026</td>
+    <td class="by">kay <span class="badge" data-trust="plain">—</span></td>
+    <td class="links">
+      <a class="torrent" data-infohash="89abcdef0123456789abcdef0123456789abcdef" href="/dl/1002.torrent">torrent</a>
+    </td>
+  </tr>
+
+  <tr class="row">
+    <td class="name"><a href="/item/1003" data-item="1003">Invented Field Recordings, Volume 3</a></td>
+    <td class="size">not stated</td>
+    <td class="seeders">n/a</td>
+    <td class="leechers"></td>
+    <td class="kind"></td>
+    <td class="added"></td>
+    <td class="by"></td>
+    <td class="links">
+      <a class="magnet" href="magnet:?xt=urn:btih:FEDCBA9876543210FEDCBA9876543210FEDCBA98">magnet</a>
+    </td>
+  </tr>
+
+  <tr class="row">
+    <td class="name"><a href="javascript:alert(1)" data-item="1004">Invented Hostile Row</a></td>
+    <td class="size">12 KiB</td>
+    <td class="seeders">1</td>
+    <td class="leechers">0</td>
+    <td class="kind">Text</td>
+    <td class="added" datetime="yesterday">not a date</td>
+    <td class="by">pat <span class="badge" data-trust="unlisted">?</span></td>
+    <td class="links">
+      <a class="magnet" href="/not-a-magnet">magnet</a>
+      <a class="torrent" href="https://mirror.example.org/dl/1004.torrent">torrent</a>
+    </td>
+  </tr>
+
+  <tr class="promo">
+    <td colspan="8">A between-results promotional row with no name cell.</td>
+  </tr>
+</table>
+
+<script>
+  // A raw-text element whose content contains tag-shaped text, so the depth
+  // scanner has something to skip: <div><div><div><div>
+  var note = "<tr class='row'>not a row</tr>";
+</script>
+
+</body>
+</html>
