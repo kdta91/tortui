@@ -1,0 +1,34 @@
+{
+  "ok": true,
+  "page": {
+    "items": [
+      {
+        "id": "3001",
+        "name": "Invented Satellite Imagery Set A",
+        "bytes": 2147483648,
+        "swarm": { "seed": 61, "leech": 5 },
+        "kind": "images",
+        "added": "2026-01-22T09:15:00Z",
+        "by": "morgan",
+        "flag": "gold",
+        "links": { "magnet": "magnet:?xt=urn:btih:4444444444444444444444444444444444444444&dn=Invented+Satellite+Imagery+Set+A" },
+        "page": "/item/3001"
+      },
+      {
+        "id": "3002",
+        "name": "Invented Lecture Series, Season 2",
+        "bytes": "734003200",
+        "swarm": { "seed": 7 },
+        "kind": "video",
+        "added": "2026-01-05T17:00:00Z",
+        "links": { "torrent": "/dl/3002.torrent" },
+        "page": "/item/3002"
+      },
+      {
+        "id": "3003",
+        "swarm": { "seed": 0 },
+        "links": { "magnet": "magnet:?xt=urn:btih:5555555555555555555555555555555555555555" }
+      }
+    ]
+  }
+}

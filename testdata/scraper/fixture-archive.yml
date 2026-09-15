@@ -1,0 +1,112 @@
+# A complete worked definition for an invented site, used by this
+# repository's own tests and documented in docs/indexer-definitions.md.
+#
+# Nothing here refers to a real source. AGENT.md section 2 bars naming any
+# site whose primary use is distributing infringing content anywhere in this
+# repository, and tortui ships no endpoint or preset for one: every source
+# is a file like this, written by the user, pointing wherever they chose.
+#
+# There is no credential in this file and no way to put one in it. An api
+# key or a session cookie goes in the user's own config, from where tortui
+# injects it into every request.
+
+id: fixture-archive
+name: Fixture Archive
+base_url: https://archive.example.org
+mode: html
+requires_auth: false
+
+# One result row. Both of this site's pages are lists of these, so the
+# selector is shared and the recent-additions block overrides only the
+# container it lives in. It deliberately matches the table's header and
+# promotional rows too: a row with no title is skipped, which is how a
+# definition copes with the rows a listing page puts between its results
+# without needing a selector that excludes each one by hand.
+rows: table.results tr
+
+fields:
+  id:
+    selector: .name a
+    attr: data-item
+
+  title:
+    selector: .name a
+
+  source_url:
+    selector: .name a
+    attr: href
+
+  magnet:
+    selector: a.magnet
+    attr: href
+
+  torrent_url:
+    selector: a.torrent
+    attr: href
+
+  infohash:
+    selector: a[data-infohash]
+    attr: data-infohash
+
+  size:
+    selector: .size
+
+  seeders:
+    selector: .seeders
+    transform:
+      - digits
+
+  leechers:
+    selector: .leechers
+    transform:
+      - digits
+
+  category:
+    selector: .kind
+
+  published:
+    selector: .added
+    attr: datetime
+    layouts:
+      - "2006-01-02 15:04:05"
+      - "2006-01-02"
+
+  uploader:
+    selector: .by
+    regex: "^([A-Za-z0-9_.-]+)"
+
+# What the site's badge column says, mapped onto tortui's trust levels.
+# Trust is display metadata and never gates anything.
+trust:
+  selector: .badge
+  attr: data-trust
+  values:
+    gold: vip
+    silver: trusted
+    checked: verified
+    plain: none
+
+search:
+  path: /search
+  params:
+    q: "{{query}}"
+    from: "{{offset}}"
+    n: "{{limit}}"
+
+# The recent-additions page renders a feed instead of a table and puts the
+# name in a heading, so this block overrides the row selector and the three
+# fields that read the name. Everything else — size, seeders, leechers,
+# category, published, uploader, magnet, infohash, torrent_url and the whole
+# trust block — is inherited from above.
+latest:
+  path: /latest
+  rows: ul.feed li.entry
+  fields:
+    id:
+      selector: .headline a
+      attr: data-item
+    title:
+      selector: .headline a
+    source_url:
+      selector: .headline a
+      attr: href

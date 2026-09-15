@@ -1496,10 +1496,196 @@ user already runs, which delivers source-agnosticism immediately without writing
 
 ### T-022 · Scraper adapter framework
 ```
-status: in-progress
+status: blocked
 depends: T-020
 ```
-**Files:** `internal/indexer/scraper/`, `docs/indexer-definitions.md`
+**Files:** `internal/indexer/scraper/` — `scraper.go`, `definition.go`, `plan.go`, `template.go`,
+`html.go`, `jsonmode.go`, `result.go`, `errors.go` and their tests (`scraper_test.go`,
+`definition_test.go`, `unit_test.go`, `hostile_test.go`, `credentials_test.go`,
+`helper_test.go`), `docs/indexer-definitions.md`, and six fixtures in `testdata/scraper/`
+(`search.html`, `latest.html`, `api.json`, `fixture-archive.yml`,
+`fixture-archive-search-only.yml`, `fixture-api.yml`).
+
+**BLOCKED — read this before the rest.** The framework is written, tested and documented, and
+every acceptance criterion below is met. It is **not** ready to merge, because taking
+`PuerkitoBio/goquery` (the §3 stack's HTML parser, and the only way to satisfy the "Supports
+HTML (goquery)" criterion) takes `golang.org/x/net/html` with it, and **every `golang.org/x/net`
+version this module can compile under the project's pinned Go 1.23 carries seven vulnerabilities
+that `govulncheck` reports as reachable from the exact call this package makes**. AGENT.md §12
+makes "a required dependency … has an open CVE" a stop condition, and the fix requires changing
+AGENT.md §3's locked `Go 1.23+` row and CI's `GO_VERSION`, which is a decision this task may not
+take. The precise finding, the evidence and the exact input that would unblock it are in the
+**Blocked** section at the foot of this file and in DEC-076.
+
+**What landed.** `scraper.Parse([]byte) (*Definition, error)` decodes and validates a
+user-supplied YAML definition; `scraper.New(Options) (*Adapter, error)` compiles one into an
+adapter. `*Adapter` satisfies the frozen §5 `indexer.Indexer`, asserted at compile time in
+`scraper.go`. No §5 type was touched — `git diff --stat origin/main` lists eight new source
+files, six new test files, six fixtures, one new document, `go.mod`/`go.sum`/`NOTICE`, and this
+tracker. Nothing outside `internal/indexer/scraper/` imports the package (§4). Every request
+goes through T-020's `httpx`, so this package never touches `net/http`, never sees a credential,
+and writes no log lines at all. **There is not one selector anywhere in the Go code** — every
+selector in the package's non-test source is a field of a struct read out of YAML. Package
+coverage is **99.9% of statements** (the one uncovered statement is the `html.Parse` error
+branch, which `golang.org/x/net/html` cannot reach from a byte slice); `make check` and
+`go test -race ./... -count=1` are both green, and
+`scripts/check-indexer-hostnames.sh origin/main HEAD` exits 0 with the script byte-identical to
+`main` (md5 `3e274870651abefe8a860690677b05a6`).
+
+**Criterion by criterion.**
+- *A source is defined entirely by a user-supplied YAML file — no selectors in Go code* — the
+  whole schema is `Definition`/`Block`/`Field`/`Trust` in `definition.go`, decoded strictly with
+  `goccy/go-yaml`. `grep` the package's non-test Go for a selector and the only strings that
+  come back are the YAML key names. The tests drive two checked-in definitions against two
+  checked-in pages; changing a selector is a fixture edit with no Go change.
+- *Schema covers `id`, `name`, `base_url`, `search.path`, `search.params`, `rows`, per-field
+  selectors with `attr`/`text`/`regex`/`transform`, plus a `trust` mapping block* — all present
+  and all documented in `docs/indexer-definitions.md`. Field selectors map onto twelve
+  `Result` fields (`id`, `title`, `infohash`, `magnet`, `torrent_url`, `size`, `seeders`,
+  `leechers`, `category`, `published`, `uploader`, `source_url`); `trust.values` maps a read
+  badge value onto the `indexer.Trust` tokens.
+- *An optional `latest` block mirrors `search` with its own path and params; field selectors
+  shared by default and overridable per block; a definition omitting `latest` reports
+  `Caps.Latest = false`* — `effectiveRows`/`effectiveFields`/`effectiveTrust` resolve the
+  inheritance; `fields` merge key by key, `rows` and `trust` override wholesale (merging half of
+  one trust map into another's selector would produce a mapping nobody wrote).
+  `TestLatestUsesItsOwnBlockAndInheritsSharedFields` drives both directions through real
+  markup — the feed page overrides three fields and inherits nine, and the inherited ones match
+  because the fixture's feed reuses the table's cell classes.
+  `TestFieldsAreSharedByDefaultAndOverriddenPerBlock` asserts the same at the unit level, plus
+  that the merge does not write back into the definition's own map.
+  `TestCapsComeFromTheDefinition` asserts `Caps.Latest = false` for
+  `fixture-archive-search-only.yml` and `true` for `fixture-archive.yml`, and
+  `TestALatestQueryIsRefusedWithoutALatestBlock` shows the adapter's own backstop refuses such a
+  query without making a request.
+- *Supports HTML (goquery) and JSON (gjson-style path) response modes* — `mode: html` (default)
+  compiles selectors with `cascadia` and reads them with `goquery`; `mode: json` compiles a
+  gjson-style path subset (dotted keys, numeric array indices, `\.` escape) and reads it with
+  `encoding/json`. `TestJSONModeMapsEveryResultField` runs the json mode end to end against
+  `testdata/scraper/api.json`. The path expression is hand-written rather than a dependency;
+  DEC-075 says why.
+- *Definition validation produces actionable errors naming the failing field and selector* —
+  `*ValidationError` carries the dotted location of the failing key and the selector.
+  `TestValidationNamesTheFailingFieldAndSelector` runs twenty-four bad definitions and asserts,
+  for each, the sentinel, the exact `Location`, the exact `Selector`, and that both appear in
+  the rendered message — not merely that an error happened. Proved non-vacuous by mutation:
+  inverting the "name the selector" branch in `ValidationError.Error` turns it **red**.
+- *A missing optional selector yields a zero value, never an error* —
+  `TestAMissingOptionalSelectorYieldsAZeroValue` uses the fixture row that publishes a name and
+  a magnet and nothing else, and asserts seven fields are at their zero value while the row
+  itself survives. The rule that cannot collide with it is the *required* one: `title` and a
+  link field are checked **at validation**, once, against the definition — never per row. A row
+  with no title is skipped rather than errored, which is what a header row, a spacer row and an
+  advertisement between results all are (`TestRowsWithNoTitleAreSkipped`).
+- *`docs/indexer-definitions.md` documents the schema with a complete worked example* — the
+  worked example is `testdata/scraper/fixture-archive.yml` reproduced in full, against markup
+  excerpted from `testdata/scraper/search.html` and `latest.html`, with the resulting `Result`
+  tabulated field by field, plus the json variant. Every address in it is on an RFC 2606
+  reserved domain and the site is invented (§2, §16).
+- *Tests run against a checked-in fixture page served by `httptest` plus a sample definition* —
+  `helper_test.go` serves `testdata/scraper/*` through `httptest.Server`; there is no network in
+  the package's tests (§6.7) and every call takes a context with a deadline (§6.2).
+- *Definitions for bundled lawful sources land in T-024, not here* — nothing in this branch is a
+  real source. The three definitions are fixtures for invented sites on `example.org`.
+
+**What each `Result` field carries.** Written out field by field rather than counted, because
+the torznab adapter shipped three successive *counts* of the same property and QA falsified all
+three (PR #12, rounds 1–3). The package doc in `scraper.go` carries the same list.
+
+| Field | Treatment |
+|---|---|
+| `IndexerID` | Derived — the configured id. |
+| `ID` | Derived **only** on the infohash branch (validated 40 hex / 32 base32). PASSED THROUGH on every other branch: an `id` field the definition selected is the page's text verbatim; the details/download branch goes through `withoutQuery`, which strips query and fragment from a value `url.Parse` gives a scheme to and returns anything else as it stands; the last-resort branch is the title. |
+| `Title` | PASSED THROUGH, trimmed and narrowed by the definition's own regex/transforms if it set any. |
+| `InfoHash` | Derived — only 40 hex or 32 base32 characters survive `normaliseInfoHash`. |
+| `Magnet` | PASSED THROUGH, `dn=` included. A magnet `Resolve` derives is **not** clean either: `magnetFor` writes `Result.Title` into its `dn=` and `url.QueryEscape` encodes that text rather than removing it. |
+| `TorrentURL` | The page's own download address, resolved against `base_url` and refused unless http(s) — and safe to log regardless: `internal/logging` masks on the name. |
+| `SizeBytes` | Derived — parsed bytes. |
+| `Seeders` | Derived — parsed integer. |
+| `Leechers` | Derived — parsed integer. |
+| `Category` | Derived — an `indexer.Category`, via `CategoryFromString`. |
+| `Published` | Derived — a parsed `time.Time`. |
+| `Uploader` | PASSED THROUGH, verbatim. There is not even the `://` refusal torznab applies: the uploader selector is the user's own choice, and `internal/logging`'s value-shape pattern already redacts a URL under any key. What neither catches is an opaque token, which is what an api key is. |
+| `Trust` | Derived — an `indexer.Trust`, from the definition's own value map. |
+| `SourceURL` | The page's own details address, resolved against `base_url` and refused unless http(s) — and safe to log: `internal/logging` masks on the name. |
+| `Extra` | Never set. This schema has no `extra` block, so the map is always nil. |
+
+So the fields that carry page text under a name `internal/logging` does not mask are,
+exhaustively: `Title`, `Magnet`, `Uploader`, and `ID` on every branch but the infohash one —
+the same inherited gap T-021 disclosed. It is not fixable inside an adapter (it is a property of
+the frozen §5 `Result`), it is **not** re-litigated here, and backlog `T-934` remains the fix.
+`TestWhichResultFieldsCanCarryTheCredential` asserts **both** directions: the derived fields
+must stay clean, and those four must keep carrying what the page sent, so a change to either
+forces this row, the package doc and DEC-071 to be revisited.
+
+**Credential safety.** No error this package produces carries a param *value*, a path, or the
+`base_url` — the three places a user plausibly writes their own credential into a definition. A
+`ValidationError` does carry a key the user wrote (a field name, a param key, a trust mapping
+key), a selector, a regex, a transform name or a mode, which is what the "actionable errors"
+criterion asks for; DEC-072 states that boundary exactly. A YAML decode failure is reported by
+line and column only, because `goccy`'s own message quotes the offending source line back
+verbatim (verified against the library, not assumed: `yaml.FormatError(err, false, false)` was
+run against seven malformed documents and each one embedded the source line). The schema has no
+credential placeholder and refuses every `{{…}}` it does not define, so `{{apikey}}` is a
+validation error rather than a feature (DEC-073).
+`TestNoErrorFromThisAdapterCarriesTheCredential` sweeps twenty failure modes — every validation
+failure, every query refusal, every response-shape failure, a 401, a cancelled context — with
+the key configured on the client, hardcoded into a param value and written into the base
+address, and asserts neither credential, no `apikey=`, and no absolute URL appears in the
+message or anywhere in its unwrap chain. `TestNoCredentialReachesTheLogFile` drives all of them
+plus a whole `Result` through the **real** `internal/logging` sink and greps the file.
+
+**Proved by mutation, not asserted.** Each of these was applied, the named test run, and the
+change reverted; `git status` is clean afterwards.
+
+| Mutation | Test | Result |
+|---|---|---|
+| `parseBase` echoes the `base_url` into its error | `TestNoErrorFromThisAdapterCarriesTheCredential` | red |
+| `checkTemplate` echoes the placeholder name | `TestNoErrorFromThisAdapterCarriesTheCredential` | red |
+| `Title` is scrubbed instead of passed through | `TestWhichResultFieldsCanCarryTheCredential` | red |
+| `magnetFor` drops the `dn=` | `TestResolveDerivesAMagnetThatInheritsTheTitlesGap` | red |
+| `normaliseInfoHash` passes anything through | `TestWhichResultFieldsCanCarryTheCredential` | red *(see below)* |
+| the credential is echoed into a `Title` the log test logs | `TestNoCredentialReachesTheLogFile` | red |
+| the depth guard is disabled | `TestGuardHTMLDepthOnItsOwn` | red |
+| the rows cap is removed | `TestASelectorThatMatchesThousandsOfRowsIsCapped` | red |
+| fields are not inherited from the definition | `TestLatestUsesItsOwnBlockAndInheritsSharedFields` | red |
+| a block cannot override an inherited field | `TestLatestUsesItsOwnBlockAndInheritsSharedFields` | red |
+| `ValidationError.Error` stops naming the selector | `TestValidationNamesTheFailingFieldAndSelector` | red |
+| a `javascript:` link is no longer refused | `TestAPageLinkThatIsNotHTTPIsRefused` | red |
+
+The `normaliseInfoHash` mutation is the one that mattered: on the first run it left the test
+**green**, because `echoingPage` put a real hash in the `data-infohash` attribute, so
+`Result.InfoHash` could not have carried the credential however the derivation behaved — the
+same vacuity QA found twice on T-021. The fixture now puts the credential in that attribute and
+takes the real hash from the magnet's `xt`, the assertion also pins the derived value, and the
+mutation is red.
+
+**Hostile input.** The response is the source's and the definition is user-supplied, so both are
+treated as hostile, and each case below is a test in `hostile_test.go` rather than a claim.
+A document nested 100 000 deep is refused by a linear pre-scan before the parser sees it
+(`ErrDocumentTooDeep`; see the measurements in `html.go` and DEC-076) while a page with
+thousands of *unclosed* `<li>`, `<tr>` and `<p>` elements — which HTML5 closes implicitly and
+which therefore nest not at all — still parses. Tag-shaped text inside `<script>`, `<style>` and
+comments is skipped rather than counted. A selector matching 3000 rows is capped at 1000, in
+both modes. `(a+)+$` against a 40 000-character value is linear, because Go's RE2 has no
+backtracking and rejects the constructs that would need it — checked rather than assumed. A YAML
+alias bomb is refused by strict decoding before anything expands, and an alias attached to a key
+the schema *does* define was measured to cost memory linear in the source, because `goccy`
+shares the aliased value rather than expanding it (measured: a nine-level, fan-nine bomb decodes
+in under a millisecond with no measurable allocation). JSON nested 100 000 deep is refused by
+`encoding/json`'s own depth limit in constant time — verified against this Go version rather
+than assumed. A body that is a JSON string, a number, `null`, an HTML page, truncated or empty
+is an error or an empty result set, never a panic, and `TestNoResponseShapeEverPanics` runs ten
+more shapes through both modes.
+
+**Deliberately not done.** No details-page fetch in `Resolve` — that needs a `detail` block, and
+the schema this task ships is the one its criteria enumerate (backlog `T-939`). No category
+push-down, so `Caps.Categories` is honestly `false` (backlog `T-938`). No `{{page}}` placeholder
+(backlog `T-940`). No `extra` block, so `Result.Extra` is always nil. No loader — reading
+definitions off disk is T-023 — and no bundled source, which is T-024. The infohash and magnet
+helpers are duplicated from the torznab adapter rather than shared, because §4 forbids one
+adapter importing another and the alternative grows the package holding the frozen §5 contracts
+(backlog `T-937`).
 
 **Acceptance**
 - A source is defined entirely by a **user-supplied YAML file** — no selectors in Go code.
@@ -2429,6 +2615,34 @@ when it reaches it and does not start backlog items on its own.
   rather than a torznab one. It cuts both ways: masking `title` wholesale would redact the one
   field a user reads a log line to identify, so the answer may be a narrower rendering rather
   than a new substring. Found by QA on T-021 (PR #12), round 2.
+- `T-937` Decide where the infohash helpers live. `normaliseInfoHash`, `isHex`, `isBase32`,
+  `infoHashInMagnet`, `magnetFor` and `withoutQuery` now exist in both `internal/indexer/torznab`
+  and `internal/indexer/scraper`, character for character in most cases. AGENT.md §4 forbids one
+  adapter importing another, so the duplication is correct today; the alternative is exporting
+  them from `internal/indexer`, which grows the package that holds the frozen §5 contracts.
+  Deliberately deferred so a third adapter makes the call with three data points rather than
+  two. Found while building T-022.
+- `T-938` Category push-down for scraper sources. The T-022 schema has no way to say which of a
+  site's own category values correspond to tortui's buckets, so `Caps.Categories` is honestly
+  `false` and a category filter is neither sent to the source nor applied locally —
+  `indexer.Query` permits exactly that, but it means the search screen's category filter does
+  nothing for a scraped source. A `categories:` mapping block (bucket → the site's own parameter
+  value) would fix it, mirroring what `torznab` does with the ids from a caps document
+  (DEC-070). Out of scope for T-022, whose criteria enumerate the schema. Found while building
+  T-022.
+- `T-939` A `detail` block for the scraper schema, so `Resolve` can fetch a details page. Today
+  `scraper.Resolve` makes no network call: it is a no-op when a magnet is present, derives a
+  magnet from an infohash, and otherwise returns `ErrUnresolvable`. That leaves the case AGENT.md
+  §5 wrote `Resolve` for — "indexers that only return a details page" — unserved for exactly the
+  adapter most likely to meet it, so a definition must currently read the magnet, the torrent
+  link or the infohash off the listing page itself. A `detail:` block reusing the same field
+  engine is perhaps sixty lines. Deliberately not built in T-022: the criteria enumerate the
+  schema and a `detail` block is not in the list. Found while building T-022.
+- `T-940` A `{{page}}` placeholder for the scraper schema. T-022 substitutes `{{query}}`,
+  `{{limit}}` and `{{offset}}`; page-numbered pagination (`?page=3`) is at least as common on a
+  listing site as offset pagination, and expressing it needs a page size the definition declares
+  so `Query.Offset` can be divided by it. Left out rather than guessed at. Found while building
+  T-022.
 
 
 
@@ -2511,6 +2725,11 @@ when it reaches it and does not start backlog items on its own.
 | DEC-069 | 2026-09-14 | **Corrected 2026-09-15 (QA remediation of PR #12) — the last clause of this column was false and is rewritten in place, matching how DEC-040, DEC-046, DEC-050 and DEC-062 were corrected.** Construction is split in two. `New` never touches the network and returns fail-closed caps (search only). `Discover` probes, and returns a **usable adapter alongside its error** when the probe fails: the `*Adapter` is nil only when the options themselves are unusable. The two probe steps then report themselves **differently, on purpose** — a `t=caps` failure wraps `ErrCapsUnavailable` and leaves the adapter on the fail-closed baseline, while a Latest-probe failure deliberately does **not** wrap it and leaves the adapter carrying everything the caps document said, with `Caps.Latest` and `Caps.ProvidesMagnet` false. `errors.Is(err, ErrCapsUnavailable)` is therefore how a caller tells "this source published no usable caps document" from "its caps are known and only the recent-additions probe failed" | Two constraints pull against each other. `indexer.Indexer` requires `Caps()` to do no I/O, never block, and stay constant for the lifetime of the value, so the probe cannot live inside `Caps()` and cannot mutate an adapter afterwards without breaking the "constant" half. But a source that is offline, or simply does not publish a caps document, must not become unconfigurable — refusing to build the adapter would take a perfectly searchable source away from the user over metadata (§6.3), and Jackett's own caps output omits `<limits>` and `<registration>` entirely, so partial documents are normal. Returning both is unusual enough to be a documented contract rather than an accident: the godoc says the adapter is nil only for bad options, says discarding it on error is the one thing not to do, and the sentinel lets a caller tell the two apart with `errors.Is`. The settings screen shows the error; the search path uses the adapter. The alternative designs were rejected: a mutable `Probe()` method breaks the frozen contract's constancy guarantee, and a three-value return puts the awkwardness in every call site instead of one godoc. **What was false:** this row originally ended "and every other error wraps `ErrCapsUnavailable`", and `Discover`'s godoc said the same, adding that every such error arrives with an adapter "carrying the fail-closed baseline caps". Neither holds for the Latest probe. `probe` returns `fmt.Errorf("probing for a recent-additions feed: %w", err)` with no sentinel in it, because at that point the caps document has already parsed and its contents are on the adapter — and the code's own `TestALatestProbeFailureLeavesTheRestOfCapsIntact` asserts both halves: `!errors.Is(err, ErrCapsUnavailable)`, and `Caps{Search: true, Categories: true, Pagination: true}` rather than the baseline. Re-run on 2026-09-15 against a source serving `caps-full.xml` and a 503 on `t=search`, `Discover` returned `torznab fixture-feed: probing for a recent-additions feed: httpx: GET <host>: HTTP 503 Service Unavailable (1 attempt)`, `errors.Is(err, ErrCapsUnavailable) = false`, and `Caps{Search:true Latest:false Categories:true Pagination:true}`. So the design was right and the description was wrong, in the direction that matters: a caller following this row would have read a Latest-probe failure as "the caps document is fine" being impossible, and lost the one discrimination the sentinel exists to give. Corrected in this column and in `Discover`'s godoc; nothing in the code changed. QA (PR #12, BLOCKING 3) found it | T-021 |
 | DEC-070 | 2026-09-14 | A category filter is translated into **only the category ids the source published in its own caps document**, sent as `cat=`, and the results are not filtered again locally. A query naming categories that the source declared none of returns zero results without making a request | tortui's taxonomy is deliberately coarse (seven data-kind buckets) and a Torznab server's is not, so the translation has to happen against that server's own numbering — which the caps document conveniently hands over. Building the map from the document means tortui never invents an id for a server, and `indexer.CategoryFromTorznab` interprets the numbering exactly once, in the adapter, where §13 puts it. Not re-filtering locally is the deliberate half: the source's classification is authoritative for its own ids, and re-checking against tortui's buckets would drop precisely the items the source has a custom id for — those map to `CategoryOther` on the way in and would fail a filter the source itself considered satisfied. The no-intersection case answers without a request because the answer is knowable without one, and one fewer request to someone else's server is the right default (§6.13). A source that declared no categories at all reports `Caps.Categories = false` and its `cat` parameter is omitted, which `indexer.Query` explicitly permits | T-021 |
 | DEC-071 | 2026-09-15 | **Corrected 2026-09-15 (QA remediation of PR #12, round 2) — this row was written on the round-1 finding and named two pass-through fields; there are four sites, and the correction is in place in the style of DEC-040/046/050/062/066.** `Result.Title`, `Result.Magnet` and `Result.Uploader` keep carrying the source's own text **verbatim**, as does `Result.ID` whenever the identity it picks is a non-URL guid, comments or link value or the title fallback, and the remediation of PR #12 is a disclosure rather than a fix: the package doc, DEC-066 and the PR body are scoped to what the adapter actually guarantees, the credential test is rewritten to assert both directions of the real boundary, and the structural fix is left to backlog `T-934` (now a filed row, along with `T-935` and `T-936`). `resultID`'s last-resort fallback to the title is kept as well, so an item that published no infohash, no guid, no comments and no link still has an identity, and that identity inherits `Title`'s gap | QA (PR #12) reproduced the leak this row exists to record: a source that echoes the user's api_key into a `<title>` or into a magnet's `dn=` parameter gets it written to the log file in plaintext the moment anything logs the `Result`, because neither field name is on `internal/logging`'s `sensitiveKeySubstrings` list and an opaque key has no value shape `maskText` matches. Reproduced again on the remediation branch before anything was written here. Three routes were open. **Stripping or scrubbing the fields** is wrong on its own terms: the title is the value the user reads in the results table, and the magnet has to reach the engine exactly as published or the torrent does not start — and this package has no access to the credential to scrub with, by design (DEC-061). **Fixing it properly** means a `LogValue()` on `indexer.Result`, or a registry-level rule that a result is only ever logged under a masked key. Both touch the frozen §5 `Result` contract, which AGENT.md §12 makes a stop condition and §5 makes a `DEC-` plus a note on every affected task; it is also not a Torznab problem — every adapter T-022 onward produces the same `Result` — so doing it inside an adapter task would put a cross-cutting change behind a review that is looking at one adapter. That is `T-934`. **Disclosing it accurately** is what is left, and it is what was actually missing: the code was already correct, and the only defect QA found in this PR was prose claiming a guarantee the code does not provide. So the claim is now scoped to derived fields, the two exceptions are named wherever the old claim appeared, and the test that appeared to cover them — and did not, because `echoingFeed()` put the key in neither — asserts that they **do** carry the source's text, which turns red if a future change ever alters that and forces this row to be revisited with it. The `resultID` fallback was evaluated for removal on the same occasion and kept, on the merits rather than for convenience: the leaked text is already present in `Title` verbatim by necessity, so removing the duplicate narrows nothing an attacker can reach, while an item with no other identity would be left with an empty `Result.ID`. It is asserted by `TestResultIDFallsBackToTheTitleAndInheritsItsGap` rather than left implicit, so `T-934` inherits a written record of every field in the gap. Cost accepted: until `T-934` lands, a caller that logs a whole `Result` from a hostile or broken source can write a credential to the log file, and nothing in `internal/logging` will catch it. **What was false:** this row originally said "the two exceptions are named wherever the old claim appeared", and the fields it named were `Title` and `Magnet` only. `Result.Uploader` is a third: `uploaderFrom` refuses a value containing `://`, which stops a link and not an opaque token, so an api_key echoed into `<attr name="uploader" value="KEY"/>` is passed through verbatim under a name `internal/logging` does not mask. And ID's gap is wider than the last-resort title branch this row described: `withoutQuery` reduces URL-shaped candidates only, so a present `<guid isPermaLink="false">KEY</guid>` reaches `Result.ID` as it stands. QA reproduced both against the real `internal/logging` sink on round 2 of PR #12, and both were reproduced again on the remediation branch first. The same three routes were re-weighed for each. **Scrubbing** is no more available here than it was for `Title`: this package never sees the credential (DEC-061), an uploader's name is legitimately an opaque token so there is no shape to match on, and refusing a non-URL guid would throw away the source's own stable identity — the very thing `resultID` exists to produce — leaving items with an identity that changes whenever their title does. **Fixing it properly** is the same `LogValue()`-on-`Result` change, so the same §12 stop condition, and `T-934`'s description now covers all four sites. **Disclosing it accurately** is again what was missing, and the lesson taken is a mechanical one: the package doc, DEC-066 and the T-021 row now write out every `Result` field and what the adapter does with it, because both false claims were counts ("no field not named for a URL", then "two fields"), and a count is what nobody re-derives when the code moves. `bareTokenEchoingFeed` and `assertLinkShapedUploaderIsRefused` make both halves of the uploader story fail loudly if either changes | T-021, T-022 |
+| DEC-072 | 2026-09-15 | No error the scraper package produces ever contains a param **value**, a `path`, or the `base_url` out of a definition, and no text out of a response. What a `ValidationError` does contain is a **key the user wrote** — a field name, a param key, a trust mapping key — plus a selector, a regex, a transform name or a mode. A YAML decode failure is reported as `(at line L, column C)` and nothing else; a JSON decode failure as a byte offset; an HTML response contributes nothing at all | Same rule as DEC-061 (`httpx`) and DEC-066 (`torznab`), one layer up, and it has a second source of hostile text that neither of those has: the **definition itself**. A definition is user-supplied config, nothing stops a user hardcoding their own api key into `params: {token: "…"}` or into a query string on `base_url`, and `internal/logging` masks by key name and value shape — an error string is neither. The YAML half is not hypothetical and was not assumed: `goccy/go-yaml`'s error text **embeds the offending source line verbatim**, verified by running `yaml.FormatError(err, false, false)` and `err.Error()` against seven malformed documents on 2026-09-15 and reading the output (`err.Error()` prints the line with a caret under the column; `FormatError(..., false, false)` drops the excerpt but can still name a key). So only the `[line:column]` prefix is kept, mirroring the XML line number `torznab` keeps. The cost is diagnostic detail on a syntax error; the user is editing a local file and has the line. The three things the claim protects are exactly the three a credential plausibly sits in, which is why they are named individually rather than covered by "no definition content": naming the failing **key** is what the T-022 acceptance criterion asks for and a key is not where a secret goes. One design change came out of this: the unknown-placeholder error originally printed `{{%s}}` with the placeholder's own name, which is text out of a param value; it now names the param key and lists the legal placeholders instead. `TestNoErrorFromThisAdapterCarriesTheCredential` sweeps twenty failure modes with the credential configured on the client, hardcoded in a param and written into the base address, and checks the whole unwrap chain; proved non-vacuous by mutation (making `parseBase` echo its input, and restoring the `{{%s}}` echo, each turn it red) | T-022 |
+| DEC-073 | 2026-09-15 | A scraper definition **cannot** carry a credential. The schema has no placeholder for one, and validation refuses every `{{…}}` it does not define, so `{{apikey}}`, `{{cookie}}` and `{{passkey}}` are validation errors rather than features. The credential a request carries comes from the user's own config through `httpx`, which injects it as a query parameter and a `Cookie` header | The alternative — a `credentials:` or `{{apikey}}` key in the definition — is how a definition stops being a file you can read, edit, and hand to someone else, and it puts a live secret in a document whose whole purpose is to be shared when a site's markup changes. It also multiplies the leak surface this task is already fighting: a credential inside the definition would be one edit away from an error message, a validation location, or a `params` dump. Refusing unknown placeholders rather than passing them through gets the property for free and has an independent justification of its own: a typo would otherwise be sent to the site as the literal text `{{quary}}` and look like a site-side failure. What this does **not** do is stop a user hardcoding a literal key into a param value, which nothing can; DEC-072 is the rule that keeps such a value out of every error. `TestTheCredentialIsSentByHTTPXAndNotByTheDefinition` asserts both halves: the key `httpx` injects reaches the source, and a definition naming `{{apikey}}` is refused | T-022 |
+| DEC-074 | 2026-09-15 | A definition is decoded **strictly**: an unknown key, a duplicate key and a value of the wrong type are all errors | Two reasons, and the second is the load-bearing one. A mistyped key in a definition is indistinguishable, from the user's chair, from a selector that has rotted — and they are editing the file precisely because something stopped working, so silence is the worst possible answer. Second, it bounds a YAML alias bomb: the anchors a billion-laughs document needs have to hang off *keys*, and an unknown top-level key is refused before anything is expanded. That second property was measured rather than assumed, on 2026-09-15: a nine-level, fan-nine bomb (9⁹ = 387,420,489 notional leaves) decoded by `goccy/go-yaml` into `map[string]any` in **under a millisecond with no measurable allocation**, because the decoder shares the aliased value rather than expanding it — the result is a DAG, not a tree — and the same bomb attached to a schema-defined key is bounded by the schema's own shape, since `transform` is a list of strings and an alias to a list of lists cannot become one. Strictness is therefore belt and braces rather than the only guard. Cost accepted: a definition written for a future version of the schema fails on this version instead of degrading, which is the right direction for a file the user is debugging. `TestAYAMLAliasBombIsRefused` and `TestParseIsStrictAboutTheShapeOfTheFile` pin both | T-022 |
+| DEC-075 | 2026-09-15 | The json mode's "gjson-style path" is **hand-written** against `encoding/json` — dot-separated keys, an all-digit segment as an array index, `\.` and `\\` escapes — rather than taking `tidwall/gjson` as a dependency | The acceptance criterion's words are "JSON (gjson-style path)", which describes the *syntax shape* a user types, not a library to import. What a scraper definition needs out of a path expression is "walk to this key" and "take this array element", and that is nineteen lines of `switch` over `map[string]any` and `[]any`. Taking gjson would buy wildcards, queries, modifiers and multipaths — an expression language evaluated against attacker-influenced data, inside the one package whose input is attacker-influenced by design — in exchange for a dependency, a `DEC-` row, a `NOTICE` entry and a licence review, to support syntax no definition in this repository uses. AGENT.md §3 requires a decision either way; this is the decision. The subset is small enough to validate exhaustively at parse time (`TestCompilePath` covers six accepted and six rejected expressions) and small enough that nothing in it can recurse, backtrack or evaluate. `encoding/json`'s own nesting limit was verified rather than assumed: a 100,000-deep array is refused as an ordinary syntax error in constant time, not a stack overflow | T-022 |
+| DEC-076 | 2026-09-15 | `maxHTMLDepth` refuses an HTML response nested deeper than **512** elements before `html.Parse` is called, using a linear, allocation-free pre-scan that excludes the elements HTML5 closes implicitly (`li`, `tr`, `td`, `p`, …) and skips comments, doctypes and raw-text elements. 512 is deliberately the same bound `golang.org/x/net v0.45.0+` puts on its own open-element stack | Measured, not assumed, on 2026-09-15 (darwin/arm64, Go 1.27.1) against `golang.org/x/net v0.39.0`: a document that is nothing but nested `<div>` elements costs 8.5ms at depth 1000, 119ms at 5000, 400ms at 10 000, 1.6s at 20 000, 6.4s at 40 000 and **39s at 100 000** — the last two being 440KB and 1.1MB of input, well inside `httpx`'s 8MB cap. The page is written by the source, the parse is one uninterruptible call, and a context deadline does not touch it, so a source can burn a minute of a user's CPU per search with a small page. Excluding the optional-end-tag elements is correctness rather than pragmatism: the parser does not nest them, so counting them would refuse ordinary pages full of unclosed `<li>` and `<tr>` while doing nothing about the case the bound exists for, which needs an element that really does nest. The number matches upstream's so the guard behaves identically before and after the `x/net` upgrade the **Blocked** section asks for; the whole test suite passes against `x/net v0.39.0` and `v0.55.0` with no source change. This is also, discovered afterwards, published as `GO-2026-4440`; the guard mitigates that advisory and does **not** mitigate `GO-2026-4441` (an infinite parse loop), which is why the dependency still blocks the task | T-022 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
@@ -2519,4 +2738,73 @@ inherited from the initial plan.
 
 ## Blocked
 
-*(empty — append `T-0NN` blocks here with the exact input needed to unblock)*
+### `T-022` — the HTML parser the §3 stack mandates cannot be taken without a known-vulnerable
+### dependency under the project's pinned Go version
+
+**What is blocked.** Merging `T-022`. The scraper framework is complete, tested (99.9% statement
+coverage) and documented on branch `task/T-022-scraper-framework`, and every acceptance
+criterion is met. What it cannot do is ship without a dependency AGENT.md §12 forbids.
+
+**The finding.** AGENT.md §3 locks `PuerkitoBio/goquery` as the HTML scraping library, and the
+T-022 criteria require a goquery HTML mode. `goquery` requires `golang.org/x/net/html`.
+`govulncheck` (`golang.org/x/vuln` v1.8.0, run on 2026-09-15 against this branch) reports the
+pinned `golang.org/x/net v0.39.0` as carrying **seven vulnerabilities whose call traces it
+resolves into this package's own `html.Parse` call** (`internal/indexer/scraper/html.go:80`):
+
+| ID | Summary | Fixed in |
+|---|---|---|
+| `GO-2026-4440` | Quadratic parsing complexity in `golang.org/x/net/html` | `v0.45.0` |
+| `GO-2026-4441` | Infinite parsing loop in `golang.org/x/net` | `v0.45.0` |
+| `GO-2026-5025` | Incorrect handling of namespaced elements in foreign content | `v0.55.0` |
+| `GO-2026-5027` | Incorrect handling of HTML elements in foreign content | `v0.55.0` |
+| `GO-2026-5028` | Denial of service when parsing arbitrary HTML | `v0.55.0` |
+| `GO-2026-5029` | Incorrect handling of character references in DOCTYPE nodes | `v0.55.0` |
+| `GO-2026-5030` | Duplicate attributes can cause XSS | `v0.55.0` |
+
+These are not theoretical for this package: its entire job is calling `html.Parse` on a page an
+arbitrary source served. `GO-2026-4440` is the quadratic behaviour this task measured
+independently before knowing the advisory existed (39 seconds to parse a 1.1MB page of nested
+`<div>` elements), and `guardHTMLDepth` mitigates exactly that one. `GO-2026-4441`, an
+**infinite** parsing loop, is not mitigated by a depth bound and would hang a search goroutine
+for the life of the process.
+
+**Why it cannot be fixed inside this task.** The first fixed release, `x/net v0.45.0`, declares
+`go 1.24.0`; the release that fixes all seven, `v0.55.0`, declares `go 1.25.0` (read from each
+module's own `go.mod` in the module cache). This repository declares `go 1.23.0` and CI pins
+`GO_VERSION: "1.23"`, matching AGENT.md §3's `Go 1.23+` row. Taking a fixed `x/net` therefore
+requires raising the project's minimum Go version in `go.mod`, in `.github/workflows/ci.yml`,
+and in AGENT.md §3 — a change to a locked stack row with consequences for the support matrix,
+for CI, and for anyone building from source, which AGENT.md §3 ("do not re-litigate") and §12
+("a change would alter the frozen contracts", "a required dependency … has an open CVE") both
+put outside a single adapter task.
+
+**What would unblock it — exactly one decision.** Approve raising the project's minimum Go
+version to **1.25** and the accompanying edits:
+
+1. AGENT.md §3, the Language row: `Go 1.23+` → `Go 1.25+`.
+2. `.github/workflows/ci.yml`: `GO_VERSION: "1.23"` → `"1.25"`.
+3. `go.mod`: `go 1.23.0` → `go 1.25.0`, and `golang.org/x/net v0.39.0` → `v0.55.0` or later.
+4. `make licenses` re-run (`x/net` stays BSD-3-Clause, so `NOTICE` changes only in the version
+   inside its license URL).
+
+Approving **1.24** instead closes `GO-2026-4440` and `GO-2026-4441` — the two that matter most
+here, since they are the denial-of-service pair — and leaves the five `GO-2026-502x` advisories
+open; four of them are correctness bugs in foreign-content and DOCTYPE handling and the fifth is
+an XSS vector that does not apply to a program that never renders the HTML it parses. It is a
+defensible half-step, but it is still a knowing ship of open advisories and the decision is not
+this task's to take.
+
+**What the branch already does about it, so the change is small.** The branch was tested against
+both versions. `maxHTMLDepth` is set to **512**, deliberately the same bound `x/net v0.45.0+`
+imposes on its own open-element stack (`html: open stack of elements exceeds 512 nodes` in
+`parse.go`), so the guard behaves identically before and after the upgrade. With `go.mod` moved
+to `go 1.25.0` and `x/net v0.55.0`, `go build ./...`, the full package test suite and
+`govulncheck ./...` (`0 vulnerabilities`) were all green on this machine with no change to any
+source file. The branch is left pinned at `v0.39.0` so that it does not raise the project's
+minimum Go version by side effect.
+
+**Not verified.** Only the darwin/arm64 leg was run here. Whether a GitHub `ubuntu`/`windows`
+runner provisioned with Go 1.23 would auto-upgrade its toolchain from a `go 1.25.0` directive
+under the default `GOTOOLCHAIN=auto`, rather than failing, was **not** tested — which is why
+step 2 above changes `GO_VERSION` explicitly rather than relying on it.
+

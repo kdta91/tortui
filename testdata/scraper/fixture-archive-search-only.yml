@@ -1,0 +1,21 @@
+# The same invented site with no recent-additions page, which is what a
+# definition looks like when the site has no such listing: it reports
+# Caps.Latest = false and the registry never sends it a ModeLatest query.
+
+id: fixture-archive-search-only
+name: Fixture Archive (search only)
+base_url: https://archive.example.org
+
+rows: table.results tr.row
+
+fields:
+  title:
+    selector: .name a
+  magnet:
+    selector: a.magnet
+    attr: href
+
+search:
+  path: /search
+  params:
+    q: "{{query}}"
