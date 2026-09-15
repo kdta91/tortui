@@ -1496,7 +1496,7 @@ user already runs, which delivers source-agnosticism immediately without writing
 
 ### T-022 · Scraper adapter framework
 ```
-status: todo
+status: in-progress
 depends: T-020
 ```
 **Files:** `internal/indexer/scraper/`, `docs/indexer-definitions.md`
