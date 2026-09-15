@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture: the Newznab/Torznab error document, served with HTTP 200, in
+  answer to a caps request the server would not serve (T-021).
+-->
+<error code="100" description="Incorrect user credentials"/>

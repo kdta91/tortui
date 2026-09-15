@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture: a well-formed Torznab search response (T-021). Two invented
+  items on an invented server; example.org only (AGENT.md §2).
+
+  Item 1 carries every attribute this adapter reads, with peers greater
+  than seeders (the total-peers reading — see DEC-065). Item 2 carries no
+  magneturl at all, so it exercises the enclosure-only path, an RFC 1123
+  "GMT" pubDate, and a verified rather than a vip trust attribute.
+
+  The xmlns:torznab declaration a real server sends is omitted from every
+  fixture here. Its value is an http URL on a host that is neither
+  example.org nor a reserved TLD, and scripts/check-indexer-hostnames.sh
+  scans testdata/ in full, so stating it would fail that check (backlog
+  T-933). Nothing is lost: Go's encoding/xml accepts an undeclared prefix,
+  and this adapter matches <attr> by local name regardless of namespace, so
+  a prefixed element parses through exactly the same code path either way.
+  TestAttrElementParsesUnderAnyNamespacePrefix proves both halves.
+-->
+<rss version="2.0">
+  <channel>
+    <title>Fixture Feed</title>
+    <item>
+      <title>Invented Reference Corpus 2026</title>
+      <guid isPermaLink="true">https://feed.example.org/details/1001</guid>
+      <comments>https://feed.example.org/details/1001</comments>
+      <pubDate>Mon, 07 Sep 2026 12:34:56 +0000</pubDate>
+      <size>1073741824</size>
+      <link>https://feed.example.org/download/1001.torrent?apikey=redacted-in-fixture</link>
+      <category>7000</category>
+      <enclosure url="https://feed.example.org/download/1001.torrent?apikey=redacted-in-fixture" length="1073741824" type="application/x-bittorrent"/>
+      <torznab:attr name="category" value="7020"/>
+      <torznab:attr name="size" value="1073741824"/>
+      <torznab:attr name="seeders" value="42"/>
+      <torznab:attr name="peers" value="55"/>
+      <torznab:attr name="infohash" value="0123456789ABCDEF0123456789ABCDEF01234567"/>
+      <torznab:attr name="magneturl" value="magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&amp;dn=Invented+Reference+Corpus+2026"/>
+      <torznab:attr name="grabs" value="17"/>
+      <torznab:attr name="files" value="3"/>
+      <torznab:attr name="downloadvolumefactor" value="0"/>
+      <torznab:attr name="uploadvolumefactor" value="1"/>
+      <torznab:attr name="uploader" value="fixture-uploader"/>
+      <torznab:attr name="vip" value="1"/>
+    </item>
+    <item>
+      <title>Invented Lossless Field Recordings</title>
+      <guid isPermaLink="false">fixture-guid-1002</guid>
+      <comments>https://feed.example.org/details/1002</comments>
+      <pubDate>Tue, 08 Sep 2026 09:00:00 GMT</pubDate>
+      <link>https://feed.example.org/download/1002.torrent</link>
+      <enclosure url="https://feed.example.org/download/1002.torrent" length="524288000" type="application/x-bittorrent"/>
+      <torznab:attr name="category" value="3010"/>
+      <torznab:attr name="seeders" value="7"/>
+      <torznab:attr name="peers" value="7"/>
+      <torznab:attr name="verified" value="yes"/>
+      <torznab:attr name="poster" value="second-fixture-uploader"/>
+    </item>
+  </channel>
+</rss>

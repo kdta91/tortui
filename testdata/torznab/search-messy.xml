@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture: everything a Torznab server can get wrong in a document that is
+  still well-formed XML (T-021). Every item here must parse into a Result
+  without panicking and without failing the whole feed.
+
+    1001  no attributes at all beyond the title
+    1002  duplicated, non-numeric and negative attribute values
+    1003  peers below seeders (the ambiguous swarm case, DEC-065)
+    1004  an explicit leechers attribute alongside a peers total
+    1005  trust attributes present and false, which is not the same thing
+          as absent
+    1006  a magnet in <link> with no enclosure and no magneturl attribute
+    1007  an unknown numeric category and a worded <category> element
+
+  The xmlns:torznab declaration a real server sends is omitted from every
+  fixture here. Its value is an http URL on a host that is neither
+  example.org nor a reserved TLD, and scripts/check-indexer-hostnames.sh
+  scans testdata/ in full, so stating it would fail that check (backlog
+  T-933). Nothing is lost: Go's encoding/xml accepts an undeclared prefix,
+  and this adapter matches <attr> by local name regardless of namespace, so
+  a prefixed element parses through exactly the same code path either way.
+  TestAttrElementParsesUnderAnyNamespacePrefix proves both halves.
+-->
+<rss version="2.0">
+  <channel>
+    <title>Fixture Feed</title>
+    <item>
+      <title>Invented Release With Nothing Else</title>
+    </item>
+    <item>
+      <title>Invented Release With Junk Attributes</title>
+      <guid isPermaLink="true">https://feed.example.org/details/1002?apikey=redacted-in-fixture</guid>
+      <pubDate>yesterday afternoon</pubDate>
+      <torznab:attr name="seeders" value="not-a-number"/>
+      <torznab:attr name="seeders" value="9"/>
+      <torznab:attr name="peers" value="also-not-a-number"/>
+      <torznab:attr name="size" value="-5"/>
+      <torznab:attr name="category" value="not-a-number"/>
+      <torznab:attr name="infohash" value="zzzz"/>
+      <torznab:attr name="magneturl" value="https://feed.example.org/not-a-magnet"/>
+      <torznab:attr name="grabs" value="plenty"/>
+    </item>
+    <item>
+      <title>Invented Release With Fewer Peers Than Seeders</title>
+      <pubDate>Wed, 9 Sep 2026 01:02:03 -0400</pubDate>
+      <torznab:attr name="seeders" value="10"/>
+      <torznab:attr name="peers" value="4"/>
+    </item>
+    <item>
+      <title>Invented Release With Explicit Leechers</title>
+      <torznab:attr name="seeders" value="30"/>
+      <torznab:attr name="peers" value="100"/>
+      <torznab:attr name="leechers" value="7"/>
+    </item>
+    <item>
+      <title>Invented Release With No Badge</title>
+      <torznab:attr name="verified" value="0"/>
+      <torznab:attr name="vip" value="false"/>
+    </item>
+    <item>
+      <title>Invented Release Linked By Magnet</title>
+      <link>magnet:?xt=urn:btih:89abcdef0123456789abcdef0123456789abcdef&amp;dn=Invented+Release</link>
+      <torznab:attr name="seeders" value="3"/>
+    </item>
+    <item>
+      <title>Invented Release In An Unknown Bucket</title>
+      <category>Datasets</category>
+      <torznab:attr name="category" value="999999"/>
+    </item>
+  </channel>
+</rss>

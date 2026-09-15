@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture: a caps document from a server that declares keyword search
+  unavailable (T-021). Nothing may be inferred as available from it.
+-->
+<caps>
+  <limits max="100" default="50"/>
+  <searching>
+    <search available="no" supportedParams=""/>
+  </searching>
+  <categories>
+    <category id="3000" name="Audio"/>
+  </categories>
+</caps>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture: the recent-additions listing a Torznab server returns for a
+  t=search request with no q parameter (T-021). The caps probe sends
+  exactly this request and reads Caps.Latest off the answer: a feed with
+  at least one item is the only thing that sets it true.
+
+  The xmlns:torznab declaration a real server sends is omitted from every
+  fixture here. Its value is an http URL on a host that is neither
+  example.org nor a reserved TLD, and scripts/check-indexer-hostnames.sh
+  scans testdata/ in full, so stating it would fail that check (backlog
+  T-933). Nothing is lost: Go's encoding/xml accepts an undeclared prefix,
+  and this adapter matches <attr> by local name regardless of namespace, so
+  a prefixed element parses through exactly the same code path either way.
+  TestAttrElementParsesUnderAnyNamespacePrefix proves both halves.
+-->
+<rss version="2.0">
+  <channel>
+    <title>Fixture Feed</title>
+    <item>
+      <title>Invented Recently Added Release</title>
+      <guid isPermaLink="true">https://feed.example.org/details/2001</guid>
+      <pubDate>Wed, 09 Sep 2026 22:00:00 +0000</pubDate>
+      <enclosure url="https://feed.example.org/download/2001.torrent" length="4096" type="application/x-bittorrent"/>
+      <torznab:attr name="seeders" value="1"/>
+      <torznab:attr name="peers" value="2"/>
+      <torznab:attr name="magneturl" value="magnet:?xt=urn:btih:fedcba9876543210fedcba9876543210fedcba98&amp;dn=Invented+Recently+Added+Release"/>
+    </item>
+  </channel>
+</rss>

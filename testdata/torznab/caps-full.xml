@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture: a fully populated Torznab `t=caps` document (T-021).
+
+  Invented server, invented items, example.org only (AGENT.md §2). The
+  category ids are Torznab block numbers, which is all internal/indexer's
+  CategoryFromTorznab reads; the names next to them are this fixture's own
+  invention and are deliberately generic.
+-->
+<caps>
+  <server version="1.0" title="Fixture Feed" strapline="a test double" email="nobody@example.org" url="https://feed.example.org/" image="https://feed.example.org/logo.png"/>
+  <limits max="100" default="50"/>
+  <registration available="no" open="no"/>
+  <searching>
+    <search available="yes" supportedParams="q"/>
+    <tv-search available="no" supportedParams="q,season,ep"/>
+    <movie-search available="no" supportedParams="q"/>
+  </searching>
+  <categories>
+    <category id="1000" name="Console">
+      <subcat id="1010" name="Handheld"/>
+    </category>
+    <category id="3000" name="Audio">
+      <subcat id="3010" name="Lossless"/>
+    </category>
+    <category id="7000" name="Books">
+      <subcat id="7020" name="Reference"/>
+    </category>
+    <category id="120000" name="Site Specific"/>
+  </categories>
+</caps>
