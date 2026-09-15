@@ -1364,15 +1364,18 @@ it buys an adapter with nothing to redact.
 
 The `Result` side is field by field, and the package doc carries the same list (this is written
 out because two summaries of it shipped and QA found both wrong by at least one field — round 1:
-"no field that is not named for a URL"; round 2: "two fields are not derived"):
+"no field that is not named for a URL"; round 2: "two fields are not derived". Round 3 found the
+same defect a third time, no longer as a count but as a parenthetical *inside* the enumeration:
+the `Magnet` entry called `Resolve`'s derived magnet clean, and it is not. The entries below
+state what a field carries and call nothing safe that the code does not make safe):
 
 | Field | Treatment |
 |---|---|
 | `IndexerID` | Derived — the id the user configured. |
-| `ID` | Derived from an infohash (40 hex / 32 base32, validated) or from a URL-shaped guid, comments or link reduced to scheme+host+path. **Passed through** for a guid, comments or link that is not URL-shaped, and for the last-resort title fallback. |
+| `ID` | Derived only when it is an infohash (40 hex / 32 base32, validated). Otherwise a guid, comments or link goes through `withoutQuery`, which reduces less than "scheme+host+path" suggests: it drops the query string and fragment from a candidate `url.Parse` gives a scheme to and returns every other candidate as it stands, so an opaque `scheme:token` value is reduced by nothing and userinfo and path survive in a full URL. **Passed through** — whatever `withoutQuery` leaves, and the last-resort title fallback. |
 | `Title` | **Passed through**, whitespace-trimmed and otherwise verbatim. |
 | `InfoHash` | Derived — only validated hex/base32 survives. |
-| `Magnet` | **Passed through** — the `magneturl` attribute (or a magnet `<link>`) exactly as published, `dn=` included. `Resolve` derives one from the infohash when the item published none; that one is clean. |
+| `Magnet` | **Passed through** — the `magneturl` attribute (or a magnet `<link>`) exactly as published, `dn=` included. The magnet `Resolve` derives for an item that published none is **not clean either**: `magnetFor` writes `Result.Title` into its `dn=`, `url.QueryEscape` encodes that text rather than removing it, and an opaque token survives the encoding unchanged — so a derived magnet carries whatever the title carries. Reproduced by QA on round 3 and pinned by `TestResolveDerivesAMagnetThatInheritsTheTitlesGap`. |
 | `TorrentURL` | The source's download URL verbatim — safe, `internal/logging` masks on the name. |
 | `SizeBytes`, `Seeders`, `Leechers` | Derived — parsed integers (`Leechers` also `peers - seeders`, DEC-065). |
 | `Category`, `Trust` | Derived — enum values. |
@@ -1382,14 +1385,19 @@ out because two summaries of it shipped and QA found both wrong by at least one 
 | `Extra` | Derived — fixed `torznab.`-prefixed keys, values that parse as a number only. |
 
 So the fields that carry source text under a name `internal/logging` does **not** mask are,
-exhaustively: `Title`, `Magnet`, `Uploader`, and `ID` on its two unreduced branches. A source that
-echoes the user's key into a `<title>`, a magnet's `dn=`, an `<attr name="uploader">` or a
-non-URL `<guid isPermaLink="false">` puts it in that field verbatim, and logging the field — or
-the whole `Result` — writes it to the log file in plaintext. QA reproduced `Title`/`Magnet` on
-PR #12 round 1 and `Uploader`/`ID` on round 2, both against the real `internal/logging` sink, and
-both were reproduced again on this branch before this row was rewritten. None of it is fixable
+exhaustively: `Title`, `Magnet`, `Uploader`, and `ID` on every branch but the infohash. A source
+that echoes the user's key into a `<title>`, a magnet's `dn=`, an `<attr name="uploader">` or a
+`<guid isPermaLink="false">` puts it in that field verbatim — and into `Magnet` a second time
+when the item published no magnet and `Resolve` derives one, since the derived magnet's `dn=` is
+the title. Logging the field — or the whole `Result` — writes it to the log file in plaintext.
+The one part of that surface something still catches is a value that is itself a full http(s)
+address: `internal/logging`'s URL pattern matches on the value, whatever its key is called.
+Nothing catches a bare token. QA reproduced `Title`/`Magnet` on PR #12 round 1, `Uploader`/`ID`
+on round 2 and the derived magnet on round 3, each against the real `internal/logging` sink, and
+each was reproduced again on this branch before this row was rewritten. None of it is fixable
 from inside the adapter: the title is the display value, the magnet must reach the engine as
-published, an uploader's name is legitimately an opaque token, a non-URL guid is the source's own
+published, a `dn=` is a legitimate part of a derived magnet and the name a client shows before
+metadata arrives, an uploader's name is legitimately an opaque token, a guid is the source's own
 stable identity, and this package never sees the credential it would have to scrub with
 (DEC-061). The gap belongs to the frozen §5 `Result` type; it is recorded as backlog `T-934` and
 reasoned out in DEC-071.
@@ -1407,7 +1415,10 @@ and a non-permalink guid. `TorrentURL`, `SourceURL`, `Title`, `Magnet`, the bare
 and the bare-token `ID` are asserted to carry it; `InfoHash`, `IndexerID`, `Extra` and each
 derived `ID` to be free of it; and `assertLinkShapedUploaderIsRefused` pins the `://` refusal on
 the two feeds that write a link there.
-`TestResultIDFallsBackToTheTitleAndInheritsItsGap` pins the last-resort ID branch.
+`TestResultIDFallsBackToTheTitleAndInheritsItsGap` pins the last-resort ID branch, and
+`TestResolveDerivesAMagnetThatInheritsTheTitlesGap` pins the derived magnet: it resolves a result
+whose title carries the key and requires both the escaped title and the key itself in the
+`dn=` `Resolve` produced.
 `TestNoCredentialReachesTheLogFile` puts every error plus a parsed `Result` through the real
 `internal/logging` sink and greps the file — scoped, as its own comment says, to the surface this
 adapter controls, since a `Title`, `Magnet` or `Uploader` carrying a key does reach that file and
@@ -1433,6 +1444,32 @@ test running beside the new one: scrubbing `Uploader` to a constant — old **PA
 making `withoutQuery` refuse a non-URL candidate — old **PASS**, new **FAIL**; removing the `://`
 refusal — **both FAIL** (so no coverage was lost by moving the field); dropping the query-strip —
 **both FAIL**. Every mutation reverted, the copy deleted, `git status` clean.
+
+**Round-3 remediation (2026-09-15) — one false clause, one imprecise branch, one more mutation.**
+QA found the `Magnet` entry's parenthetical false: `Resolve` builds its magnet with
+`magnetFor(hash, r.Title)`, which appends `&dn=` + `url.QueryEscape(Title)`, so the derived
+magnet embeds `Title` — itself a disclosed pass-through — verbatim. Reproduced on `98a8388`
+before any edit, through the real `internal/logging` sink: `derived Magnet =
+"magnet:?xt=urn:btih:0123…&dn=Invented+Release+opaque-value-from-the-users-own-account-0192837465"`,
+written to the log file unredacted beside a `[REDACTED]` `SourceURL` and `TorrentURL`. Not a new
+exposure — the text is `Title`'s, and `Title` is already on the disclosed side — but a
+clean-guarantee inside the enumeration that exists to be exhaustive, so the clause is replaced by
+what the code does in all three copies of the list (package doc, this row, the PR body), and
+`magnetFor`'s own comment now says it too. The `ID` branch wording is tightened in the same edit:
+`withoutQuery` drops the query string and fragment from any candidate `url.Parse` gives a scheme
+to and returns everything else as it stands, so "reduced to scheme+host+path" overstated it —
+an opaque `scheme:token` value is reduced by nothing, and userinfo and path survive in a full
+URL. Proved by mutation: dropping the `&dn=` from `magnetFor` turns
+`TestResolveDerivesAMagnetThatInheritsTheTitlesGap` **FAIL** on both of its assertions
+(`Magnet = "magnet:?xt=urn:btih:0123…"` with no `dn=`); reverted, green, `git status` clean.
+Product code is untouched — `dn=` is a legitimate and useful part of a magnet, and the fix is
+the disclosure, not the behaviour. DEC-066 and DEC-071 were both checked for the same clause and
+neither repeats it — both describe `Magnet` as the published `magneturl` attribute and say
+nothing about what `Resolve` derives — so neither row was corrected; their existing correction
+history is left exactly as round 2 wrote it. DEC-066 does still carry the round-2 "reduced to
+scheme, host and path" phrasing that finding D2 tightens here, which is the same imprecision and
+not the false clause; it is flagged rather than rewritten, because a DEC correction is a
+deliberate act and QA ruled D2 non-blocking and scoped to the field list.
 
 **Deliberately not done.** No `tv-search`/`movie-search` modes (subject-matter searches tortui has
 no concept of, §2). No category UI (backlog `T-905`). No local re-filtering of results by

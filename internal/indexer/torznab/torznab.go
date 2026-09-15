@@ -40,23 +40,41 @@
 // This is written out field by field on purpose. Two earlier versions of
 // this comment summarised it as a count instead — "no field that is not
 // named for a URL", then "two fields are not derived" — and QA found both
-// to be wrong by at least one field (PR #12, rounds 1 and 2). Every field
-// of the frozen §5 indexer.Result, and what this adapter puts in it:
+// to be wrong by at least one field (PR #12, rounds 1 and 2). Round 3
+// found the third variant of the same defect — not a count this time, but
+// a parenthetical inside the enumeration calling one derived value clean
+// when it is not (the Magnet entry below). So an entry here says what the
+// field carries, and calls nothing safe that the code does not make safe.
+// Every field of the frozen §5 indexer.Result, and what this adapter puts
+// in it:
 //
 //	IndexerID   Derived. The id the user configured for this adapter; no
 //	            source text reaches it.
-//	ID          Derived, with two exceptions. The infohash wins and is
-//	            validated as 40 hex or 32 base32 characters; a URL-shaped
-//	            guid, comments or link is reduced to scheme, host and
-//	            path. PASSED THROUGH: a guid, comments or link that is not
-//	            URL-shaped, and the last-resort fallback to the title.
+//	ID          Derived only when it is the infohash, which is validated
+//	            as 40 hex or 32 base32 characters. Otherwise a guid,
+//	            comments or link goes through withoutQuery, and that
+//	            reduces less than "scheme, host and path" suggests: it
+//	            removes the query string and fragment from a candidate
+//	            url.Parse gives a scheme to, and returns every other
+//	            candidate exactly as it stands. An opaque scheme:token
+//	            value has no query string, so it is reduced by nothing;
+//	            userinfo and path survive in a full URL. PASSED THROUGH:
+//	            whatever withoutQuery leaves, and the last-resort fallback
+//	            to the title.
 //	Title       PASSED THROUGH, whitespace-trimmed and otherwise verbatim.
 //	InfoHash    Derived. Only 40 hex or 32 base32 characters survive
 //	            normaliseInfoHash, so no other text can reach it.
 //	Magnet      PASSED THROUGH. The magneturl attribute, or a <link> that
 //	            is itself a magnet, exactly as published — including its
-//	            dn= parameter. (Resolve derives one from the infohash for
-//	            an item that published no magnet; that one is clean.)
+//	            dn= parameter. The magnet Resolve derives for an item that
+//	            published none is NOT clean either: magnetFor writes
+//	            Result.Title into its dn=, url.QueryEscape percent-encodes
+//	            that text rather than removing it, and an opaque token
+//	            survives the encoding unchanged. So a derived magnet
+//	            carries whatever the title carries, and the title is
+//	            itself passed through. Reproduced by QA on PR #12,
+//	            round 3; pinned by
+//	            TestResolveDerivesAMagnetThatInheritsTheTitlesGap.
 //	TorrentURL  The source's own download URL, verbatim — and safe:
 //	            internal/logging masks on the name.
 //	SizeBytes   Derived. Parsed as an integer.
@@ -74,21 +92,27 @@
 //	            that parse as a number.
 //
 // The fields that carry source text under a name internal/logging does not
-// mask are therefore, exhaustively: Title, Magnet, Uploader, and ID on its
-// two unreduced branches. A source that echoes the user's api_key into a
-// <title>, a magnet's dn=, an <attr name="uploader">, or a non-URL guid
-// puts it in that field verbatim, and logging the field — or the whole
-// Result — writes it to the log file in plaintext. Each was reproduced
-// against the real internal/logging sink by QA on PR #12.
+// mask are therefore, exhaustively: Title, Magnet, Uploader, and ID on
+// every branch but the infohash. A source that echoes the user's api_key
+// into a <title>, a magnet's dn=, an <attr name="uploader"> or a guid puts
+// it in that field verbatim — and into Magnet a second time if the item
+// published no magnet and Resolve derives one, since the derived magnet's
+// dn= is the title. Logging the field, or the whole Result, writes it to
+// the log file in plaintext. The one part of that surface something still
+// catches is an ID or a title that is itself a full http(s) address:
+// internal/logging's URL pattern matches on the value, whatever the key is
+// called. Nothing catches a bare token. Each was reproduced against the
+// real internal/logging sink by QA on PR #12.
 //
 // None of that is fixable from inside this adapter. The title is the value
-// the user reads, the magnet must reach the engine as published, an
-// uploader's name is legitimately an opaque token, and a non-URL guid is
-// the source's own stable identity — and this package never sees the
-// credential it would have to scrub with (DEC-061). The gap is a property
-// of the frozen §5 Result contract; it is recorded as backlog T-934
-// (opened by QA on PR #12) and explained in DEC-071. See also DEC-066, and
-// the credential test in credentials_test.go.
+// the user reads, the magnet must reach the engine as published, a dn= is
+// a legitimate part of a derived magnet and is what a torrent client shows
+// before metadata arrives, an uploader's name is legitimately an opaque
+// token, and a guid is the source's own stable identity — and this package
+// never sees the credential it would have to scrub with (DEC-061). The gap
+// is a property of the frozen §5 Result contract; it is recorded as
+// backlog T-934 (opened by QA on PR #12) and explained in DEC-071. See
+// also DEC-066, and the credential test in credentials_test.go.
 package torznab
 
 import (
@@ -391,6 +415,14 @@ func (a *Adapter) Resolve(_ context.Context, r indexer.Result) (indexer.Result, 
 // magnetFor builds a magnet URI from an infohash and a display name. The
 // display name is optional in the format and is included because it is what
 // a torrent client shows before any metadata arrives.
+//
+// The display name is Result.Title, which this adapter passes through
+// verbatim, so the magnet this returns is no cleaner than the title it was
+// given: url.QueryEscape encodes that text, it does not remove it, and it
+// leaves an opaque token untouched. A magnet Resolve derives therefore sits
+// in the same disclosed gap as Title itself — see the package doc's field
+// list, DEC-071 and backlog T-934. Pinned by
+// TestResolveDerivesAMagnetThatInheritsTheTitlesGap.
 func magnetFor(hash, title string) string {
 	magnet := magnetScheme + "?xt=" + btihPrefix + hash
 

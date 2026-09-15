@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -522,6 +523,73 @@ func TestResultIDFallsBackToTheTitleAndInheritsItsGap(t *testing.T) {
 				"the package doc, resultID's comment and DEC-071 describe the old behaviour and must be updated",
 			r.ID,
 		)
+	}
+}
+
+// TestResolveDerivesAMagnetThatInheritsTheTitlesGap pins the one derived
+// value in this package that is not clean.
+//
+// Resolve builds a magnet for an item that published none, and magnetFor
+// writes Result.Title into its dn=. Title is a pass-through field, so the
+// derived magnet carries whatever the source put in the title: an echoed
+// api_key is an opaque token, url.QueryEscape encodes such a token to
+// itself, and nothing downstream masks a magnet. Three copies of the field
+// list — the package doc, the T-021 row and the PR body — called this
+// derived magnet clean until QA reproduced it (PR #12, round 3), which is
+// why the claim is now an assertion rather than a sentence.
+//
+// It is asserted rather than fixed, for the reason DEC-071 already gives
+// for the title fallback in resultID: the text is present in Title verbatim
+// by necessity, so the derived magnet duplicates a gap rather than widening
+// one; a dn= is a legitimate part of a magnet and is the name a client
+// shows before metadata arrives; and this package never sees the credential
+// it would have to scrub with (DEC-061). T-934 is the fix.
+func TestResolveDerivesAMagnetThatInheritsTheTitlesGap(t *testing.T) {
+	t.Parallel()
+
+	src := newSource(t, searchable(t))
+	a := mustNew(t, src)
+
+	before := indexer.Result{
+		IndexerID: testID,
+		ID:        probeHash,
+		InfoHash:  probeHash,
+		Title:     "Invented Release " + testKey,
+		Seeders:   1,
+	}
+
+	if before.Magnet != "" {
+		t.Fatal("the input already carries a magnet, so Resolve is a no-op and this test proves nothing")
+	}
+
+	after, err := a.Resolve(testContext(t), before)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	if want := magnetScheme + "?xt=" + btihPrefix + probeHash; !strings.HasPrefix(after.Magnet, want) {
+		t.Fatalf("Resolve did not derive a magnet from the infohash: Magnet = %q, want it to start %q", after.Magnet, want)
+	}
+
+	if !strings.Contains(after.Magnet, "&dn="+url.QueryEscape(before.Title)) {
+		t.Errorf(
+			"Result.Magnet = %q no longer carries the title in its dn=; if that is deliberate it is an "+
+				"improvement, but the package doc's Magnet entry, magnetFor's comment, the T-021 row and "+
+				"DEC-071 all describe the old behaviour and must be updated with it",
+			after.Magnet,
+		)
+	}
+
+	if !strings.Contains(after.Magnet, testKey) {
+		t.Errorf(
+			"Result.Magnet = %q no longer carries what the source put in the title; the same four places "+
+				"describe the old behaviour and must be updated with it",
+			after.Magnet,
+		)
+	}
+
+	if len(src.requests()) != 0 {
+		t.Fatalf("Resolve made %d network requests; it resolves from the result it was handed", len(src.requests()))
 	}
 }
 
