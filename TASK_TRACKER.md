@@ -1496,7 +1496,7 @@ user already runs, which delivers source-agnosticism immediately without writing
 
 ### T-022 · Scraper adapter framework
 ```
-status: in-progress
+status: blocked
 depends: T-020
 ```
 **Files:** `internal/indexer/scraper/`, `docs/indexer-definitions.md`
@@ -2519,4 +2519,72 @@ inherited from the initial plan.
 
 ## Blocked
 
-*(empty — append `T-0NN` blocks here with the exact input needed to unblock)*
+### `T-022` — the HTML parser the §3 stack mandates cannot be taken without a known-vulnerable
+### dependency under the project's pinned Go version
+
+**What is blocked.** Merging `T-022`. The scraper framework is complete, tested (99.9% statement
+coverage) and documented on branch `task/T-022-scraper-framework`, and every acceptance
+criterion is met. What it cannot do is ship without a dependency AGENT.md §12 forbids.
+
+**The finding.** AGENT.md §3 locks `PuerkitoBio/goquery` as the HTML scraping library, and the
+T-022 criteria require a goquery HTML mode. `goquery` requires `golang.org/x/net/html`.
+`govulncheck` (`golang.org/x/vuln` v1.8.0, run on 2026-09-15 against this branch) reports the
+pinned `golang.org/x/net v0.39.0` as carrying **seven vulnerabilities whose call traces it
+resolves into this package's own `html.Parse` call** (`internal/indexer/scraper/html.go:80`):
+
+| ID | Summary | Fixed in |
+|---|---|---|
+| `GO-2026-4440` | Quadratic parsing complexity in `golang.org/x/net/html` | `v0.45.0` |
+| `GO-2026-4441` | Infinite parsing loop in `golang.org/x/net` | `v0.45.0` |
+| `GO-2026-5025` | Incorrect handling of namespaced elements in foreign content | `v0.55.0` |
+| `GO-2026-5027` | Incorrect handling of HTML elements in foreign content | `v0.55.0` |
+| `GO-2026-5028` | Denial of service when parsing arbitrary HTML | `v0.55.0` |
+| `GO-2026-5029` | Incorrect handling of character references in DOCTYPE nodes | `v0.55.0` |
+| `GO-2026-5030` | Duplicate attributes can cause XSS | `v0.55.0` |
+
+These are not theoretical for this package: its entire job is calling `html.Parse` on a page an
+arbitrary source served. `GO-2026-4440` is the quadratic behaviour this task measured
+independently before knowing the advisory existed (39 seconds to parse a 1.1MB page of nested
+`<div>` elements), and `guardHTMLDepth` mitigates exactly that one. `GO-2026-4441`, an
+**infinite** parsing loop, is not mitigated by a depth bound and would hang a search goroutine
+for the life of the process.
+
+**Why it cannot be fixed inside this task.** The first fixed release, `x/net v0.45.0`, declares
+`go 1.24.0`; the release that fixes all seven, `v0.55.0`, declares `go 1.25.0` (read from each
+module's own `go.mod` in the module cache). This repository declares `go 1.23.0` and CI pins
+`GO_VERSION: "1.23"`, matching AGENT.md §3's `Go 1.23+` row. Taking a fixed `x/net` therefore
+requires raising the project's minimum Go version in `go.mod`, in `.github/workflows/ci.yml`,
+and in AGENT.md §3 — a change to a locked stack row with consequences for the support matrix,
+for CI, and for anyone building from source, which AGENT.md §3 ("do not re-litigate") and §12
+("a change would alter the frozen contracts", "a required dependency … has an open CVE") both
+put outside a single adapter task.
+
+**What would unblock it — exactly one decision.** Approve raising the project's minimum Go
+version to **1.25** and the accompanying edits:
+
+1. AGENT.md §3, the Language row: `Go 1.23+` → `Go 1.25+`.
+2. `.github/workflows/ci.yml`: `GO_VERSION: "1.23"` → `"1.25"`.
+3. `go.mod`: `go 1.23.0` → `go 1.25.0`, and `golang.org/x/net v0.39.0` → `v0.55.0` or later.
+4. `make licenses` re-run (`x/net` stays BSD-3-Clause, so `NOTICE` changes only in the version
+   inside its license URL).
+
+Approving **1.24** instead closes `GO-2026-4440` and `GO-2026-4441` — the two that matter most
+here, since they are the denial-of-service pair — and leaves the five `GO-2026-502x` advisories
+open; four of them are correctness bugs in foreign-content and DOCTYPE handling and the fifth is
+an XSS vector that does not apply to a program that never renders the HTML it parses. It is a
+defensible half-step, but it is still a knowing ship of open advisories and the decision is not
+this task's to take.
+
+**What the branch already does about it, so the change is small.** The branch was tested against
+both versions. `maxHTMLDepth` is set to **512**, deliberately the same bound `x/net v0.45.0+`
+imposes on its own open-element stack (`html: open stack of elements exceeds 512 nodes` in
+`parse.go`), so the guard behaves identically before and after the upgrade. With `go.mod` moved
+to `go 1.25.0` and `x/net v0.55.0`, `go build ./...`, the full package test suite and
+`govulncheck ./...` (`0 vulnerabilities`) were all green on this machine with no change to any
+source file. The branch is left pinned at `v0.39.0` so that it does not raise the project's
+minimum Go version by side effect.
+
+**Not verified.** Only the darwin/arm64 leg was run here. Whether a GitHub `ubuntu`/`windows`
+runner provisioned with Go 1.23 would auto-upgrade its toolchain from a `go 1.25.0` directive
+under the default `GOTOOLCHAIN=auto`, rather than failing, was **not** tested — which is why
+step 2 above changes `GO_VERSION` explicitly rather than relying on it.
