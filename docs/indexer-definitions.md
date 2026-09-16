@@ -460,6 +460,30 @@ partially-applied state, and no restart is needed after editing a file. (A file
 that is still being written when the reload reads it is simply skipped like any
 other unparseable one; reload again once your editor has saved it.)
 
+## Importing a definition
+
+You do not have to hand-place a definition file to add it. Settings' "import a
+definition" takes a local file path or an http or https address you give it
+— the file someone sent you, or the address you downloaded it from — and:
+
+1. reads it (from disk, or with one plain GET request to exactly that address
+   and nothing else it discovers along the way);
+2. validates it exactly as described above, naming the failing field and
+   selector when it does not pass; and
+3. only if it passes, writes it into your `definitions/` directory under a
+   file name built from its own `id`, and reports where it landed.
+
+A definition that fails validation is rejected and **nothing is written** —
+half an import never lands. Importing an `id` that is already installed is
+also refused rather than silently overwritten; remove or rename the existing
+one first if you want to replace it.
+
+**tortui fetches only what you point it at.** There is no bundled list of
+definitions to browse, no index of "available sources" anywhere in the app,
+and no update feed that reaches back out to see whether a newer version of a
+definition exists. If you want a different or updated definition, you supply
+its file or its address again, the same way as the first time.
+
 ## What the framework deliberately does not do
 
 * **No credential discovery, session harvesting, captcha solving or paywall
