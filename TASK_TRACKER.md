@@ -2128,7 +2128,7 @@ added, per AGENT.md §11.5's "do not build ahead."
 
 ### T-031 · anacrolix engine — add and list
 ```
-status: in-progress
+status: blocked
 depends: T-030
 ```
 **Files:** `internal/engine/anacrolix/`
@@ -3106,7 +3106,29 @@ inherited from the initial plan.
 
 ## Blocked
 
-*(empty — append `T-0NN` blocks here with the exact input needed to unblock)*
+- `T-031` (2026-09-16). **License policy conflicts with the locked torrent-engine dependency.**
+  T-031 builds `internal/engine/anacrolix`, which requires `github.com/anacrolix/torrent` — the
+  engine AGENT.md §3 locks ("do not re-litigate") and DEC-001 selected. That module is licensed
+  **MPL-2.0** (verified from the upstream `LICENSE` at
+  `https://raw.githubusercontent.com/anacrolix/torrent/master/LICENSE`, first line
+  "Mozilla Public License Version 2.0"). MPL-2.0 is copyleft and is on none of the project's
+  allowlists: AGENT.md §3 says "MIT / Apache-2.0 / BSD only — no GPL/AGPL", AGENT.md §16 and
+  DEC-009 say "MIT / Apache-2.0 / BSD / ISC ... `go-licenses` runs in CI and fails the build on a
+  copyleft dependency", and `Makefile:67` enforces
+  `ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC` through `go-licenses check`.
+  Adding the dependency therefore fails `make licenses` on the first commit. This is a conflict
+  *inside* AGENT.md (§3 vs §16), which AGENT.md's preamble says to stop and log rather than guess
+  past, and it blocks the whole T-031 → T-034 → T-041/T-070+ chain, so no independent task can be
+  worked around it under the one-task-at-a-time rule.
+
+  **What would unblock it — a project-owner decision, recorded as a DEC- entry:**
+  1. Carve out an explicit MPL-2.0 exception for `github.com/anacrolix/torrent` (file-level
+     copyleft only, not whole-program), and widen `ALLOWED_LICENSES` in the `Makefile` plus the
+     AGENT.md §3/§16 wording and the `NOTICE` generation to match; or
+  2. Replace the locked engine with an MIT/Apache-2.0/BSD/ISC-licensed alternative, which
+     overrides DEC-001 and a locked §3 stack row and would rename `internal/engine/anacrolix`.
+
+  No branch was created, no code written, and `go.mod` is untouched. T-031 remains `blocked`.
 
 ### Resolved
 
