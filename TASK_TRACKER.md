@@ -2453,9 +2453,57 @@ it. See DEC-090 for the license check, and DEC-091 for one transitive-dependency
 
 ### T-052 · Status bar
 ```
-status: in-progress
+status: done
 depends: T-051
 ```
+**Notes:** `components.StatusBar` (`internal/tui/components/statusbar.go`) is the whole component:
+plain state (`ActiveDownloads`, `DownRate`/`UpRate`, `SourcesTotal`/`FailedSources`, a transient
+message queue) plus a pure `View(width, screen, theme.Theme) string` — no I/O, no engine or
+indexer import, testable with no bubbletea program at all (AGENT.md §4, §6.8). The transient-
+message timeout is `tea.Tick`/`tea.Cmd` end to end: `Push` starts a `tea.Cmd` only when its text
+becomes the message actually shown (queuing behind an existing one returns a nil `Cmd`, since
+exactly one timeout is ever in flight), and `Update(TickMsg)` pops the queue and re-arms — nothing
+here sleeps or receives on a channel inside `Update` (AGENT.md §6.1).
+`root.go` wires it in: `engineUpdateMsg` now also updates `statusBar.ActiveDownloads` and the
+summed `DownRate`/`UpRate` (`aggregateRates`) alongside the existing quit-confirm bookkeeping;
+`transientMessageMsg` and `components.TickMsg` route straight to `StatusBar.Push`/`Update`; a new
+`sourceStatusMsg{total, failed}` feeds `SourcesTotal`/`FailedSources` for the error indicator. No
+screen sends `sourceStatusMsg`/`transientMessageMsg` yet — T-060/T-061 are what will actually run
+`indexer.Registry.SearchAll` and translate its `[]SourceError` — so T-052's own tests construct
+and send these messages directly, the same pattern T-051 used for `engineUpdateMsg` before any
+screen produced one. `View()` now always appends `renderStatusBar()` under whichever context's
+body it drew.
+
+**DEC-092 (keymap conflict):** the acceptance text's literal "`tab` to expand" would bind `tab` to
+a second action inside every screen context, directly colliding with T-051's frozen
+`ActionNextScreen` binding and failing `TestKeymapNoConflicts`. Resolved with a new modal
+`ContextErrorDetail`: `e` (free in `GlobalBindings`) opens the panel when `FailedSources` is
+non-empty, and `tab`/`esc` — bound only inside `ContextErrorDetail`, never in any `screenContext`
+— collapse/close it (`ActionToggleErrorDetail`, handled by `Model.handleToggleErrorDetail`). The
+indicator's own label reads `"N/M sources failed (e to view)"` to match the real key.
+`TestKeymapNoConflicts` is unmodified and still passes; `TestSourceErrorIndicatorAppearsAndExpands`
+drives `e` then `tab` through the real `Model` and confirms `tab` inside the panel neither cycles
+the screen nor collides with anything.
+
+Tests: `internal/tui/components/statusbar_test.go` covers `Push`/`Update` queuing (first message
+shown immediately with a non-nil `Cmd`; a second `Push` while one is showing is queued, not
+overwritten, with a nil `Cmd`; a `TickMsg` promotes the next queued message or clears the display),
+the `DefaultTransientTimeout == 4*time.Second` constant plus the `Timeout` override tests use to
+avoid a real 4s wait, the source-error indicator's exact text and its absence before any search
+(`SourcesTotal == 0`), and 80-column truncation (an overloaded line ends in `...` and never exceeds
+`theme.Width` 80; a short line is left alone). `internal/tui/statusbar_wiring_test.go` covers the
+root-level wiring: screen name and active-download count in the footer, rate aggregation across
+multiple `TorrentStatus`, the indicator appearing/expanding/force-closing on a follow-up
+`sourceStatusMsg` reporting zero failures, and the transient-message push/queue/timeout round-trip
+through real `Model.Update` calls (one test executes the actual returned `tea.Cmd` to prove the
+timeout is a real `components.TickMsg`, not a sleep). Coverage: `internal/tui` 97.3%,
+`internal/tui/components` 95.5%, both well over the §9 50% floor. `make check` green; `go test
+-race ./...` clean; cross-`GOOS` `golangci-lint run ./...` clean for windows/linux/darwin; all six
+`GOOS`/`GOARCH` tier-1 combinations (`go build`) compile clean. No new dependency — `bubbletea`,
+`lipgloss`, and `uniseg` were already real `go.mod` entries from T-050/T-051.
+**Files:** `internal/tui/components/statusbar.go`, `internal/tui/components/statusbar_test.go`,
+`internal/tui/root.go`, `internal/tui/keymap.go`, `internal/tui/statusbar_wiring_test.go`
+
 **Acceptance**
 - Single line: current screen, active download count, aggregate down/up rate, source-error
   indicator (`2/4 sources failed`) expandable with `tab`.
@@ -3253,6 +3301,7 @@ when it reaches it and does not start backlog items on its own.
 | DEC-089 | 2026-09-16 | `internal/tui/theme`'s TERM/COLORTERM colour-degradation test is split into `capability_posix_test.go` (`//go:build !windows`) and `capability_windows_test.go` (`//go:build windows`) rather than one cross-platform table | CI's `windows-latest` `make check` job failed `TestDetectColorDegradation` even though a native darwin `make check` and a pre-push cross-`GOOS` `golangci-lint run ./...` had both been clean — lint doesn't execute tests, so a runtime behavioural difference across `GOOS` only ever surfaces by actually running `go test` on that OS, which only CI can do here. Root cause: `muesli/termenv`'s `ColorProfile()` is implemented once per OS behind its own build tags (`termenv_unix.go` parses `TERM`/`COLORTERM` strings; `termenv_windows.go` instead queries `windows.RtlGetNtVersionNumbers()` and well-known markers like `ConEmuANSI`, never reading `TERM` at all) — a real, intentional divergence in a dependency we don't control, not a bug in this package's own code, which contains no `runtime.GOOS` switch and no build-tagged file itself. A single table asserting e.g. `TERM=vt100` → `ColorNone` is simply false on Windows, where the same environment (once `AssumeTTY` is set, as the test does to reach termenv's OS branch at all) resolves to `TrueColor` on any Windows 10+ build past 14931 — every tier-1 Windows target per AGENT.md §14. Following the same convention already used for `internal/platform` (`_darwin_test.go`/`_windows_test.go` per real per-OS behaviour), the POSIX table keeps its four TERM/COLORTERM cases, and the Windows file asserts the two deterministic Windows-specific paths instead: `ConEmuANSI=ON` (checked before the build-number branch, so it doesn't depend on the runner's exact build) and a plain TTY with no markers, which is TrueColor on any CI-relevant Windows build. Verified with `GOOS=windows go vet` and `go test -c -o /dev/null` (this machine cannot execute a Windows binary) plus a clean cross-`GOOS` `golangci-lint run ./...`; final confirmation is CI's `windows-latest` job going green | T-050 |
 | DEC-090 | 2026-09-16 | T-051 adds `github.com/charmbracelet/bubbletea v1.3.10` as a real dependency (AGENT.md §3 already locked it) and `github.com/charmbracelet/x/exp/teatest` as a test-only one, both for the first time — `internal/tui` previously had no bubbletea program at all | Checked with `go run github.com/google/go-licenses/v2@v2.0.1 check ./... --ignore github.com/kdta91/tortui --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC` for all three `GOOS` (`make licenses`), which passed once DEC-091's fix was applied, and every transitive dependency it pulled in — `charmbracelet/x/{ansi,cellbuf,term,exp/golden}`, `clipperhouse/{displaywidth,stringish,uax29/v2}`, `erikgeiser/coninput`, `mattn/go-runewidth` (upgraded), `muesli/{ansi,cancelreader}`, `aymanbagabas/go-udiff`, `golang.org/x/text` — is MIT or BSD-3-Clause, all allowed. `bubbles` was resolved transitively during `go get` but is unused (no screen in this task has an input widget) and `go mod tidy` dropped it; it is not in `go.mod` and carries no NOTICE entry | T-051 |
 | DEC-091 | 2026-09-16 | Pinned `github.com/mattn/go-localereader` (a `bubbletea` transitive dependency, Windows-only TTY input path) to commit `2491eb6` instead of its only tagged release, `v0.0.1` | `make licenses` failed with "Did not find license for library" for this package under `GOOS=windows` only (it is not imported on darwin/linux, where the same command passed) — a real gap, not a false positive: the module zip for `v0.0.1` (tag `6338b4c`) genuinely contains no LICENSE file, confirmed by listing its contents directly. Verified via `gh api repos/mattn/go-localereader` that the repository's GitHub-reported license is MIT and its `README.md` states "MIT", but a `LICENSE` file was only added four commits after the `v0.0.1` tag, in a PR (`gh api repos/mattn/go-localereader/commits`) that touched no source file — `git diff` between `v0.0.1` and `2491eb6` is LICENSE-only. Rather than overriding the license gate for an unverifiable artifact (which would leave the actual redistributed `v0.0.1` code without its license text) or treating this as a stop condition over a one-file, zero-code-change gap, pinned to the untagged commit that includes the LICENSE (`go get github.com/mattn/go-localereader@2491eb6c1c75720122ef321ed7acc3a8d9de95b1`, resolving to pseudo-version `v0.0.2-0.20220822084749-2491eb6c1c75`) so the dependency actually vendored into this repo's `go.sum` carries its own license text and `go-licenses`/`NOTICE` reflect it accurately. `make licenses` passes clean on all three `GOOS` after the pin; `NOTICE` now lists `github.com/mattn/go-localereader,MIT,https://github.com/mattn/go-localereader/blob/2491eb6c1c75/LICENSE` | T-051 |
+| DEC-092 | 2026-09-16 | T-052's acceptance text — "source-error indicator (`2/4 sources failed`) expandable with `tab`" — is implemented with `tab` scoped to a new modal `Context` (`ContextErrorDetail`) rather than bound a second time inside every screen context. `e` (unbound elsewhere in `GlobalBindings`) opens the panel when `components.StatusBar.FailedSources` is non-empty; once open, `tab` (or `esc`) collapses/closes it. The indicator's own label reads `"N/M sources failed (e to view)"`, matching the real key | Read literally, "expandable with tab" would bind `tab` to a second `Action` (`ActionToggleErrorDetail`) inside every one of the five `screenContext` values, where T-051 already binds `tab` to `ActionNextScreen` — a direct violation of `TestKeymapNoConflicts`, which T-051 froze as "no key is bound to two actions within the same context." Two implementations were weighed: (a) keep `tab` for screen-cycling everywhere and add the error panel behind a different key end-to-end (drops the acceptance text's `tab` entirely), or (b) give `tab` its expand/collapse meaning only inside a context where `ActionNextScreen` is never bound at all — a new modal `Context`, exactly like `ContextHelp`/`ContextQuitConfirm` already do for `?`/quit-confirm's own bindings. (b) is what's implemented: `Binding.expand()`'s existing rule (an explicit `Contexts` list is not merged with `contextGlobal`) already keeps `ContextErrorDetail` untouched by every screen-scoped binding, so `tab` genuinely means only one thing inside it, and `TestKeymapNoConflicts` — unmodified — still passes because there is no context where `tab` maps to two actions. This preserves the literal key named in the acceptance text for the one place it can apply without contradicting a frozen T-051 invariant, rather than silently dropping it. Verified: `Conflicts(AllBindings())` returns zero entries; `TestSourceErrorIndicatorAppearsAndExpands` drives `e` then `tab` through the real `Model` and confirms `tab` inside `ContextErrorDetail` neither cycles the screen nor collides with anything | T-052 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.

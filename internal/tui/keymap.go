@@ -7,9 +7,11 @@
 // The five screens (search, results, details, downloads, settings) are
 // placeholders here: this package only routes between them. Their real
 // content belongs to later tasks (T-060 search, T-061 results, T-063
-// details, T-071 downloads, T-080 settings), as do the status bar (T-052),
-// the responsive table (T-053), and the shared modal/confirm component
-// (T-054) — none of that is implemented in this package.
+// details, T-071 downloads, T-080 settings), as do the responsive table
+// (T-053) and the shared modal/confirm component (T-054) — none of that is
+// implemented in this package. The status bar (T-052) is implemented in
+// internal/tui/components and wired in here as root.go's bottom line and
+// ContextErrorDetail modal.
 package tui
 
 import (
@@ -142,6 +144,13 @@ const (
 	ActionConfirmYes    Action = "confirm-yes"
 	ActionConfirmNo     Action = "confirm-no"
 	ActionCancel        Action = "cancel"
+
+	// ActionToggleErrorDetail opens the status bar's source-error detail
+	// panel (T-052) when at least one source has failed, and — bound to a
+	// different key in ContextErrorDetail — collapses it again. See
+	// DEC-092 for why this is not literally bound to tab as the T-052
+	// acceptance text's wording suggests.
+	ActionToggleErrorDetail Action = "toggle-error-detail"
 )
 
 // Context is where a binding applies: one of the five screens (non-modal),
@@ -160,6 +169,12 @@ const (
 	ContextHelp Context = "modal:help"
 	// ContextQuitConfirm is the "quit with active downloads?" prompt.
 	ContextQuitConfirm Context = "modal:quit-confirm"
+	// ContextErrorDetail is the status bar's expanded source-error panel
+	// (T-052). It owns tab for exactly one purpose — collapsing the panel
+	// — which is safe precisely because tab's screen-cycling meaning
+	// (ActionNextScreen) is bound only in the five screenContext values,
+	// never in a modal context; see DEC-092.
+	ContextErrorDetail Context = "modal:error-detail"
 )
 
 // screenContext names the Context a given Screen's keymap lookups use.
@@ -264,6 +279,25 @@ func GlobalBindings() []Binding {
 		},
 		{Keys: []string{"?"}, Action: ActionHelp, Help: "toggle this help overlay"},
 		{Keys: []string{"q", "ctrl+c"}, Action: ActionQuit, Help: "quit (prompts if downloads active)"},
+		{
+			Keys: []string{"e"}, Action: ActionToggleErrorDetail,
+			Help: "view source errors, if any (T-052; DEC-092)",
+		},
+	}
+}
+
+// errorDetailBindings are the bindings live while the status bar's
+// source-error detail panel (ContextErrorDetail) is open. tab collapses it
+// here — a different action than tab's screen-cycling meaning everywhere
+// else, but never the same context, so TestKeymapNoConflicts stays clean
+// (DEC-092).
+func errorDetailBindings() []Binding {
+	return []Binding{
+		{
+			Keys: []string{"tab"}, Action: ActionToggleErrorDetail, Help: "collapse",
+			Contexts: []Context{ContextErrorDetail},
+		},
+		{Keys: []string{"esc"}, Action: ActionCancel, Help: "close", Contexts: []Context{ContextErrorDetail}},
 	}
 }
 
@@ -295,6 +329,7 @@ func AllBindings() []Binding {
 	all := GlobalBindings()
 	all = append(all, helpOverlayBindings()...)
 	all = append(all, quitConfirmBindings()...)
+	all = append(all, errorDetailBindings()...)
 
 	return all
 }
