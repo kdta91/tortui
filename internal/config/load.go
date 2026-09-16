@@ -62,7 +62,7 @@ func Load(flagConfigPath string) (LoadResult, error) {
 	case errors.Is(statErr, os.ErrNotExist):
 		cfg := Default(paths.DownloadDir)
 
-		if err := writeDefault(paths.ConfigFile, cfg); err != nil {
+		if err := Save(paths.ConfigFile, cfg); err != nil {
 			return LoadResult{}, fmt.Errorf("write default config: %w", err)
 		}
 
@@ -107,10 +107,16 @@ func Load(flagConfigPath string) (LoadResult, error) {
 	return LoadResult{Config: cfg, Paths: paths, Problems: problems, Warnings: warnings}, nil
 }
 
-// writeDefault encodes cfg as TOML and writes it to path atomically: a
-// temp file in the same directory, fsync, then rename, at mode 0600
-// (AGENT.md §6.6; full crash-safety coverage lands in T-042).
-func writeDefault(path string, cfg Config) error {
+// Save encodes cfg as TOML and writes it to path atomically: a temp file
+// in the same directory, fsync, then rename, at mode 0600 (AGENT.md §6.6,
+// §13; crash-safety verified by TestSaveSurvivesCrashBeforeRename in
+// load_test.go, T-042). A crash at any point before the rename leaves the
+// previous file at path completely untouched — rename(2)/MoveFileEx is
+// atomic within one filesystem, so there is no window where a reader sees
+// a partially-written file at the real path. Every writer of config.toml
+// (first-run defaults here, and any future settings-screen save) must go
+// through this function rather than writing the file directly.
+func Save(path string, cfg Config) error {
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
 		return fmt.Errorf("encode config: %w", err)

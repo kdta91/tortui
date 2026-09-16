@@ -365,6 +365,106 @@ func TestLoadWarnsOnWorldReadableConfig(t *testing.T) {
 	}
 }
 
+// TestSaveSurvivesCrashBeforeRename simulates a process crash that happens
+// after Save's temp file is created and partially written but before the
+// rename into place — the exact window AGENT.md §13/T-042 calls out ("a
+// crash mid-save must never leave a truncated or empty config"). It
+// reproduces that window directly (Save's real implementation is not
+// interruptible from a test) rather than by injecting a fault into Save
+// itself: the temp file is created and written by hand, then abandoned
+// without renaming, exactly as if the process had died at that instant.
+func TestSaveSurvivesCrashBeforeRename(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	original := Default(filepath.Join(dir, "original-downloads"))
+	if err := Save(path, original); err != nil {
+		t.Fatalf("Save(original) error = %v", err)
+	}
+
+	originalBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read original config: %v", err)
+	}
+
+	// Simulate a crash partway through a second Save: a temp file is
+	// created and gets a partial, garbage write, but the process dies
+	// before fsync, chmod, or rename ever run.
+	tmp, err := os.CreateTemp(dir, ".config-*.toml.tmp")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	if _, err := tmp.WriteString("download_dir = \"/only-half-writt"); err != nil {
+		t.Fatalf("write partial temp file: %v", err)
+	}
+	if err := tmp.Close(); err != nil {
+		t.Fatalf("close temp file: %v", err)
+	}
+	// No rename — the "crash" happens right here.
+
+	gotBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config after simulated crash: %v", err)
+	}
+	if string(gotBytes) != string(originalBytes) {
+		t.Fatalf("config file changed after a crash before rename:\ngot:  %q\nwant: %q (untouched)", gotBytes, originalBytes)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() after simulated crash error = %v", err)
+	}
+	if len(loaded.Problems) != 0 {
+		t.Fatalf("Problems = %v, want none — the real config file must be unaffected by the abandoned temp file", loaded.Problems)
+	}
+	if loaded.Config.DownloadDir != original.DownloadDir {
+		t.Fatalf("DownloadDir = %q, want the pre-crash value %q", loaded.Config.DownloadDir, original.DownloadDir)
+	}
+}
+
+// TestSaveIsAtomicAndReloadable checks the ordinary (non-crash) path: Save
+// writes a file that Load reads back with the same values, at the
+// locked-down file mode, and leaves no temp file behind.
+func TestSaveIsAtomicAndReloadable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	cfg := Default(filepath.Join(dir, "downloads"))
+	cfg.MaxPeers = 123
+
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat saved config: %v", err)
+		}
+		if got := info.Mode().Perm(); got != configFileMode {
+			t.Fatalf("saved config mode = %v, want %v", got, os.FileMode(configFileMode))
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".config-") {
+			t.Fatalf("leftover temp file %q after a successful Save", e.Name())
+		}
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.Config.MaxPeers != 123 {
+		t.Fatalf("MaxPeers = %d, want 123", loaded.Config.MaxPeers)
+	}
+}
+
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
 
