@@ -2394,9 +2394,48 @@ terminal-capability backend, used here directly for `Environ`/`WithTTY` injectio
 
 ### T-051 · Root model and routing
 ```
-status: in-progress
+status: done
 depends: T-050, T-012, T-030
 ```
+**Notes:** `Model` (`root.go`) is a bubbletea program importing only `engine.Engine` (an
+interface — AGENT.md §4) so it runs end-to-end against `internal/engine/fake`; it never imports
+`indexer` directly because nothing in this task's scope needs a search result yet (the five
+screens are placeholders, per the task brief). `keymap.go` holds `GlobalBindings`/
+`helpOverlayBindings`/`quitConfirmBindings` as the single source of truth: `KeyMap.Lookup` (used
+by `Model.handleKey`) and `KeyMap.HelpFor` (used by the `?` overlay) are both built from the same
+`[]Binding` data, so the overlay cannot drift from what a key actually does. `Conflicts` walks
+that data structurally — grouping by `Context` (one per screen, plus `ContextHelp` and
+`ContextQuitConfirm`) and flagging any key bound to two different actions in the same context —
+and `TestKeymapNoConflicts` asserts zero conflicts across all seven contexts;
+`TestConflictsDetectsRealCollision`/`TestConflictsCoversModalContexts` prove the detector itself
+actually flags a real collision rather than vacuously passing. Screen routing (`tab`/`shift+tab`
+via `Screen.next`/`prev`, `1`-`5` via dedicated `goto-*` actions) and the help overlay are
+covered end-to-end with `teatest` (`TestNavigationAllScreensViaNumberKeys`,
+`TestNavigationTabCyclesForwardAndBack`, `TestHelpOverlayTogglesAndShowsScreenBindings`,
+`TestHelpOverlayClosesWithEscape`). Quit confirmation
+(`TestQuitWithNoActiveDownloadsIsImmediate`, `TestQuitWithActiveDownloadPromptsThenConfirms`)
+subscribes to `engine.Updates()` via the standard bubbletea single-receive-then-recurse `tea.Cmd`
+pattern (`waitForEngineUpdate`) so `Update` never blocks (AGENT.md §6.1); `countActive` treats
+queued/checking/downloading/seeding as active and paused/errored as not, which is what gates the
+prompt. `tea.WindowSizeMsg` only ever updates `m.width`/`m.height`; every render (`View` and its
+helpers) reads those fields fresh, so no width is ever cached across a resize —
+`TestWindowResizeRecomputesLayout` checks two successive resizes land correctly. `View` returns
+`""` before the first `WindowSizeMsg` and does no I/O (AGENT.md §6.8). Coverage on
+`internal/tui` is 96.6%, well over the §9 50% floor. Actions belonging to screens/components this
+task does not build (`/`, `L`, `R`, move, select, details, sort, open-file/folder/source,
+pause/resume, remove) are defined in the keymap for help-text and conflict-checking purposes but
+are deliberate no-ops in `Model.handleKey`'s `default` case — T-052 (status bar), T-053 (table),
+T-054 (modals), T-060/T-061/T-063/T-071/T-080 (screen content) give them behaviour without
+touching the binding itself. `make check` green; `go test -race ./...` clean; cross-`GOOS`
+`golangci-lint run ./...` clean for windows/linux/darwin.
+
+New dependencies: `github.com/charmbracelet/bubbletea v1.3.10` and
+`github.com/charmbracelet/x/exp/teatest` (test-only) — both already locked by AGENT.md §3, now
+added as real `go.mod` entries for the first time. `bubbles` was fetched during dependency
+resolution but is unused by this task (no screen has an input widget yet) and `go mod tidy`
+correctly dropped it; a later screen task adds it back when it actually imports something from
+it. See DEC-090 for the license check, and DEC-091 for one transitive-dependency wrinkle
+(`github.com/mattn/go-localereader`) that check surfaced.
 **Files:** `internal/tui/root.go`, `internal/tui/keymap.go`
 
 **Acceptance**
@@ -3212,6 +3251,8 @@ when it reaches it and does not start backlog items on its own.
 | DEC-087 | 2026-09-16 | `internal/platform/lock_windows.go`'s `TryLockFile` now locks a fixed sentinel byte range (offset `1 << 30`, 1 byte) instead of offset 0 | QA's `windows-latest` `make check` job never got past `golangci-lint` (an unrelated unchecked `windows.CloseHandle` return, fixed separately), so `go test` had never actually run on Windows for this task; fixing the lint gate immediately exposed `TestAcquireLockConcurrentStartAttempt` and `TestAcquireLockStaleLockRecovery` failing there. Root cause: unlike `flock(2)` on macOS/Linux (advisory and whole-file — never blocks another descriptor's read/write), Windows' `LockFileEx` is mandatory and byte-range, so locking offset 0 collided with `writeHolderPID`/`readHolderPID`'s PID text, which also lives at offset 0. Any handle other than the lock's own — a second instance's `readHolderPID`, or the test's plain `os.ReadFile` — hit `ERROR_LOCK_VIOLATION` reading that range, which is why the "already running" message never named a pid on Windows even though `TestAcquireLockConcurrentStartAttempt` passed everywhere else. Moving the locked range to a fixed offset far past any realistic file size preserves the exclusivity semantics `TestTryLockFileExclusiveAcrossDescriptors` checks (locking past current EOF is valid on Windows) while leaving the PID content at offset 0 unlocked and readable/writable by every handle, matching the POSIX behaviour the tests already assume. Verified with a cross-`GOOS` `golangci-lint run ./...` for windows/linux/darwin and a `go test -c` cross-compile of `internal/platform` and `internal/lifecycle` for windows (this machine cannot execute Windows binaries natively); final confirmation is CI's `windows-latest` job | T-042 |
 | DEC-088 | 2026-09-16 | T-050 adds `github.com/charmbracelet/lipgloss v1.1.0` and `github.com/rivo/uniseg v0.4.7` as real dependencies (AGENT.md §3 already locked both), plus `github.com/muesli/termenv v0.16.0` — lipgloss's own terminal-capability library — as a new *direct* dependency, imported by `internal/tui/theme` for `termenv.Environ`/`termenv.WithEnvironment`/`termenv.WithTTY` so colour-profile detection (`NO_COLOR`, `CLICOLOR_FORCE`, `TERM`, `COLORTERM`) is exercised against an injectable environment in tests instead of the live process environment. All three, plus every transitive dependency they pulled in (`charmbracelet/x/ansi`, `charmbracelet/x/cellbuf`, `charmbracelet/x/term`, `charmbracelet/colorprofile`, `aymanbagabas/go-osc52/v2`, `lucasb-eyer/go-colorful`, `mattn/go-isatty`, `mattn/go-runewidth`, `xo/terminfo`), were checked against `Makefile`'s `ALLOWED_LICENSES` with `go run github.com/google/go-licenses@latest check ./... --ignore github.com/kdta91/tortui --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC`, which passed with no violations (one harmless warning about unix asm files it can't statically inspect, unrelated to licensing) | T-050 |
 | DEC-089 | 2026-09-16 | `internal/tui/theme`'s TERM/COLORTERM colour-degradation test is split into `capability_posix_test.go` (`//go:build !windows`) and `capability_windows_test.go` (`//go:build windows`) rather than one cross-platform table | CI's `windows-latest` `make check` job failed `TestDetectColorDegradation` even though a native darwin `make check` and a pre-push cross-`GOOS` `golangci-lint run ./...` had both been clean — lint doesn't execute tests, so a runtime behavioural difference across `GOOS` only ever surfaces by actually running `go test` on that OS, which only CI can do here. Root cause: `muesli/termenv`'s `ColorProfile()` is implemented once per OS behind its own build tags (`termenv_unix.go` parses `TERM`/`COLORTERM` strings; `termenv_windows.go` instead queries `windows.RtlGetNtVersionNumbers()` and well-known markers like `ConEmuANSI`, never reading `TERM` at all) — a real, intentional divergence in a dependency we don't control, not a bug in this package's own code, which contains no `runtime.GOOS` switch and no build-tagged file itself. A single table asserting e.g. `TERM=vt100` → `ColorNone` is simply false on Windows, where the same environment (once `AssumeTTY` is set, as the test does to reach termenv's OS branch at all) resolves to `TrueColor` on any Windows 10+ build past 14931 — every tier-1 Windows target per AGENT.md §14. Following the same convention already used for `internal/platform` (`_darwin_test.go`/`_windows_test.go` per real per-OS behaviour), the POSIX table keeps its four TERM/COLORTERM cases, and the Windows file asserts the two deterministic Windows-specific paths instead: `ConEmuANSI=ON` (checked before the build-number branch, so it doesn't depend on the runner's exact build) and a plain TTY with no markers, which is TrueColor on any CI-relevant Windows build. Verified with `GOOS=windows go vet` and `go test -c -o /dev/null` (this machine cannot execute a Windows binary) plus a clean cross-`GOOS` `golangci-lint run ./...`; final confirmation is CI's `windows-latest` job going green | T-050 |
+| DEC-090 | 2026-09-16 | T-051 adds `github.com/charmbracelet/bubbletea v1.3.10` as a real dependency (AGENT.md §3 already locked it) and `github.com/charmbracelet/x/exp/teatest` as a test-only one, both for the first time — `internal/tui` previously had no bubbletea program at all | Checked with `go run github.com/google/go-licenses/v2@v2.0.1 check ./... --ignore github.com/kdta91/tortui --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC` for all three `GOOS` (`make licenses`), which passed once DEC-091's fix was applied, and every transitive dependency it pulled in — `charmbracelet/x/{ansi,cellbuf,term,exp/golden}`, `clipperhouse/{displaywidth,stringish,uax29/v2}`, `erikgeiser/coninput`, `mattn/go-runewidth` (upgraded), `muesli/{ansi,cancelreader}`, `aymanbagabas/go-udiff`, `golang.org/x/text` — is MIT or BSD-3-Clause, all allowed. `bubbles` was resolved transitively during `go get` but is unused (no screen in this task has an input widget) and `go mod tidy` dropped it; it is not in `go.mod` and carries no NOTICE entry | T-051 |
+| DEC-091 | 2026-09-16 | Pinned `github.com/mattn/go-localereader` (a `bubbletea` transitive dependency, Windows-only TTY input path) to commit `2491eb6` instead of its only tagged release, `v0.0.1` | `make licenses` failed with "Did not find license for library" for this package under `GOOS=windows` only (it is not imported on darwin/linux, where the same command passed) — a real gap, not a false positive: the module zip for `v0.0.1` (tag `6338b4c`) genuinely contains no LICENSE file, confirmed by listing its contents directly. Verified via `gh api repos/mattn/go-localereader` that the repository's GitHub-reported license is MIT and its `README.md` states "MIT", but a `LICENSE` file was only added four commits after the `v0.0.1` tag, in a PR (`gh api repos/mattn/go-localereader/commits`) that touched no source file — `git diff` between `v0.0.1` and `2491eb6` is LICENSE-only. Rather than overriding the license gate for an unverifiable artifact (which would leave the actual redistributed `v0.0.1` code without its license text) or treating this as a stop condition over a one-file, zero-code-change gap, pinned to the untagged commit that includes the LICENSE (`go get github.com/mattn/go-localereader@2491eb6c1c75720122ef321ed7acc3a8d9de95b1`, resolving to pseudo-version `v0.0.2-0.20220822084749-2491eb6c1c75`) so the dependency actually vendored into this repo's `go.sum` carries its own license text and `go-licenses`/`NOTICE` reflect it accurately. `make licenses` passes clean on all three `GOOS` after the pin; `NOTICE` now lists `github.com/mattn/go-localereader,MIT,https://github.com/mattn/go-localereader/blob/2491eb6c1c75/LICENSE` | T-051 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
