@@ -25,7 +25,7 @@ const stillActive = 259
 // pid <= 0 is never a real process and reports false with no error. A pid
 // that no longer exists (OpenProcess fails) also reports false, not an
 // error — that is the expected, common case for a crashed process.
-func ProcessAlive(pid int) (bool, error) {
+func ProcessAlive(pid int) (alive bool, err error) {
 	if pid <= 0 {
 		return false, nil
 	}
@@ -42,7 +42,14 @@ func ProcessAlive(pid int) (bool, error) {
 		}
 		return false, nil
 	}
-	defer windows.CloseHandle(handle)
+	// Named returns so a failure to close the handle is never dropped: it
+	// is joined onto whatever GetExitCodeProcess already produced rather
+	// than silently discarded or allowed to clobber a real result.
+	defer func() {
+		if closeErr := windows.CloseHandle(handle); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("CloseHandle: %w", closeErr))
+		}
+	}()
 
 	var exitCode uint32
 	if err := windows.GetExitCodeProcess(handle, &exitCode); err != nil {
