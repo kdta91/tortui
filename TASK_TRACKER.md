@@ -1938,7 +1938,7 @@ from a path or URL (that is T-025), and no bundled definition (T-024).
 
 ### T-024 · Bundled lawful default sources
 ```
-status: todo
+status: in-progress
 depends: T-022, T-023
 ```
 **Files:** `internal/indexer/scraper/builtin/`, `docs/bundled-sources.md`
