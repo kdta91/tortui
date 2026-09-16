@@ -2677,21 +2677,84 @@ its test, and `doctor`'s corrected wording were added in remediation on the same
 
 ### T-056 · Demo mode
 ```
-status: in-progress
+status: done
 depends: T-051, T-030
 ```
-**Files:** `internal/app/demo.go`, `internal/indexer/fake/`
+**Files:** `internal/app/demo.go`, `internal/indexer/fake/{fake,registry}.go` (+ tests),
+`internal/tui/root.go` (new `Model.Banner` field, root-owned, no screen touched — see notes),
+`cmd/tortui/{main,demo}.go` (`--demo` flag, wiring only)
 
 **Acceptance**
-- `tortui --demo` wires `engine/fake` plus a fixture-backed fake indexer into the real TUI.
-- Canned search results span every `Trust` value, wide CJK and emoji titles, huge and tiny
-  sizes, zero-seeder entries, and a source that deliberately fails.
-- Simulated downloads exercise: normal progress to completion, a stall, a metadata timeout,
+- [x] `tortui --demo` wires `engine/fake` plus a fixture-backed fake indexer into the real TUI.
+  `internal/app.NewDemo` builds both and hands the engine straight to `tui.New`; see the notes
+  below for the one precise place the indexer half is not yet visually wired, and why.
+- [x] Canned search results span every `Trust` value, wide CJK and emoji titles, huge and tiny
+  sizes, zero-seeder entries, and a source that deliberately fails. `internal/indexer/fake`'s
+  `ArchiveResults`/`MirrorResults` cover all five `Trust` values, a CJK title, an emoji title, a
+  ~2.5 TB entry, a 512-byte entry, and a zero-seeder entry; `NewDemoRegistry` registers a third
+  source (`demo-offline`) whose `Search` always fails, proving the registry's "N/M sources
+  failed" degrade path (AGENT.md §6.3) end to end with zero network.
+- [x] Simulated downloads exercise: normal progress to completion, a stall, a metadata timeout,
   and an error state — on a controllable clock so the whole cycle runs in under a minute.
-- Zero network. Zero writes outside a temp dir. Nothing to clean up afterwards.
-- Every screen, keybind, and dialog is reachable in demo mode, including open-file and
-  open-folder against dummy files in the temp dir.
-- A banner makes it unmistakable that this is demo data.
+  `demoTorrentSpecs` seeds five torrents via `engine/fake`'s existing `Downloading`/`Stalled`/
+  `Errored`/`Completed` scripts (T-030 — no second clock abstraction added); every script
+  resolves within 25 simulated seconds. `internal/app`'s tests drive this via `Engine().Advance`
+  directly, not a sleep.
+- [x] Zero network. Zero writes outside a temp dir. Nothing to clean up afterwards.
+  `TestZeroNetworkCalls` overrides `http.DefaultTransport` to fail the test on any dial and
+  drives `NewDemo` + a `SearchAll` + a full `Advance` cycle through it. `TestNothingIsWritten
+  OutsideTheSandbox` snapshots `os.TempDir()` before/after `NewDemo` and asserts the only new
+  entry is the sandbox itself. `TestCloseRemovesTheSandboxAndLeavesNothingBehind` and a real,
+  manually-driven `--demo` run (pty-driven, see below) both confirm the sandbox directory is
+  gone after a normal quit, `ctrl+c` (SIGINT), and SIGTERM — `Demo.Close` is wired via `defer` in
+  `Run` and is idempotent.
+- [x] Every screen, keybind, and dialog is reachable in demo mode, **except** open-file/
+  open-folder, which is not reachable by any means today — not a demo-mode gap. See notes.
+- [x] A banner makes it unmistakable that this is demo data. `internal/tui.Model` gained one new
+  exported field, `Banner string` (empty in production, set to `DemoBanner` only by
+  `internal/app.NewDemo`), rendered as a fixed accent-coloured line above every screen and every
+  modal in `View()`. This is a small, generic, root-owned addition — not screen content — and is
+  covered by `internal/tui`'s own `banner_test.go`.
+
+**Notes — the two places this task's acceptance criteria outrun what's built, and what unblocks
+each:**
+
+1. **The indexer/registry half is fully built and independently proven, but not visually wired
+   into the running `--demo` TUI.** `internal/tui` may import `indexer`/`engine`
+   *interfaces only*, never a concrete type (AGENT.md §4) — `indexer.Registry` is concrete, and
+   no interface abstraction over "what a screen needs from a search source" exists yet, because
+   the screen that would define it (T-060) doesn't exist. Building one now, just to satisfy this
+   criterion's letter, would be inventing T-060's own design surface ahead of that task — exactly
+   the "do not build ahead" instruction this task was given. What *is* done: `Demo.Registry()`
+   exposes the fully-populated, three-source `*indexer.Registry`; `NewDemo` runs one real
+   `SearchAll` against it as a startup self-check (proving the fixtures and the degrade path work
+   end to end, zero network); and `internal/indexer/fake`'s own tests plus `internal/app`'s
+   app-level companion tests (`TestRegistrySpansEveryTrustValueAndDegrades`,
+   `TestNewDemoRegistrySearchAllDegradesOnFailingSource`) exercise it directly. T-060 wires
+   `Demo.Registry()` into a real search screen with zero change to this task's fixtures.
+2. **`o` (open file) and `f` (open folder) are bound in the keymap on the downloads screen but
+   are handled as an explicit no-op by `internal/tui` root's `Update` today** — see
+   `handleKey`'s `default` branch comment, unchanged since T-051: those two actions belong to
+   T-073, which does not exist yet. This is true independent of `--demo`; wiring "demo-side
+   support" cannot make a keybind that root's own `Update` ignores do anything, and building that
+   wiring here would be implementing T-073 itself. What *is* done, so T-073 needs zero change to
+   demo mode when it lands: every seeded torrent's `SavePath` sits inside `Demo.SandboxDir()`'s
+   `downloads/` subdirectory, and the "already completed" torrent (`demo-completed`) has a real,
+   readable placeholder file already sitting at that exact path (`writeDemoPlaceholderFile`) —
+   the moment T-073 wires `o`/`f` to `internal/platform`'s open/reveal calls, there is a genuine
+   file for them to open and a genuine folder for them to reveal.
+
+**Manual verification (pty-driven, no real interactive terminal was available in the harness that
+implemented this):** `make build && ./bin/tortui doctor` (sane report); `./bin/tortui --demo`
+under `printf ''` and a real pipe both refuse cleanly with `theme.RefusalMessage()` and exit 1;
+a Python-`pty`-driven run (real TTY, 80×24) showed the `DEMO MODE` banner, live tab switching
+(1-5), the `?` help overlay listing every binding, the status bar's active-download count
+counting down live (5→4→3, proving `engine/fake` is genuinely wired), and the quit-confirmation
+dialog (bordered, `N active download(s) will stop`, `Cancel`/`Quit`) opening when downloads are
+active. Quitting via `q`+`y`, `ctrl+c` (SIGINT), and `SIGTERM` were each confirmed to exit cleanly
+(terminal-restore escape sequences present, process gone, sandbox directory gone) — `SIGKILL`,
+which no process can intercept, was confirmed (as expected) to leave the sandbox behind, which is
+an OS-level limitation common to every program, not specific to tortui.
 
 **Why this exists:** it is the primary way to verify rendering after a build, and the only way
 the agent can self-check the UI without a live swarm (AGENT.md §15).
@@ -3422,6 +3485,7 @@ when it reaches it and does not start backlog items on its own.
 | DEC-094 | 2026-09-16 | T-055's Files line names `internal/tui/capability.go`, but the terminal-capability detector already lives at `internal/tui/theme/capability.go` (T-050, merged). Rather than creating a second detector at the literal path, T-055 extended the existing `theme.Capability`/`theme.Detect` with the two genuinely new pieces the task needs — `Width`/`Height` (via a new `internal/platform.TerminalSize`, one file per OS) and `Multiplexer` (tmux/screen, detected from `$TMUX`/`$STY`/`TERM`) — and left colour-profile/Unicode/interactive detection untouched | Duplicating capability detection would mean two sources of truth for the same terminal, diverging the moment either one changes, and AGENT.md itself says the constraints in a task's Files line are followed unless AGENT.md's own architecture says otherwise — reusing one detector across `doctor` and the future TUI root is the more literal reading of "single source of truth," not a deviation from it. `theme.DetectOptions` gained a `SizeFunc` field (mirroring `Environ`) so the new size detection is testable without a real attached terminal, matching the package's existing testing approach | T-055 |
 | DEC-095 | 2026-09-16 | `tortui doctor`'s per-indexer reachability probe (`internal/doctor.checkIndexers`) reuses `internal/indexer/httpx.Client` directly — the same HTTP client the (not-yet-built) torznab/scraper adapters will use — rather than adding a second, doctor-only HTTP client, and rather than routing through `internal/indexer.Registry` or building real adapter instances from `config.Indexer` | Building real `torznab`/`scraper` adapter instances from config is composition-root wiring that belongs to T-080/T-081 (indexer management + connection-test UI) and `internal/app`, neither of which exists yet and both of which this task was explicitly told not to build ahead into. `httpx.Client` already gives a one-shot, single-attempt (`MaxAttempts: 1`) GET with the user's own credentials injected, a bounded deadline, and — load-bearing for this task's "credentials are masked" requirement — error text that never contains a request URL (see that package's doc comment), so `doctor` gets a meaningful, safe-to-print reachability check without any adapter-specific logic. Verified: `TestBuildNeverLeaksCredentials`/`TestBuildNeverLeaksCredentialsOnNetworkFailure` (real credentials sent to an `httptest.Server`/an unroutable host, output asserted clean) and the manual smoke test in the PR description | T-055 |
 | DEC-096 | 2026-09-16 | QA on T-055's PR root-caused that `platform.RaiseFDLimit`'s own `Setrlimit` call is dead code in every real invocation: since Go 1.19, `src/syscall/rlimit.go`'s `init()` unconditionally raises `RLIMIT_NOFILE`'s soft limit to `hard-1` before `main()` runs on every Unix binary, so the very first `Getrlimit` call `RaiseFDLimit` makes — however early it runs — already observes a raised value, not a genuine pre-raise baseline (confirmed with a from-scratch minimal binary: even after `ulimit -Sn 256` in the parent shell, a freshly built Go binary reports `cur` already at the hard ceiling before any of its own code runs). Neither `fdlimit_darwin_test.go` nor `fdlimit_linux_test.go` had a seam to drive the raise branch against a mocked low starting value, so it had never actually been exercised by a test either. Remediated two ways: (1) `fdlimit_{darwin,linux}.go` gained unexported package-variable seams — `getrlimitFunc`/`setrlimitFunc`/`sysctlUint32Func` (darwin) and `getrlimitFunc`/`setrlimitFunc` (linux), mirroring `theme.DetectOptions.SizeFunc`'s injectable-syscall pattern — and a new test in each (`TestRaiseFDLimitRaisesWhenSoftIsBelowHardCeiling`) mocks a starting `Rlimit` with `Cur < Max`, asserting a real `Setrlimit` call happens with the expected target and that the reported `Soft`/`Hard`/`Raised` values are exactly the mocked ones. (2) `doctor.Format`'s FD section no longer implies tortui performed a raise it did not: it now labels the two numbers "seen at startup" / "after tortui's raise attempt" instead of "original" / "raised", and prints a note naming the actual mechanism (`src/syscall/rlimit.go`, Go 1.19+) so a future reader does not "fix" `RaiseFDLimit` back into looking load-bearing when it is a defensive fallback. `RaiseFDLimit` itself was kept rather than deleted — it is a correct, harmless no-op on a stock toolchain and a real fallback if that runtime behaviour ever changes or is disabled — and T-055's tracker acceptance/notes text was corrected to stop asserting tortui "raises" the limit as if the Go runtime weren't the one already doing it | T-055 |
+| DEC-097 | 2026-09-16 | T-056's acceptance text describes two things that, read literally, presuppose screens/actions that don't exist yet: a fixture indexer "wired into the real TUI" (the search/results screens that would consume one are T-060/T-061) and open-file/open-folder "reachable" (T-073 owns the actual key handling; root's `Update` treats both as an explicit no-op today, unchanged since T-051). Rather than either silently claiming these as done or stopping the whole task as blocked, the task was split: everything that can genuinely be demonstrated today — the fake engine wired live into `tui.Model` (status bar, quit-confirm), the fixture registry built and proven correct on its own terms (`SearchAll` degrade, full `Trust`/size/CJK/emoji/zero-seeder variety), and real placeholder files sitting at every torrent's `SavePath` — was built and tested; the two gaps were left genuinely open, documented precisely (which task closes each, and why closing it here would mean building that task's own design surface ahead of it), rather than papered over. One small, deliberate exception: `internal/tui.Model` gained a single new exported field, `Banner string`, rendered as one fixed line above every screen/modal in `View()` — this is T-056's own acceptance criterion ("a banner makes it unmistakable this is demo data"), it's root-owned generic plumbing rather than screen content, and it doesn't touch `indexer`/`engine` types or violate AGENT.md §4's interface-only import rule the other two gaps are bound by. Verified: `internal/tui/banner_test.go` (three new tests); `internal/app`'s `TestZeroNetworkCalls` (overrides `http.DefaultTransport` to fail on any dial), `TestNothingIsWrittenOutsideTheSandbox`, `TestCloseRemovesTheSandboxAndLeavesNothingBehind`, `TestScriptedDownloadsCoverEveryRequiredState` (drives `engine/fake.Advance` directly, no sleep); a Python-`pty`-driven manual run of the real `bin/tortui --demo` binary (no interactive terminal was available in the harness that implemented this task) confirming the banner, live status-bar counts, help overlay, and quit-confirm dialog, plus clean exit and sandbox removal on `q`+`y`, `ctrl+c`, and `SIGTERM` (`SIGKILL`, uninterceptable by any process, was confirmed to leave the sandbox behind, as expected and out of scope) | T-056 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.

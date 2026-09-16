@@ -57,6 +57,13 @@ type Model struct {
 
 	activeDownloads int
 
+	// Banner, when non-empty, renders as one fixed line above every screen
+	// and modal, in the theme's accent style. It is a generic, root-owned
+	// affordance — no screen or dialog reads or sets it — that exists for
+	// --demo mode (T-056, AGENT.md §15) to make it unmistakable that the
+	// data on screen is synthetic. Production wiring leaves it empty.
+	Banner string
+
 	// statusBar is the AGENT.md §7 footer: active-download count and
 	// aggregate rate (kept in sync from engineUpdateMsg), the most recent
 	// search fan-out's source-error state (sourceStatusMsg — no screen
@@ -385,7 +392,13 @@ func (m Model) View() string {
 		body = m.renderScreen()
 	}
 
-	return body + "\n\n" + m.renderStatusBar()
+	out := body + "\n\n" + m.renderStatusBar()
+
+	if m.Banner != "" {
+		out = m.theme.Accent.Render(theme.Truncate(m.Banner, m.width)) + "\n\n" + out
+	}
+
+	return out
 }
 
 // renderStatusBar draws the AGENT.md §7 footer via components.StatusBar,
