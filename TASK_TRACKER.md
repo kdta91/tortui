@@ -2351,7 +2351,7 @@ anything new. `make check` and `go test -race ./...` are both green.
 
 ### T-050 · Theme
 ```
-status: todo
+status: in-progress
 depends: T-001
 ```
 **Files:** `internal/tui/theme/`
