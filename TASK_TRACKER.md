@@ -2128,7 +2128,7 @@ added, per AGENT.md §11.5's "do not build ahead."
 
 ### T-031 · anacrolix engine — add and list
 ```
-status: todo
+status: in-progress
 depends: T-030
 ```
 **Files:** `internal/engine/anacrolix/`
