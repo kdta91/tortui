@@ -2759,6 +2759,26 @@ an OS-level limitation common to every program, not specific to tortui.
 **Why this exists:** it is the primary way to verify rendering after a build, and the only way
 the agent can self-check the UI without a live swarm (AGENT.md §15).
 
+**QA remediation (2026-09-17, same branch, PR #27):** QA failed the PR on an AGENT.md §2/§16
+violation — `internal/indexer/fake/fake_test.go`'s `TestFixturesNameNoRealMediaOrInfringingSite`
+had put five real infringement-oriented site names into a `forbidden := []string{...}` literal.
+The test's intent (guard against a fixture naming a real site) was sound; naming the sites to
+build the guard was the bug. Fixed by replacing it with two positive, allowlist-based tests that
+need no forbidden-site list at all: `TestFixtureSourceURLsUseOnlyReservedDomains` (every fixture
+`SourceURL` host must be an RFC 2606/6761 reserved domain — `example.{com,net,org}`, `.example`,
+`.test`, `.invalid`, or `localhost` — the same approach `scripts/check-indexer-hostnames.sh`
+already uses) and `TestFixtureTitlesCarryNoEmbeddedURL` (no `://` or `www.` in a title). No other
+occurrence of those names was found anywhere else in the working tree, in this branch's commit
+messages, or in the PR title/body. They do appear verbatim in the QA review comment on PR #27
+(quoting the violation) and in this branch's already-pushed commit `2a4c534`'s diff content; a
+squash-merge keeps both out of `main`'s tree and history, but a human who wants them off the
+remote entirely would need to delete/edit that PR comment and separately purge or rewrite the
+branch (out of scope for this remediation — AGENT.md §10 bars force-pushing a branch with review
+comments on it, so this was reported, not actioned). Backlog candidate: add a
+`check-indexer-hostnames.sh`-style CI grep for a small set of well-known infringement-site name
+fragments across the whole diff (not just indexer-context lines), so this class of mistake is
+caught by CI rather than a reviewer's eye — proposed, not implemented here.
+
 ---
 
 ## Phase 6 — Search and results

@@ -3,6 +3,8 @@ package fake
 import (
 	"context"
 	"errors"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -197,52 +199,60 @@ func TestFixturesIncludeWideCJKAndEmojiTitles(t *testing.T) {
 	}
 }
 
-func TestFixturesNameNoRealMediaOrInfringingSite(t *testing.T) {
-	// AGENT.md §2/§16: no infringement-oriented site named anywhere, and
-	// fixture titles must not name real-world media. This is a coarse
-	// guard, not a legal review — it fails loudly on the one thing that
-	// would be a bug rather than a design choice.
-	forbidden := []string{"pirate", "thepiratebay", "1337x", "rarbg", "yts", "torrentz"}
+// reservedFixtureHostSuffixes lists the only hostname labels a demo fixture's
+// SourceURL may end in. These are the RFC 2606 / RFC 6761 reserved
+// domains — structurally guaranteed to never resolve to a real, operable
+// site — plus "localhost". This is a positive allowlist, not a blocklist of
+// real sites: AGENT.md §2/§16 forbid naming an infringement-oriented site
+// anywhere in this repository, including in a test's forbidden-token list,
+// so this test can never enumerate the thing it is guarding against. Instead
+// it asserts the fixtures only ever point at addresses that cannot be a real
+// site at all — the same approach scripts/check-indexer-hostnames.sh uses
+// for the same reason.
+var reservedFixtureHostSuffixes = []string{
+	"example.com", "example.net", "example.org",
+	"example", "test", "invalid", "localhost",
+}
 
+// TestFixtureSourceURLsUseOnlyReservedDomains guards against a fixture ever
+// pointing SourceURL at a real, resolvable domain — whether a real media
+// site, a real indexer, or anything else. A real hostname has no business
+// appearing in demo/test data regardless of what it is, so this check needs
+// no list of specific sites to reject.
+func TestFixtureSourceURLsUseOnlyReservedDomains(t *testing.T) {
 	for _, r := range append(ArchiveResults(), MirrorResults()...) {
-		for _, bad := range forbidden {
-			if containsFold(r.Title, bad) || containsFold(r.SourceURL, bad) {
-				t.Fatalf("fixture %q contains forbidden token %q", r.ID, bad)
-			}
+		u, err := url.Parse(r.SourceURL)
+		if err != nil {
+			t.Errorf("fixture %q: SourceURL %q does not parse: %v", r.ID, r.SourceURL, err)
+			continue
+		}
+		host := strings.ToLower(u.Hostname())
+		if !hostOnReservedSuffix(host) {
+			t.Errorf("fixture %q: SourceURL host %q is not a reserved (RFC 2606) domain — demo fixtures must never point at a real, resolvable host", r.ID, host)
 		}
 	}
 }
 
-func containsFold(s, substr string) bool {
-	sl, subl := []rune(s), []rune(substr)
-	toLower := func(rs []rune) []rune {
-		out := make([]rune, len(rs))
-		for i, r := range rs {
-			if r >= 'A' && r <= 'Z' {
-				r += 'a' - 'A'
-			}
-			out[i] = r
-		}
-		return out
-	}
-	sl, subl = toLower(sl), toLower(subl)
-
-	if len(subl) == 0 || len(subl) > len(sl) {
-		return len(subl) == 0
-	}
-	for i := 0; i+len(subl) <= len(sl); i++ {
-		match := true
-		for j := range subl {
-			if sl[i+j] != subl[j] {
-				match = false
-				break
-			}
-		}
-		if match {
+func hostOnReservedSuffix(host string) bool {
+	for _, suffix := range reservedFixtureHostSuffixes {
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
 			return true
 		}
 	}
 	return false
+}
+
+// TestFixtureTitlesCarryNoEmbeddedURL guards against a fixture title
+// smuggling in a real hostname via free text rather than SourceURL — the
+// title fields are prose (dataset/collection names), so a scheme prefix or a
+// bare "www." is never legitimate content there.
+func TestFixtureTitlesCarryNoEmbeddedURL(t *testing.T) {
+	for _, r := range append(ArchiveResults(), MirrorResults()...) {
+		lower := strings.ToLower(r.Title)
+		if strings.Contains(lower, "://") || strings.Contains(lower, "www.") {
+			t.Errorf("fixture %q: Title %q appears to embed a URL/hostname", r.ID, r.Title)
+		}
+	}
 }
 
 func TestEveryFixtureValidates(t *testing.T) {
