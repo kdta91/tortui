@@ -38,6 +38,7 @@ func run(args []string, out *os.File) int {
 	fs.SetOutput(out)
 
 	showVersion := fs.Bool("version", false, "print version information and exit")
+	demo := fs.Bool("demo", false, "run the TUI against a fake engine and fixture indexer — zero network, zero writes outside a temp dir (AGENT.md §15)")
 	// config is accepted but not yet consumed here: internal/config (T-002)
 	// implements loading, but wiring it into main happens once the
 	// composition root (internal/app) exists.
@@ -55,6 +56,10 @@ func run(args []string, out *os.File) int {
 		}
 
 		return 0
+	}
+
+	if *demo {
+		return runDemo(out)
 	}
 
 	// internal/config.Config has no log_level/log_file keys yet (that
