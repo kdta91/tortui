@@ -425,6 +425,41 @@ search:
 
 ---
 
+## Where definitions live, and when they are read
+
+Put each definition in its own file in the `definitions/` directory inside your
+config directory — `~/.config/tortui/definitions/` on macOS and Linux (or
+`$XDG_CONFIG_HOME/tortui/definitions/` when you have set that variable),
+`%AppData%\tortui\definitions\` on Windows. The directory does not have to
+exist: nothing creates it for you, and starting with no definitions at all is an
+ordinary state rather than an error.
+
+What is read, exactly:
+
+* **Files ending in `.yml`, in that one directory.** The extension is matched
+  without regard to case, so `archive.YML` is read on every platform. A `.yaml`
+  file is not read; nor is anything in a sub-directory.
+* **One file per source.** Files are read in filename order and the resulting
+  set is ordered by `id`.
+* **A file at most 1 MiB.** A larger one is skipped without being parsed.
+* **Each `id` once.** If two files declare the same `id`, the first in filename
+  order is used and the second is skipped, so which one wins does not depend on
+  the order your filesystem happens to list them in.
+
+**A broken definition never stops tortui starting.** Every file is read
+independently, and one that will not parse or will not validate is skipped and
+written to the log file with its name and the reason — the rest of the directory
+loads as usual. Fix the file and reload; nothing else was affected. The whole
+read only fails if the directory itself cannot be listed (a permissions
+problem), and in that case tortui keeps the definitions it had already loaded.
+
+**Reloading** re-reads the whole directory and swaps the set in one step:
+anything reading the set at that moment sees either all of the old definitions
+or all of the new ones, and never a mixture of the two. There is no
+partially-applied state, and no restart is needed after editing a file. (A file
+that is still being written when the reload reads it is simply skipped like any
+other unparseable one; reload again once your editor has saved it.)
+
 ## What the framework deliberately does not do
 
 * **No credential discovery, session harvesting, captcha solving or paywall
