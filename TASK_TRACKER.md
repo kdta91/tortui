@@ -2514,9 +2514,43 @@ timeout is a real `components.TickMsg`, not a sleep). Coverage: `internal/tui` 9
 
 ### T-053 · Responsive table component
 ```
-status: in-progress
+status: done
 depends: T-051
 ```
+**Notes:** `components.Table` (`internal/tui/components/table.go`) is domain-agnostic per
+AGENT.md §4/T-053's own steer — it knows rows of `Cells []string` identified by a stable `ID`,
+and a caller-supplied `[]Column` (`Key`, `Title`, `Width`/`Flex`+`MinWidth`, `Priority`, `Align`,
+optional `Less`). It has no `indexer`/`engine` import and no knowledge of "Source"/"Age"/"Trust"
+as concepts — those are just column names a caller (T-061) will configure. `layout()` recomputes
+visible columns and widths from scratch on every `View()` call (never cached — AGENT.md §13's
+named hazard), dropping `Priority > 0` columns lowest-priority-first once the fixed+flex-floor
+minimum no longer fits; `Priority == 0` columns are never dropped. `internal/tui/components/table_test.go`'s
+`resultColumns()` configures the exact AGENT.md §7 set (Title flex, Size/S-L fixed and
+undroppable, Source/Age/Trust with priorities 1/2/3) and `TestTableColumnDropOrderAtNarrowWidths`
+pins the drop sequence at 80/60/50/40 columns. Selection is tracked by row `ID`, never index —
+`TestTableSelectionSurvivesResort` sorts and re-sorts a 3-row table and asserts the selected
+row's identity is unchanged (its index does change), per the acceptance text's own wording.
+Sorting uses a stable sort with an optional per-column `Less` (a nil `Less` string-compares the
+display cell, which is wrong for anything meant to sort numerically — `TestTableSortOrdersRowsByColumn`
+exercises a caller-supplied numeric `Less`); `SortBy` on a new column starts ascending, on the
+already-sorted column toggles, and the header shows `^`/`v` (plain ASCII, no glyph-set
+dependency needed for a sort caret). The viewport is also recomputed per render, not stored —
+`visibleWindow()` centres the selected row in the available height from `SelectedIndex` and row
+count alone, so a resize can't leave a stale scroll offset. Golden files at 80×24, 120×40, and
+60×20 (`testdata/table_80x24.golden`, `table_120x40.golden`, `table_60x20.golden`) all use the
+same 4-row fixture including a title mixing CJK text and an emoji (示例种子🎬.iso); the 60×20
+golden asserts in-test that Source is absent from the header, and `TestTableCJKEmojiAlignment`
+independently proves every rendered row measures the same `theme.Width` as the header regardless
+of grapheme content. No new dependency — `theme`/`lipgloss`/`uniseg` were already in `go.mod`
+from T-050/T-051, so no DEC entry or `NOTICE`/`make licenses` change was needed. `make check`
+green; `go test -race ./...` clean; `internal/tui/components` coverage 93.7%,
+`internal/tui` package overall 97.3%, well above the §9 50% floor; cross-`GOOS`
+`golangci-lint run ./...` clean for darwin/linux/windows.
+**Files:** `internal/tui/components/table.go`, `internal/tui/components/table_test.go`,
+`internal/tui/components/testdata/table_80x24.golden`,
+`internal/tui/components/testdata/table_120x40.golden`,
+`internal/tui/components/testdata/table_60x20.golden`
+
 **Acceptance**
 - Column set with flex/fixed widths and a documented drop order
   (Source → Age → Trust) as width shrinks.
