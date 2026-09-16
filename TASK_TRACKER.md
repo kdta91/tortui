@@ -2208,7 +2208,7 @@ depends: T-031, T-032
 
 ### T-040 · bbolt store
 ```
-status: todo
+status: in-progress
 depends: T-002
 ```
 **Files:** `internal/store/`
