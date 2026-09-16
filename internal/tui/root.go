@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kdta91/tortui/internal/engine"
+	"github.com/kdta91/tortui/internal/tui/components"
 	"github.com/kdta91/tortui/internal/tui/theme"
 )
 
@@ -30,8 +32,18 @@ type Model struct {
 
 	showHelp    bool
 	quitConfirm bool
+	// errorDetail is true while the status bar's source-error detail panel
+	// (T-052, ContextErrorDetail) is open.
+	errorDetail bool
 
 	activeDownloads int
+
+	// statusBar is the AGENT.md §7 footer: active-download count and
+	// aggregate rate (kept in sync from engineUpdateMsg), the most recent
+	// search fan-out's source-error state (sourceStatusMsg — no screen
+	// sends one yet; T-060/T-061 will), and the transient-message queue
+	// (transientMessageMsg / components.TickMsg).
+	statusBar components.StatusBar
 }
 
 // New builds a Model wired to eng (typically a real engine in production,
@@ -39,10 +51,11 @@ type Model struct {
 // modal open.
 func New(eng engine.Engine, th theme.Theme) Model {
 	return Model{
-		eng:    eng,
-		theme:  th,
-		keys:   NewKeyMap(),
-		screen: ScreenSearch,
+		eng:       eng,
+		theme:     th,
+		keys:      NewKeyMap(),
+		screen:    ScreenSearch,
+		statusBar: components.New(),
 	}
 }
 
@@ -87,6 +100,36 @@ func countActive(statuses []engine.TorrentStatus) int {
 	return n
 }
 
+// aggregateRates sums DownRate and UpRate across every tracked torrent, for
+// the status bar's "aggregate down/up rate" (AGENT.md §7).
+func aggregateRates(statuses []engine.TorrentStatus) (down, up int64) {
+	for _, s := range statuses {
+		down += s.DownRate
+		up += s.UpRate
+	}
+
+	return down, up
+}
+
+// sourceStatusMsg reports one search fan-out's per-source outcome for the
+// status bar's error indicator (AGENT.md §6.3: "2/4 sources failed"; see
+// DEC-092 for the actual expand key). No screen sends this yet — T-060's
+// search and T-061's results table are what will actually call
+// indexer.Registry.SearchAll and translate its []SourceError into this —
+// but T-052 wires and tests the plumbing directly, the same pattern T-051
+// used for engineUpdateMsg before any screen produced one.
+type sourceStatusMsg struct {
+	total  int
+	failed []string
+}
+
+// transientMessageMsg requests a queued, timed status-bar message (e.g. "◆
+// added ubuntu-24.04.iso", a save-settings confirmation, or a one-line
+// error toast). Later tasks send this after an action completes; T-052
+// wires and tests the queue/timeout mechanism (components.StatusBar) by
+// sending it directly.
+type transientMessageMsg struct{ text string }
+
 // Init subscribes to the engine's update stream. It performs no other I/O
 // and blocks on nothing itself — the actual channel receive happens inside
 // the tea.Cmd returned by waitForEngineUpdate, on bubbletea's own goroutine
@@ -118,8 +161,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.activeDownloads = countActive(msg.statuses)
+		m.statusBar.ActiveDownloads = m.activeDownloads
+		m.statusBar.DownRate, m.statusBar.UpRate = aggregateRates(msg.statuses)
 
 		return m, waitForEngineUpdate(m.eng)
+
+	case sourceStatusMsg:
+		m.statusBar.SourcesTotal = msg.total
+		m.statusBar.FailedSources = msg.failed
+
+		if len(msg.failed) == 0 {
+			m.errorDetail = false
+		}
+
+		return m, nil
+
+	case transientMessageMsg:
+		var cmd tea.Cmd
+		m.statusBar, cmd = m.statusBar.Push(msg.text)
+
+		return m, cmd
+
+	case components.TickMsg:
+		var cmd tea.Cmd
+		m.statusBar, cmd = m.statusBar.Update(msg)
+
+		return m, cmd
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -136,6 +203,8 @@ func (m Model) context() Context {
 		return ContextQuitConfirm
 	case m.showHelp:
 		return ContextHelp
+	case m.errorDetail:
+		return ContextErrorDetail
 	default:
 		return screenContext(m.screen)
 	}
@@ -162,12 +231,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ActionConfirmNo, ActionCancel:
 		m.quitConfirm = false
 		m.showHelp = false
+		m.errorDetail = false
 
 		return m, nil
 	case ActionHelp:
 		m.showHelp = !m.showHelp
 
 		return m, nil
+	case ActionToggleErrorDetail:
+		return m.handleToggleErrorDetail()
 	case ActionNextScreen:
 		m.screen = m.screen.next()
 		return m, nil
@@ -193,9 +265,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// ActionFocusSearch, ActionLatest, ActionRefresh, ActionMoveUp/Down,
 		// ActionSelect, ActionDetails, sort, open-file/folder/source,
 		// pause/resume, and remove all belong to screens/components this
-		// task does not implement (T-052-T-054, T-060-T-080). No-op here.
+		// task does not implement (T-053, T-054, T-060-T-080). No-op here.
 		return m, nil
 	}
+}
+
+// handleToggleErrorDetail implements T-052's status-bar error indicator:
+// "e" opens the detail panel only when at least one source has actually
+// failed; tab or esc from inside the panel (ContextErrorDetail) always
+// closes it (see DEC-092 for why tab, not the screen-cycle key everywhere
+// else).
+func (m Model) handleToggleErrorDetail() (tea.Model, tea.Cmd) {
+	if m.errorDetail {
+		m.errorDetail = false
+		return m, nil
+	}
+
+	if len(m.statusBar.FailedSources) > 0 {
+		m.errorDetail = true
+	}
+
+	return m, nil
 }
 
 // handleQuit implements AGENT.md §7's "quit (prompts if downloads active)":
@@ -220,14 +310,54 @@ func (m Model) View() string {
 		return ""
 	}
 
+	var body string
+
 	switch m.context() {
 	case ContextHelp:
-		return m.renderHelp()
+		body = m.renderHelp()
 	case ContextQuitConfirm:
-		return m.renderQuitConfirm()
+		body = m.renderQuitConfirm()
+	case ContextErrorDetail:
+		body = m.renderErrorDetail()
 	default:
-		return m.renderScreen()
+		body = m.renderScreen()
 	}
+
+	return body + "\n\n" + m.renderStatusBar()
+}
+
+// renderStatusBar draws the AGENT.md §7 footer via components.StatusBar,
+// always reading m.screen/m.width fresh so a resize or a screen switch
+// takes effect on the very next render (no cached value, per T-051's
+// invariant).
+func (m Model) renderStatusBar() string {
+	return m.statusBar.View(m.width, m.screen.String(), m.theme)
+}
+
+// renderErrorDetail draws the status bar's expanded source-error panel:
+// every failed/skipped source by id, plus this context's own bindings
+// (tab to collapse, esc to close — DEC-092).
+func (m Model) renderErrorDetail() string {
+	var b strings.Builder
+
+	b.WriteString(m.theme.Error.Render(
+		fmt.Sprintf("%d/%d sources failed", len(m.statusBar.FailedSources), m.statusBar.SourcesTotal),
+	))
+	b.WriteString("\n\n")
+
+	for _, line := range m.statusBar.DetailLines() {
+		b.WriteString(m.theme.Foreground.Render(line))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+
+	for _, line := range m.keys.HelpFor(ContextErrorDetail) {
+		b.WriteString(m.theme.Muted.Render(line))
+		b.WriteString("\n")
+	}
+
+	return b.String()
 }
 
 // renderScreen draws the tab bar and the current screen's placeholder body.
