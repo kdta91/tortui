@@ -308,9 +308,16 @@ func Format(r Report) string {
 	fmt.Fprintf(&b, "File descriptors:\n")
 
 	if r.FDLimits.Supported {
-		fmt.Fprintf(&b, "  soft (original): %d\n", r.FDLimits.Soft)
-		fmt.Fprintf(&b, "  soft (raised):   %d\n", r.FDLimits.Raised)
-		fmt.Fprintf(&b, "  hard:            %d\n", r.FDLimits.Hard)
+		fmt.Fprintf(&b, "  soft (seen at startup):              %d\n", r.FDLimits.Soft)
+		fmt.Fprintf(&b, "  soft (after tortui's raise attempt): %d\n", r.FDLimits.Raised)
+		fmt.Fprintf(&b, "  hard ceiling:                        %d\n", r.FDLimits.Hard)
+		fmt.Fprintf(&b, "  note: on Unix, Go's own runtime raises the soft limit to the hard\n")
+		fmt.Fprintf(&b, "  ceiling in an init() that runs before main() on every binary (see\n")
+		fmt.Fprintf(&b, "  src/syscall/rlimit.go, Go 1.19+), so the \"seen at startup\" value\n")
+		fmt.Fprintf(&b, "  above has typically already been raised by the Go runtime itself,\n")
+		fmt.Fprintf(&b, "  not by tortui. tortui's own raise attempt still runs as a defensive\n")
+		fmt.Fprintf(&b, "  fallback and is reflected above, but it is usually a no-op by the\n")
+		fmt.Fprintf(&b, "  time it runs.\n")
 	} else {
 		fmt.Fprintf(&b, "  not applicable on %s (no per-process descriptor limit)\n", r.OS)
 	}
