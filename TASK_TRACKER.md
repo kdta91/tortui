@@ -3561,3 +3561,20 @@ inherited from the initial plan.
   where cancellation was required. Remedy: check `ctx.Err()` before the select, or give the
   cancellation case priority via a nested select, rather than relying on the tie-break. It surfaced
   as an intermittent red `make check (macos-latest)` job.
+- `T-916` Add a CI guard for the §2 no-named-sites rule. QA on T-056 (PR #27) caught a new test file
+  that hardcoded a denylist of real infringement-oriented site names — a §2/§16 hard violation — by a
+  reviewer's eye alone. `scripts/check-indexer-hostnames.sh` did not catch it because its
+  keyword-context gating targets indexer endpoint shapes, not arbitrary prose in a test file. Proposal:
+  a companion CI check that scans the whole diff against a small name-fragment list sourced from
+  OUTSIDE the repo (so the list itself never lands here, which is the same reason the hostname script
+  uses a positive allowlist). Remediation on T-056 replaced the offending test with positive,
+  allowlist-based assertions (`TestFixtureSourceURLsUseOnlyReservedDomains`) — that pattern is the
+  model to follow.
+- `T-917` History hygiene for the §2 rule. §2 covers the repository including its history, and two
+  artifacts sit outside `main`'s current tree: (a) the initial docs commit `f91c0de` named a site in an
+  AGENT.md §7 mockup, already removed from the tree by `f7f4dfa` but still present in that commit's
+  content; (b) the T-056 QA review comment on PR #27 quotes the offending denylist verbatim, and the
+  pre-remediation commit `2a4c534` on the now-deleted branch contained it. None of this is in `main`'s
+  tree today. Purging it fully needs history rewriting and editing/deleting a PR comment — an owner
+  decision, not an agent's, and AGENT.md §10 forbids force-pushing a branch under review. Filed so the
+  choice is recorded rather than forgotten.
