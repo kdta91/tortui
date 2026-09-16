@@ -2006,7 +2006,7 @@ content is named or bundled anywhere in this change.
 
 ### T-025 · Import an existing definition
 ```
-status: todo
+status: in-progress
 depends: T-023
 ```
 **Acceptance**
