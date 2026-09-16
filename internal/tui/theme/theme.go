@@ -28,6 +28,14 @@ type Theme struct {
 	Dim        lipgloss.Style
 	Error      lipgloss.Style
 	Success    lipgloss.Style
+
+	// Border draws the box AGENT.md §7 allows around the focused pane and
+	// modals — nowhere else. It carries the palette's accent colour (never
+	// a second, border-specific colour) and picks rounded Unicode corners
+	// or the plain-ASCII fallback the same way GlyphSet does, so a modal
+	// never emits a raw escape sequence or a hardcoded border glyph
+	// outside this package (T-054).
+	Border lipgloss.Style
 }
 
 // New builds a Theme from a built-in palette name and a detected
@@ -68,6 +76,11 @@ func New(name string, capability Capability) Theme {
 		return s.Foreground(lipgloss.Color(hex))
 	}
 
+	border := renderer.NewStyle().Border(borderStyle(capability.Unicode)).Padding(0, 1)
+	if !mono {
+		border = border.BorderForeground(lipgloss.Color(palette.Accent))
+	}
+
 	return Theme{
 		Name:       name,
 		Glyphs:     Glyphs(capability),
@@ -77,7 +90,20 @@ func New(name string, capability Capability) Theme {
 		Dim:        style(palette.Dim),
 		Error:      style(palette.Error),
 		Success:    style(palette.Success),
+		Border:     border,
 	}
+}
+
+// borderStyle picks the border glyph set for a detected Unicode capability:
+// rounded corners when safe, the plain-ASCII fallback otherwise — the same
+// split GlyphSet draws for progress bars and the trust badge (AGENT.md
+// §14's "Glyph fallback").
+func borderStyle(unicode bool) lipgloss.Border {
+	if unicode {
+		return lipgloss.RoundedBorder()
+	}
+
+	return lipgloss.ASCIIBorder()
 }
 
 func profileFor(l ColorLevel) termenv.Profile {
