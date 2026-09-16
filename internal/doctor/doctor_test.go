@@ -178,7 +178,14 @@ func TestCheckIndexersReachableOnSuccess(t *testing.T) {
 	defer srv.Close()
 
 	cfg := config.Config{
-		Indexers: []config.Indexer{{ID: "ok", Name: "OK Source", URL: srv.URL, Enabled: true}},
+		Indexers: []config.Indexer{
+			{
+				ID:      "ok",
+				Name:    "OK Source",
+				URL:     srv.URL,
+				Enabled: true,
+			},
+		},
 	}
 
 	report := Build(context.Background(), Options{
@@ -204,7 +211,14 @@ func TestCheckIndexersReachableOnNon2xx(t *testing.T) {
 	defer srv.Close()
 
 	cfg := config.Config{
-		Indexers: []config.Indexer{{ID: "forbidden", Name: "Forbidden Source", URL: srv.URL, Enabled: true}},
+		Indexers: []config.Indexer{
+			{
+				ID:      "forbidden",
+				Name:    "Forbidden Source",
+				URL:     srv.URL,
+				Enabled: true,
+			},
+		},
 	}
 
 	report := Build(context.Background(), Options{
@@ -361,7 +375,14 @@ func TestBuildRespectsCustomNewClient(t *testing.T) {
 
 	var built int
 	cfg := config.Config{
-		Indexers: []config.Indexer{{ID: "custom", Name: "Custom", URL: srv.URL, Enabled: true}},
+		Indexers: []config.Indexer{
+			{
+				ID:      "custom",
+				Name:    "Custom",
+				URL:     srv.URL,
+				Enabled: true,
+			},
+		},
 	}
 
 	report := Build(context.Background(), Options{
