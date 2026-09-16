@@ -2562,7 +2562,7 @@ green; `go test -race ./...` clean; `internal/tui/components` coverage 93.7%,
 
 ### T-054 · Modals and confirm dialog
 ```
-status: todo
+status: in-progress
 depends: T-051
 ```
 **Acceptance**
