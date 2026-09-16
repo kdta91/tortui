@@ -2274,7 +2274,7 @@ depends: T-040, T-032
 
 ### T-042 · Single-instance lock and data integrity
 ```
-status: todo
+status: in-progress
 depends: T-040
 ```
 **Acceptance**
