@@ -97,6 +97,22 @@ func TestMaskText(t *testing.T) {
 // is against what would actually land in the log file — including a value
 // nested two levels deep inside slog.Group attrs, which is what T-003
 // requires beyond simple top-level masking.
+func TestRedactMatchesMaskText(t *testing.T) {
+	in := `Get "https://real-indexer.example/search?apikey=SECRET123": dial tcp: connection refused`
+
+	got := Redact(in)
+	if strings.Contains(got, "SECRET123") {
+		t.Fatalf("Redact(%q) = %q, still contains the secret", in, got)
+	}
+	if strings.Contains(got, "real-indexer.example") {
+		t.Fatalf("Redact(%q) = %q, still contains the host", in, got)
+	}
+
+	if got != maskText(in) {
+		t.Fatalf("Redact(%q) = %q, want it to match maskText's own output %q", in, got, maskText(in))
+	}
+}
+
 func TestMaskingHandlerNestedGroups(t *testing.T) {
 	var buf bytes.Buffer
 	handler := newMaskingHandler(slog.NewJSONHandler(&buf, nil))

@@ -7,6 +7,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+
+	"github.com/kdta91/tortui/internal/platform"
 )
 
 // ColorLevel is the degraded set of colour depths a terminal may render,
@@ -58,6 +60,20 @@ type Capability struct {
 	// bubbletea's alternate screen and for printing RefusalMessage and
 	// exiting 1 when it is false.
 	Interactive bool
+	// Width and Height are the terminal's size in columns and rows, read
+	// via internal/platform.TerminalSize (T-055). Both are 0 when Out
+	// isn't a real terminal (Interactive is false) or the size could not
+	// be read.
+	Width, Height int
+	// Multiplexer names the terminal multiplexer wrapping this session,
+	// detected from the environment: "tmux", "screen", or "" for none.
+	// AGENT.md §14: "Under tmux, TERM=screen-256color masks truecolor
+	// unless the user enables Tc. Detect, degrade silently, do not nag."
+	// Detect itself already degrades colour correctly via termenv/
+	// lipgloss reading the same TERM value; Multiplexer exists so a
+	// caller that wants to explain *why* colour degraded — doctor (T-055)
+	// — can say so instead of leaving it a mystery.
+	Multiplexer string
 }
 
 // DetectOptions lets a caller steer Detect explicitly, which is what makes
@@ -85,6 +101,13 @@ type DetectOptions struct {
 	// Capability.Interactive's real stream check stand. It never affects
 	// Capability.Interactive itself.
 	AssumeTTY bool
+	// SizeFunc overrides how Capability.Width/Height are measured. A nil
+	// SizeFunc defaults to internal/platform.TerminalSize called on Out
+	// when Out is an *os.File; tests inject a stub here instead of
+	// requiring a real attached terminal (AGENT.md §6.7 — unit tests make
+	// zero real system calls that depend on environment state they can't
+	// control).
+	SizeFunc func(*os.File) (width, height int, err error)
 }
 
 // realEnviron reads the actual process environment. It is the default
@@ -119,10 +142,58 @@ func Detect(opts DetectOptions) Capability {
 	term := environ.Getenv("TERM")
 	interactive := term != "dumb" && isCharDevice(out)
 
+	// Measuring size is attempted regardless of Interactive: on a real
+	// non-terminal file the underlying ioctl/console call fails on its
+	// own and width/height simply stay 0, which is the same outcome as
+	// gating on Interactive would produce, but without making Width/
+	// Height untestable via a plain non-TTY *os.File plus an injected
+	// SizeFunc (AGENT.md §6.7).
+	width, height := 0, 0
+	sizeFunc := opts.SizeFunc
+	if sizeFunc == nil {
+		sizeFunc = platform.TerminalSize
+	}
+
+	if f, ok := out.(*os.File); ok {
+		if w, h, err := sizeFunc(f); err == nil {
+			width, height = w, h
+		}
+	}
+
 	return Capability{
 		Color:       colorLevelFor(renderer.ColorProfile()),
 		Unicode:     !opts.ForceASCII && unicodeCapable(environ),
 		Interactive: interactive,
+		Width:       width,
+		Height:      height,
+		Multiplexer: multiplexerFor(environ, term),
+	}
+}
+
+// multiplexerFor detects the terminal multiplexer wrapping this session,
+// if any. tmux always sets $TMUX in wrapped sessions; screen always sets
+// $STY. Both also typically rewrite TERM to a "screen"/"tmux"-prefixed
+// value, which is checked as a fallback for a multiplexer session that
+// somehow lost its marker variable (e.g. it was stripped crossing an SSH
+// hop) without misreporting an ordinary "screen-256color"-style TERM some
+// non-multiplexed terminals still set for compatibility — that fallback
+// only fires when neither marker variable is present.
+func multiplexerFor(environ termenv.Environ, term string) string {
+	if environ.Getenv("TMUX") != "" {
+		return "tmux"
+	}
+
+	if environ.Getenv("STY") != "" {
+		return "screen"
+	}
+
+	switch {
+	case strings.HasPrefix(term, "tmux"):
+		return "tmux"
+	case strings.HasPrefix(term, "screen"):
+		return "screen"
+	default:
+		return ""
 	}
 }
 

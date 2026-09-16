@@ -27,6 +27,13 @@ func main() {
 // run implements the CLI entrypoint against injectable args and output, so
 // it can be exercised by tests without spawning a subprocess.
 func run(args []string, out *os.File) int {
+	// "doctor" is a subcommand, not a flag: it must work even against a
+	// dumb/non-TTY stdout (AGENT.md §15 — "safe to pipe"), so it is
+	// dispatched before the flag set below, which is unrelated to it.
+	if len(args) > 0 && args[0] == "doctor" {
+		return runDoctor(args[1:], out)
+	}
+
 	fs := flag.NewFlagSet("tortui", flag.ContinueOnError)
 	fs.SetOutput(out)
 

@@ -15,10 +15,20 @@ useDefault = true
 # loosening any rule's specificity globally — verified that the same
 # secret-shaped strings at a different path are still caught (see T-004
 # tracker notes).
+#
+# internal/doctor/doctor_test.go and cmd/tortui/doctor_test.go (T-055) are
+# the same situation one layer up: they assert that `tortui doctor` never
+# leaks a configured indexer's api_key/cookie, which requires a
+# fixture value that reads exactly like one (and, for the cookie case, an
+# assignment shaped like `Cookie: "session=..."` that trips the
+# tortui-generic-cookie rule below). None of these are real credentials —
+# see each test's own comment for why the string was chosen.
 [allowlist]
-description = "Masking-test fixtures with secret-shaped (not real) strings"
+description = "Masking- and doctor-test fixtures with secret-shaped (not real) strings"
 paths = [
   '''internal/logging/mask_test\.go''',
+  '''internal/doctor/doctor_test\.go''',
+  '''cmd/tortui/doctor_test\.go''',
 ]
 
 # The default ruleset has no generic "Cookie:"/"Set-Cookie:" rule (it only
