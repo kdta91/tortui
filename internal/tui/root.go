@@ -30,10 +30,29 @@ type Model struct {
 	width  int
 	height int
 
-	showHelp    bool
-	quitConfirm bool
+	// selection is a generic, screen-agnostic cursor position: "whichever
+	// item is highlighted in the currently active screen." No screen has
+	// content yet (search T-060, results T-061, and so on each own their
+	// real list), so this is deliberately just an integer, moved by the
+	// existing ActionMoveUp/ActionMoveDown bindings — it exists so T-054's
+	// "esc always cancels; focus returns to the originating screen and
+	// selection" is genuinely testable now rather than deferred, and a
+	// later screen is free to replace it with its own bounded,
+	// data-backed cursor.
+	selection int
+
+	showHelp bool
+	// quitConfirm is root's one Dialog instance (T-054): the "quit with
+	// active downloads?" prompt. It used to be a bare bool (T-051); it is
+	// a components.Dialog now so the generic modal component has one real
+	// caller inside this task's own scope, per T-054's acceptance
+	// criteria, without building ahead into T-072's remove-confirm flow or
+	// T-074's destination picker, which get their own Dialog instances
+	// when those tasks land.
+	quitConfirm components.Dialog
 	// errorDetail is true while the status bar's source-error detail panel
-	// (T-052, ContextErrorDetail) is open.
+	// (T-052, ContextErrorDetail) is open. This is an info panel, not a
+	// confirm dialog, so it stays a plain bool rather than a Dialog.
 	errorDetail bool
 
 	activeDownloads int
@@ -51,12 +70,34 @@ type Model struct {
 // modal open.
 func New(eng engine.Engine, th theme.Theme) Model {
 	return Model{
-		eng:       eng,
-		theme:     th,
-		keys:      NewKeyMap(),
-		screen:    ScreenSearch,
-		statusBar: components.New(),
+		eng:         eng,
+		theme:       th,
+		keys:        NewKeyMap(),
+		screen:      ScreenSearch,
+		statusBar:   components.New(),
+		quitConfirm: newQuitDialog(),
 	}
+}
+
+// quitDialogCancel and quitDialogQuit index newQuitDialog's Options.
+// Cancel is the default (index 0): quitting mid-download is destructive,
+// so the safer choice is what enter picks with no other input.
+const (
+	quitDialogCancel = 0
+	quitDialogQuit   = 1
+)
+
+// newQuitDialog builds the "quit with active downloads?" confirmation as a
+// components.Dialog (T-054) — AGENT.md §7's "quit ... prompts if downloads
+// active," now expressed through the one generic modal mechanism instead
+// of a one-off bool, per T-054's note to prefer that where it fits
+// cleanly. Message is filled in per-render by renderQuitConfirm, since it
+// names the live active-download count.
+func newQuitDialog() components.Dialog {
+	return components.NewDialog("Quit tortui?", "", []components.DialogOption{
+		quitDialogCancel: {Label: "Cancel"},
+		quitDialogQuit:   {Label: "Quit"},
+	}, quitDialogCancel)
 }
 
 // engineUpdateMsg carries one coalesced snapshot from engine.Engine.Updates.
@@ -199,7 +240,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // modal is open, or the current screen.
 func (m Model) context() Context {
 	switch {
-	case m.quitConfirm:
+	case m.quitConfirm.IsOpen():
 		return ContextQuitConfirm
 	case m.showHelp:
 		return ContextHelp
@@ -227,9 +268,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ActionQuit:
 		return m.handleQuit()
 	case ActionConfirmYes:
+		// y/enter is its own direct hotkey for "quit" here, independent of
+		// the dialog's j/k cursor (not bound inside ContextQuitConfirm at
+		// all — see quitConfirmBindings) — there's nothing left to clean
+		// up in m.quitConfirm since the program is exiting.
 		return m, tea.Quit
 	case ActionConfirmNo, ActionCancel:
-		m.quitConfirm = false
+		// esc (or n) always cancels: the dialog closes (its own cursor
+		// resets to Default), the help overlay and error-detail panel
+		// close, and — because none of this touches m.screen or
+		// m.selection — focus and selection are exactly what they were
+		// before the modal opened (T-054 acceptance).
+		m.quitConfirm = m.quitConfirm.Cancel()
 		m.showHelp = false
 		m.errorDetail = false
 
@@ -240,6 +290,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ActionToggleErrorDetail:
 		return m.handleToggleErrorDetail()
+	case ActionMoveDown:
+		m.selection++
+		return m, nil
+	case ActionMoveUp:
+		if m.selection > 0 {
+			m.selection--
+		}
+
+		return m, nil
 	case ActionNextScreen:
 		m.screen = m.screen.next()
 		return m, nil
@@ -292,8 +351,11 @@ func (m Model) handleToggleErrorDetail() (tea.Model, tea.Cmd) {
 // quitting is immediate when nothing is actively transferring, and opens a
 // one-shot confirmation otherwise.
 func (m Model) handleQuit() (tea.Model, tea.Cmd) {
-	if m.activeDownloads > 0 && !m.quitConfirm {
-		m.quitConfirm = true
+	if m.activeDownloads > 0 && !m.quitConfirm.IsOpen() {
+		// Guarded by IsOpen just above, so this Open never hits the
+		// already-open, logged-no-op branch through normal key handling —
+		// that branch exists for a caller bug, not this call site.
+		m.quitConfirm = m.quitConfirm.Open()
 		return m, nil
 	}
 
@@ -435,13 +497,17 @@ func (m Model) renderHelp() string {
 	return b.String()
 }
 
-// renderQuitConfirm draws the one-shot "active downloads" quit prompt.
+// renderQuitConfirm draws the one-shot "active downloads" quit prompt
+// through components.Dialog (T-054): the box itself, plus this context's
+// own key bindings underneath, generated the same way every other modal in
+// this file already does.
 func (m Model) renderQuitConfirm() string {
+	dialog := m.quitConfirm
+	dialog.Message = itoa(min9(m.activeDownloads)) + " active download(s) will stop."
+
 	var b strings.Builder
 
-	b.WriteString(m.theme.Error.Render("Quit tortui?"))
-	b.WriteString("\n")
-	b.WriteString(m.theme.Foreground.Render(itoa(min9(m.activeDownloads)) + " active download(s) will stop."))
+	b.WriteString(dialog.View(m.theme, m.width))
 	b.WriteString("\n\n")
 
 	for _, line := range m.keys.HelpFor(ContextQuitConfirm) {

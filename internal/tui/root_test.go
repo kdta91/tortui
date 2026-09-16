@@ -231,6 +231,114 @@ func TestNilEngineInitIsSafe(t *testing.T) {
 	}
 }
 
+// TestQuitConfirmEscRestoresScreenAndSelection drives the real quit-confirm
+// Dialog (T-054) through Model.Update and confirms esc does more than just
+// close the modal: the screen it interrupted and the generic selection
+// cursor on that screen are exactly what they were before the dialog
+// opened, not merely "some screen" or a reset-to-zero selection (T-054
+// acceptance: "esc always cancels; focus returns to the originating screen
+// and selection").
+func TestQuitConfirmEscRestoresScreenAndSelection(t *testing.T) {
+	eng := fake.New()
+	if _, err := eng.Add(context.Background(), engine.AddSource{Magnet: "magnet:?xt=urn:btih:deadbeef"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	m := New(eng, testTheme())
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(Model)
+
+	updated, _ = m.Update(engineUpdateMsg{statuses: eng.List()})
+	m = updated.(Model)
+
+	// Move off the starting screen and away from selection 0, so
+	// "restored" is a meaningful assertion rather than trivially true of
+	// the zero value.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	updated, _ = m.Update(keyRune("j"))
+	m = updated.(Model)
+	updated, _ = m.Update(keyRune("j"))
+	m = updated.(Model)
+
+	wantScreen := m.screen
+	wantSelection := m.selection
+
+	if wantScreen == ScreenSearch {
+		t.Fatal("setup: expected tab to have moved off ScreenSearch")
+	}
+
+	if wantSelection == 0 {
+		t.Fatal("setup: expected j/j to have moved selection off 0")
+	}
+
+	updated, _ = m.Update(keyRune("q"))
+	m = updated.(Model)
+
+	if !m.quitConfirm.IsOpen() {
+		t.Fatal("expected q with an active download to open the quit-confirm dialog")
+	}
+
+	if m.context() != ContextQuitConfirm {
+		t.Fatalf("context() = %v, want ContextQuitConfirm while the dialog is open", m.context())
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+
+	if m.quitConfirm.IsOpen() {
+		t.Fatal("expected esc to close the quit-confirm dialog")
+	}
+
+	if m.context() != screenContext(wantScreen) {
+		t.Fatalf("context() after esc = %v, want back on %v — focus did not return to the originating screen",
+			m.context(), screenContext(wantScreen))
+	}
+
+	if m.screen != wantScreen {
+		t.Fatalf("screen after esc = %v, want %v", m.screen, wantScreen)
+	}
+
+	if m.selection != wantSelection {
+		t.Fatalf("selection after esc = %d, want %d — esc must restore selection, not just the screen",
+			m.selection, wantSelection)
+	}
+}
+
+// TestQuitConfirmRendersInsideAModalBorder confirms the quit prompt draws
+// through the shared Dialog component's bordered box (AGENT.md §7: modals
+// are one of the two places a box border is allowed) rather than a
+// screen's own ad hoc frame.
+func TestQuitConfirmRendersInsideAModalBorder(t *testing.T) {
+	eng := fake.New()
+	if _, err := eng.Add(context.Background(), engine.AddSource{Magnet: "magnet:?xt=urn:btih:deadbeef"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// A truecolor/unicode theme so the border's rounded-corner glyph is
+	// actually drawn (testTheme() elsewhere in this file forces ColorNone,
+	// which is orthogonal to the border glyph — Unicode still applies —
+	// but using the same capability here keeps the corner assertion
+	// independent of that).
+	th := theme.New(theme.DefaultThemeName, theme.Capability{Color: theme.ColorNone, Unicode: true, Interactive: true})
+
+	m := New(eng, th)
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(Model)
+	updated, _ = m.Update(engineUpdateMsg{statuses: eng.List()})
+	m = updated.(Model)
+
+	updated, _ = m.Update(keyRune("q"))
+	m = updated.(Model)
+
+	view := m.View()
+	if !strings.Contains(view, "╭") {
+		t.Fatalf("expected the quit-confirm view to draw a rounded modal border:\n%s", view)
+	}
+}
+
 // TestRenderTabsHighlightsCurrentScreen is a lightweight non-teatest check
 // that the tab bar text contains every screen's label.
 func TestRenderTabsHighlightsCurrentScreen(t *testing.T) {

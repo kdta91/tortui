@@ -2562,14 +2562,48 @@ green; `go test -race ./...` clean; `internal/tui/components` coverage 93.7%,
 
 ### T-054 · Modals and confirm dialog
 ```
-status: in-progress
+status: done
 depends: T-051
 ```
+**Files:** `internal/tui/components/dialog.go`, `internal/tui/components/dialog_test.go`,
+`internal/tui/theme/theme.go` (new `Theme.Border`), `internal/tui/root.go`, `internal/tui/root_test.go`
+
+**Notes:** `components.Dialog` is the one generic modal mechanism: a `Title`, a `Message`, a
+`[]DialogOption` of plain labels (no torrent/indexer type anywhere near it — AGENT.md §4), and a
+`Default` index. It is plain state plus a pure `View` (same shape as `StatusBar`/`Table`), so it
+is unit-tested with no bubbletea program. `View` draws through a new `Theme.Border` — a
+`lipgloss.Style` carrying the palette's single accent colour and degrading to `ASCIIBorder()`
+under a non-Unicode capability the same way `GlyphSet` does — which is the first real use of
+AGENT.md §7's "border around the focused pane and modals" allowance; nothing before this task
+needed one. `Open()` is a no-op when the dialog is already open — a caller bug, not something
+reachable through tortui's own context-scoped keymap — and reports it via `slog.Warn` through an
+optional `Logger` field defaulting to `slog.Default()` (the same fallback `internal/store` and
+`internal/indexer/httpx` use), never to stdout/stderr. `Cancel` and `Confirm` both restore the
+highlighted option to `Default`, so a dialog reopened later never resumes a stale cursor.
+
+T-051's `ContextQuitConfirm` prompt is refactored onto this component (root's `quitConfirm` field
+is now a `components.Dialog`, not a bare bool) per this task's own note to prefer that over a
+parallel one-off where it genuinely fits; `ContextHelp` and `ContextErrorDetail` are left alone
+since neither is a confirm dialog (one is a key listing, the other an info panel), and touching
+either risked the already-passing `TestKeymapNoConflicts`/DEC-092 wiring for no benefit. Root
+gained one new piece of generic state, `Model.selection` — a screen-agnostic integer cursor moved
+by the existing (previously no-op) `ActionMoveUp`/`ActionMoveDown` bindings — solely so "esc
+restores the originating screen and selection" is a real, testable claim now rather than
+deferred; no screen content, list, or data model was added, and a later screen task is free to
+replace it with its own bounded, data-backed cursor. `TestQuitConfirmEscRestoresScreenAndSelection`
+drives the real `Model` through tab + j/j + q + esc and asserts both the screen and the selection
+value survive the round trip, not just that some screen is showing.
+
+Verified: `make check` green; `go test -race ./...` clean; `golangci-lint run ./...` clean under
+`GOOS=darwin`, `GOOS=linux`, and `GOOS=windows` (with `GOARCH=amd64`); cross-compiled builds for
+all six AGENT.md §14 tier-1 OS/arch pairs succeed; `internal/tui/...` coverage 93-97%, well above
+the 50% floor. See DEC-093 for the `Theme.Border` addition.
+
 **Acceptance**
-- Generic confirm dialog with configurable options and a default.
-- Never more than one modal deep — opening a second is a programming error that returns a
+- [x] Generic confirm dialog with configurable options and a default.
+- [x] Never more than one modal deep — opening a second is a programming error that returns a
   logged no-op, not a stack.
-- `esc` always cancels; focus returns to the originating screen and selection.
+- [x] `esc` always cancels; focus returns to the originating screen and selection.
 
 ---
 
@@ -3336,6 +3370,7 @@ when it reaches it and does not start backlog items on its own.
 | DEC-090 | 2026-09-16 | T-051 adds `github.com/charmbracelet/bubbletea v1.3.10` as a real dependency (AGENT.md §3 already locked it) and `github.com/charmbracelet/x/exp/teatest` as a test-only one, both for the first time — `internal/tui` previously had no bubbletea program at all | Checked with `go run github.com/google/go-licenses/v2@v2.0.1 check ./... --ignore github.com/kdta91/tortui --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC` for all three `GOOS` (`make licenses`), which passed once DEC-091's fix was applied, and every transitive dependency it pulled in — `charmbracelet/x/{ansi,cellbuf,term,exp/golden}`, `clipperhouse/{displaywidth,stringish,uax29/v2}`, `erikgeiser/coninput`, `mattn/go-runewidth` (upgraded), `muesli/{ansi,cancelreader}`, `aymanbagabas/go-udiff`, `golang.org/x/text` — is MIT or BSD-3-Clause, all allowed. `bubbles` was resolved transitively during `go get` but is unused (no screen in this task has an input widget) and `go mod tidy` dropped it; it is not in `go.mod` and carries no NOTICE entry | T-051 |
 | DEC-091 | 2026-09-16 | Pinned `github.com/mattn/go-localereader` (a `bubbletea` transitive dependency, Windows-only TTY input path) to commit `2491eb6` instead of its only tagged release, `v0.0.1` | `make licenses` failed with "Did not find license for library" for this package under `GOOS=windows` only (it is not imported on darwin/linux, where the same command passed) — a real gap, not a false positive: the module zip for `v0.0.1` (tag `6338b4c`) genuinely contains no LICENSE file, confirmed by listing its contents directly. Verified via `gh api repos/mattn/go-localereader` that the repository's GitHub-reported license is MIT and its `README.md` states "MIT", but a `LICENSE` file was only added four commits after the `v0.0.1` tag, in a PR (`gh api repos/mattn/go-localereader/commits`) that touched no source file — `git diff` between `v0.0.1` and `2491eb6` is LICENSE-only. Rather than overriding the license gate for an unverifiable artifact (which would leave the actual redistributed `v0.0.1` code without its license text) or treating this as a stop condition over a one-file, zero-code-change gap, pinned to the untagged commit that includes the LICENSE (`go get github.com/mattn/go-localereader@2491eb6c1c75720122ef321ed7acc3a8d9de95b1`, resolving to pseudo-version `v0.0.2-0.20220822084749-2491eb6c1c75`) so the dependency actually vendored into this repo's `go.sum` carries its own license text and `go-licenses`/`NOTICE` reflect it accurately. `make licenses` passes clean on all three `GOOS` after the pin; `NOTICE` now lists `github.com/mattn/go-localereader,MIT,https://github.com/mattn/go-localereader/blob/2491eb6c1c75/LICENSE` | T-051 |
 | DEC-092 | 2026-09-16 | T-052's acceptance text — "source-error indicator (`2/4 sources failed`) expandable with `tab`" — is implemented with `tab` scoped to a new modal `Context` (`ContextErrorDetail`) rather than bound a second time inside every screen context. `e` (unbound elsewhere in `GlobalBindings`) opens the panel when `components.StatusBar.FailedSources` is non-empty; once open, `tab` (or `esc`) collapses/closes it. The indicator's own label reads `"N/M sources failed (e to view)"`, matching the real key | Read literally, "expandable with tab" would bind `tab` to a second `Action` (`ActionToggleErrorDetail`) inside every one of the five `screenContext` values, where T-051 already binds `tab` to `ActionNextScreen` — a direct violation of `TestKeymapNoConflicts`, which T-051 froze as "no key is bound to two actions within the same context." Two implementations were weighed: (a) keep `tab` for screen-cycling everywhere and add the error panel behind a different key end-to-end (drops the acceptance text's `tab` entirely), or (b) give `tab` its expand/collapse meaning only inside a context where `ActionNextScreen` is never bound at all — a new modal `Context`, exactly like `ContextHelp`/`ContextQuitConfirm` already do for `?`/quit-confirm's own bindings. (b) is what's implemented: `Binding.expand()`'s existing rule (an explicit `Contexts` list is not merged with `contextGlobal`) already keeps `ContextErrorDetail` untouched by every screen-scoped binding, so `tab` genuinely means only one thing inside it, and `TestKeymapNoConflicts` — unmodified — still passes because there is no context where `tab` maps to two actions. This preserves the literal key named in the acceptance text for the one place it can apply without contradicting a frozen T-051 invariant, rather than silently dropping it. Verified: `Conflicts(AllBindings())` returns zero entries; `TestSourceErrorIndicatorAppearsAndExpands` drives `e` then `tab` through the real `Model` and confirms `tab` inside `ContextErrorDetail` neither cycles the screen nor collides with anything | T-052 |
+| DEC-093 | 2026-09-16 | `Theme` gained one new field, `Border`, a `lipgloss.Style` carrying `Border(lipgloss.RoundedBorder())` (or `lipgloss.ASCIIBorder()` when `Capability.Unicode` is false) plus `BorderForeground` set to the palette's existing `Accent` hex — no new colour, no second accent, no hardcoded escape sequence | AGENT.md §7 allows a box border in exactly two places: "around the focused pane and modals." No task before T-054 needed one — T-053's table has no border, the tab bar and status bar are plain lines — so `theme.Theme` (T-050) simply never grew a `Border` style. T-054's generic confirm dialog is the first thing that actually draws a modal box, and AGENT.md §14's "Width measurement uses uniseg" / "no hardcoded hex colours" rules apply just as much to a border as to text: the corner/edge glyphs needed a Unicode/ASCII split parallel to `GlyphSet`'s (`RoundedBorder` uses `╭╮╰╯│─`, unsafe on the same terminals `ASCIIGlyphs` already exists for), and the colour needed to come from the same renderer-and-profile pipeline every other style in `Theme.New` already goes through, reusing `Accent` rather than introducing a new palette field the "one accent colour ... no second accent" rule would have to carve an exception for. No new dependency — `lipgloss.ASCIIBorder`/`RoundedBorder` are already in the locked `charmbracelet/lipgloss` module (DEC-001). Verified: `TestDialogRendersInsideABorder` and `TestQuitConfirmRendersInsideAModalBorder` assert the rounded corner glyph appears in a real dialog/modal render; `theme`'s existing `TestGoldenNoColorZeroEscapeCodes` was left unmodified and still passes because it exercises the pre-existing style fields, not `Border` | T-054 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
