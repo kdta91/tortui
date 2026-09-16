@@ -2,10 +2,13 @@ package theme
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 )
+
+var errTestSizeUnavailable = errors.New("test: size unavailable")
 
 // stubEnviron is a termenv.Environ backed by a map, so tests can set
 // NO_COLOR, CLICOLOR_FORCE, TERM, and locale variables without touching
@@ -155,6 +158,70 @@ func TestDetectUnicodeCapability(t *testing.T) {
 				t.Fatalf("Unicode = %v, want %v", capability.Unicode, tc.want)
 			}
 		})
+	}
+}
+
+func TestDetectMultiplexer(t *testing.T) {
+	tests := []struct {
+		name    string
+		environ stubEnviron
+		want    string
+	}{
+		{name: "no multiplexer", environ: stubEnviron{"TERM": "xterm-256color"}, want: ""},
+		{name: "tmux via TMUX var", environ: stubEnviron{"TMUX": "/tmp/tmux-1000/default,1234,0", "TERM": "screen-256color"}, want: "tmux"},
+		{name: "screen via STY var", environ: stubEnviron{"STY": "1234.pts-0.host", "TERM": "screen"}, want: "screen"},
+		{name: "tmux TMUX wins over screen-shaped TERM", environ: stubEnviron{"TMUX": "x", "TERM": "screen-256color"}, want: "tmux"},
+		{name: "TERM fallback when no marker var set", environ: stubEnviron{"TERM": "screen-256color"}, want: "screen"},
+		{name: "tmux TERM fallback", environ: stubEnviron{"TERM": "tmux-256color"}, want: "tmux"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			capability := Detect(DetectOptions{Out: tempFile(t), Environ: tc.environ})
+			if capability.Multiplexer != tc.want {
+				t.Fatalf("Multiplexer = %q, want %q", capability.Multiplexer, tc.want)
+			}
+		})
+	}
+}
+
+func TestDetectSizeUsesSizeFunc(t *testing.T) {
+	capability := Detect(DetectOptions{
+		Out:     tempFile(t),
+		Environ: stubEnviron{},
+		SizeFunc: func(*os.File) (int, int, error) {
+			return 120, 40, nil
+		},
+	})
+
+	if capability.Width != 120 || capability.Height != 40 {
+		t.Fatalf("Width/Height = %d/%d, want 120/40", capability.Width, capability.Height)
+	}
+}
+
+func TestDetectSizeZeroOnError(t *testing.T) {
+	capability := Detect(DetectOptions{
+		Out:     tempFile(t),
+		Environ: stubEnviron{},
+		SizeFunc: func(*os.File) (int, int, error) {
+			return 0, 0, errTestSizeUnavailable
+		},
+	})
+
+	if capability.Width != 0 || capability.Height != 0 {
+		t.Fatalf("Width/Height = %d/%d, want 0/0 when SizeFunc errors", capability.Width, capability.Height)
+	}
+}
+
+func TestDetectSizeDefaultsToRealTerminalSize(t *testing.T) {
+	// No SizeFunc override: Detect must fall back to
+	// internal/platform.TerminalSize, which errors on a plain
+	// non-terminal file exactly like tempFile — so Width/Height stay 0
+	// rather than panicking or fabricating a value.
+	capability := Detect(DetectOptions{Out: tempFile(t), Environ: stubEnviron{}})
+
+	if capability.Width != 0 || capability.Height != 0 {
+		t.Fatalf("Width/Height = %d/%d, want 0/0 for a plain file with no SizeFunc override", capability.Width, capability.Height)
 	}
 }
 

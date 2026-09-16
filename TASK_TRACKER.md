@@ -2609,21 +2609,69 @@ the 50% floor. See DEC-093 for the `Theme.Border` addition.
 
 ### T-055 · Terminal capability detection and `doctor`
 ```
-status: in-progress
+status: done
 depends: T-050, T-002
 ```
-**Files:** `internal/tui/capability.go`, `cmd/tortui/doctor.go`
+**Files:** `internal/tui/theme/capability.go` (extended, not `internal/tui/capability.go` — see
+DEC-094), `internal/platform/fdlimit_{darwin,linux,windows}.go`,
+`internal/platform/termsize_{darwin,linux,windows}.go`, `internal/doctor/doctor.go`,
+`cmd/tortui/doctor.go`, `cmd/tortui/main.go` (dispatch), `internal/logging/mask.go` (`Redact`
+export)
 
 **Acceptance**
-- Detects colour profile, Unicode/glyph support, terminal size, tmux/screen wrapping, and
-  whether stdout is a TTY.
-- `tortui doctor` prints OS/arch, `TERM`, `COLORTERM`, detected profile, Unicode verdict,
+- [x] Detects colour profile, Unicode/glyph support, terminal size, tmux/screen wrapping, and
+  whether stdout is a TTY. Colour/Unicode/TTY detection is T-050's existing
+  `internal/tui/theme.Detect`; size (`Width`/`Height`, via new `internal/platform.TerminalSize`,
+  one file per OS build tag) and `Multiplexer` (tmux/screen, from `$TMUX`/`$STY`/`TERM`) are the
+  new pieces this task adds to that same detector rather than a second one (DEC-094).
+- [x] `tortui doctor` prints OS/arch, `TERM`, `COLORTERM`, detected profile, Unicode verdict,
   terminal size, resolved config/state/download paths, file-descriptor soft and hard limits,
-  and every configured indexer with a reachability verdict. Exits without starting the TUI.
-- Output is plain text, safe to pipe and paste into a bug report. Credentials are masked.
-- Non-zero exit when a hard problem is found (unwritable download dir, `TERM=dumb`).
-- On darwin, startup raises the soft FD limit to the hard limit and `doctor` reports both
-  the original and the raised value (AGENT.md §13).
+  and every configured indexer with a reachability verdict. Exits without starting the TUI —
+  `runDoctor` (`cmd/tortui/doctor.go`) never imports `internal/tui`.
+- [x] Output is plain text, safe to pipe and paste into a bug report (`internal/doctor.Format`
+  emits no ANSI escapes, no lipgloss rendering, regardless of detected capability — verified by
+  `TestFormatIsPlainText`/`TestRunDoctorOutputHasNoANSIEscapes`). Credentials are masked: no
+  `IndexerVerdict` field ever carries a URL, and every string built from a network error is
+  passed through the new `logging.Redact` (an exported wrapper around the existing masking
+  regexes) before being stored — verified end to end with real user-shaped api_key/cookie
+  values sent to an `httptest.Server` and to an unroutable host
+  (`TestBuildNeverLeaksCredentials`, `TestBuildNeverLeaksCredentialsOnNetworkFailure`,
+  `TestRunDoctorMasksIndexerCredentials`).
+- [x] Non-zero exit when a hard problem is found (unwritable download dir, `TERM=dumb`) —
+  `doctor.HasHardProblem`; both cases have a dedicated `cmd/tortui` integration test. A
+  non-2xx or unreachable indexer is informational (exit 0), not a hard problem — only the two
+  named conditions are.
+- [x] On darwin, `platform.RaiseFDLimit` makes a real, tested attempt at startup to raise the
+  soft FD limit to the hard limit, and `doctor` reports both the soft limit as seen at startup
+  and the value after that attempt (AGENT.md §13). **Correction (DEC-096):** in every real
+  invocation, Go's own runtime already raises the soft limit to the hard ceiling in an `init()`
+  that runs before `main()` (Go 1.19+, `src/syscall/rlimit.go`), so `RaiseFDLimit`'s own
+  `Setrlimit` call is normally a no-op by the time it runs and the "seen at startup" value it
+  reports already reflects the Go runtime's raise, not one tortui performed. This was not
+  observable or testable at the time this task first shipped — `getrlimitFunc`/`setrlimitFunc`/
+  `sysctlUint32Func` seams and `TestRaiseFDLimitRaisesWhenSoftIsBelowHardCeiling` were added
+  during QA remediation to exercise the raise branch against a mocked starting limit, and
+  `doctor.Format`'s wording was corrected to stop implying tortui performed a raise it normally
+  did not. Linux gets the identical treatment and the identical correction (low container
+  defaults are the same hazard). Windows has no per-process descriptor limit to raise;
+  `platform.FDLimits{Supported: false}` and a plain "not applicable" line in `doctor`'s output
+  is the coherent Windows path (AGENT.md §14: a feature working on two of three OSes is not
+  done), not a stub.
+
+**Notes.** Reachability probing reuses `internal/indexer/httpx.Client` (single attempt, the
+indexer's own credentials, a bounded per-call deadline) instead of building real torznab/scraper
+adapter instances from config — that wiring belongs to T-080/T-081 and `internal/app`, neither of
+which exists yet, and this task was explicitly scoped to not build ahead into either (see
+DEC-095). No new dependency: `golang.org/x/sys/unix` (darwin/linux rlimit + sysctl) and
+`golang.org/x/sys/windows` (console buffer info) are both already-vendored packages of the
+existing `golang.org/x/sys` module (T-051) — `go.mod`/`go.sum`/`NOTICE` are byte-identical before
+and after this task. Verified: `make check` green; `go test -race ./...` green;
+`golangci-lint run` and `go vet ./...` clean under `GOOS=darwin/linux/windows`; all six tier-1
+`GOOS`/`GOARCH` pairs cross-compile via `make build-all`; manual `./bin/tortui doctor` run
+(including `TERM=dumb`, a piped non-TTY run, and a real config.toml with a fake api_key/cookie
+pointed at an unroutable host) matches every acceptance line above. QA later found the FD raise
+was never actually exercised or honestly described (see DEC-096); the injectable-syscall seam,
+its test, and `doctor`'s corrected wording were added in remediation on the same branch/PR.
 
 ---
 
@@ -3371,6 +3419,9 @@ when it reaches it and does not start backlog items on its own.
 | DEC-091 | 2026-09-16 | Pinned `github.com/mattn/go-localereader` (a `bubbletea` transitive dependency, Windows-only TTY input path) to commit `2491eb6` instead of its only tagged release, `v0.0.1` | `make licenses` failed with "Did not find license for library" for this package under `GOOS=windows` only (it is not imported on darwin/linux, where the same command passed) — a real gap, not a false positive: the module zip for `v0.0.1` (tag `6338b4c`) genuinely contains no LICENSE file, confirmed by listing its contents directly. Verified via `gh api repos/mattn/go-localereader` that the repository's GitHub-reported license is MIT and its `README.md` states "MIT", but a `LICENSE` file was only added four commits after the `v0.0.1` tag, in a PR (`gh api repos/mattn/go-localereader/commits`) that touched no source file — `git diff` between `v0.0.1` and `2491eb6` is LICENSE-only. Rather than overriding the license gate for an unverifiable artifact (which would leave the actual redistributed `v0.0.1` code without its license text) or treating this as a stop condition over a one-file, zero-code-change gap, pinned to the untagged commit that includes the LICENSE (`go get github.com/mattn/go-localereader@2491eb6c1c75720122ef321ed7acc3a8d9de95b1`, resolving to pseudo-version `v0.0.2-0.20220822084749-2491eb6c1c75`) so the dependency actually vendored into this repo's `go.sum` carries its own license text and `go-licenses`/`NOTICE` reflect it accurately. `make licenses` passes clean on all three `GOOS` after the pin; `NOTICE` now lists `github.com/mattn/go-localereader,MIT,https://github.com/mattn/go-localereader/blob/2491eb6c1c75/LICENSE` | T-051 |
 | DEC-092 | 2026-09-16 | T-052's acceptance text — "source-error indicator (`2/4 sources failed`) expandable with `tab`" — is implemented with `tab` scoped to a new modal `Context` (`ContextErrorDetail`) rather than bound a second time inside every screen context. `e` (unbound elsewhere in `GlobalBindings`) opens the panel when `components.StatusBar.FailedSources` is non-empty; once open, `tab` (or `esc`) collapses/closes it. The indicator's own label reads `"N/M sources failed (e to view)"`, matching the real key | Read literally, "expandable with tab" would bind `tab` to a second `Action` (`ActionToggleErrorDetail`) inside every one of the five `screenContext` values, where T-051 already binds `tab` to `ActionNextScreen` — a direct violation of `TestKeymapNoConflicts`, which T-051 froze as "no key is bound to two actions within the same context." Two implementations were weighed: (a) keep `tab` for screen-cycling everywhere and add the error panel behind a different key end-to-end (drops the acceptance text's `tab` entirely), or (b) give `tab` its expand/collapse meaning only inside a context where `ActionNextScreen` is never bound at all — a new modal `Context`, exactly like `ContextHelp`/`ContextQuitConfirm` already do for `?`/quit-confirm's own bindings. (b) is what's implemented: `Binding.expand()`'s existing rule (an explicit `Contexts` list is not merged with `contextGlobal`) already keeps `ContextErrorDetail` untouched by every screen-scoped binding, so `tab` genuinely means only one thing inside it, and `TestKeymapNoConflicts` — unmodified — still passes because there is no context where `tab` maps to two actions. This preserves the literal key named in the acceptance text for the one place it can apply without contradicting a frozen T-051 invariant, rather than silently dropping it. Verified: `Conflicts(AllBindings())` returns zero entries; `TestSourceErrorIndicatorAppearsAndExpands` drives `e` then `tab` through the real `Model` and confirms `tab` inside `ContextErrorDetail` neither cycles the screen nor collides with anything | T-052 |
 | DEC-093 | 2026-09-16 | `Theme` gained one new field, `Border`, a `lipgloss.Style` carrying `Border(lipgloss.RoundedBorder())` (or `lipgloss.ASCIIBorder()` when `Capability.Unicode` is false) plus `BorderForeground` set to the palette's existing `Accent` hex — no new colour, no second accent, no hardcoded escape sequence | AGENT.md §7 allows a box border in exactly two places: "around the focused pane and modals." No task before T-054 needed one — T-053's table has no border, the tab bar and status bar are plain lines — so `theme.Theme` (T-050) simply never grew a `Border` style. T-054's generic confirm dialog is the first thing that actually draws a modal box, and AGENT.md §14's "Width measurement uses uniseg" / "no hardcoded hex colours" rules apply just as much to a border as to text: the corner/edge glyphs needed a Unicode/ASCII split parallel to `GlyphSet`'s (`RoundedBorder` uses `╭╮╰╯│─`, unsafe on the same terminals `ASCIIGlyphs` already exists for), and the colour needed to come from the same renderer-and-profile pipeline every other style in `Theme.New` already goes through, reusing `Accent` rather than introducing a new palette field the "one accent colour ... no second accent" rule would have to carve an exception for. No new dependency — `lipgloss.ASCIIBorder`/`RoundedBorder` are already in the locked `charmbracelet/lipgloss` module (DEC-001). Verified: `TestDialogRendersInsideABorder` and `TestQuitConfirmRendersInsideAModalBorder` assert the rounded corner glyph appears in a real dialog/modal render; `theme`'s existing `TestGoldenNoColorZeroEscapeCodes` was left unmodified and still passes because it exercises the pre-existing style fields, not `Border` | T-054 |
+| DEC-094 | 2026-09-16 | T-055's Files line names `internal/tui/capability.go`, but the terminal-capability detector already lives at `internal/tui/theme/capability.go` (T-050, merged). Rather than creating a second detector at the literal path, T-055 extended the existing `theme.Capability`/`theme.Detect` with the two genuinely new pieces the task needs — `Width`/`Height` (via a new `internal/platform.TerminalSize`, one file per OS) and `Multiplexer` (tmux/screen, detected from `$TMUX`/`$STY`/`TERM`) — and left colour-profile/Unicode/interactive detection untouched | Duplicating capability detection would mean two sources of truth for the same terminal, diverging the moment either one changes, and AGENT.md itself says the constraints in a task's Files line are followed unless AGENT.md's own architecture says otherwise — reusing one detector across `doctor` and the future TUI root is the more literal reading of "single source of truth," not a deviation from it. `theme.DetectOptions` gained a `SizeFunc` field (mirroring `Environ`) so the new size detection is testable without a real attached terminal, matching the package's existing testing approach | T-055 |
+| DEC-095 | 2026-09-16 | `tortui doctor`'s per-indexer reachability probe (`internal/doctor.checkIndexers`) reuses `internal/indexer/httpx.Client` directly — the same HTTP client the (not-yet-built) torznab/scraper adapters will use — rather than adding a second, doctor-only HTTP client, and rather than routing through `internal/indexer.Registry` or building real adapter instances from `config.Indexer` | Building real `torznab`/`scraper` adapter instances from config is composition-root wiring that belongs to T-080/T-081 (indexer management + connection-test UI) and `internal/app`, neither of which exists yet and both of which this task was explicitly told not to build ahead into. `httpx.Client` already gives a one-shot, single-attempt (`MaxAttempts: 1`) GET with the user's own credentials injected, a bounded deadline, and — load-bearing for this task's "credentials are masked" requirement — error text that never contains a request URL (see that package's doc comment), so `doctor` gets a meaningful, safe-to-print reachability check without any adapter-specific logic. Verified: `TestBuildNeverLeaksCredentials`/`TestBuildNeverLeaksCredentialsOnNetworkFailure` (real credentials sent to an `httptest.Server`/an unroutable host, output asserted clean) and the manual smoke test in the PR description | T-055 |
+| DEC-096 | 2026-09-16 | QA on T-055's PR root-caused that `platform.RaiseFDLimit`'s own `Setrlimit` call is dead code in every real invocation: since Go 1.19, `src/syscall/rlimit.go`'s `init()` unconditionally raises `RLIMIT_NOFILE`'s soft limit to `hard-1` before `main()` runs on every Unix binary, so the very first `Getrlimit` call `RaiseFDLimit` makes — however early it runs — already observes a raised value, not a genuine pre-raise baseline (confirmed with a from-scratch minimal binary: even after `ulimit -Sn 256` in the parent shell, a freshly built Go binary reports `cur` already at the hard ceiling before any of its own code runs). Neither `fdlimit_darwin_test.go` nor `fdlimit_linux_test.go` had a seam to drive the raise branch against a mocked low starting value, so it had never actually been exercised by a test either. Remediated two ways: (1) `fdlimit_{darwin,linux}.go` gained unexported package-variable seams — `getrlimitFunc`/`setrlimitFunc`/`sysctlUint32Func` (darwin) and `getrlimitFunc`/`setrlimitFunc` (linux), mirroring `theme.DetectOptions.SizeFunc`'s injectable-syscall pattern — and a new test in each (`TestRaiseFDLimitRaisesWhenSoftIsBelowHardCeiling`) mocks a starting `Rlimit` with `Cur < Max`, asserting a real `Setrlimit` call happens with the expected target and that the reported `Soft`/`Hard`/`Raised` values are exactly the mocked ones. (2) `doctor.Format`'s FD section no longer implies tortui performed a raise it did not: it now labels the two numbers "seen at startup" / "after tortui's raise attempt" instead of "original" / "raised", and prints a note naming the actual mechanism (`src/syscall/rlimit.go`, Go 1.19+) so a future reader does not "fix" `RaiseFDLimit` back into looking load-bearing when it is a defensive fallback. `RaiseFDLimit` itself was kept rather than deleted — it is a correct, harmless no-op on a stock toolchain and a real fallback if that runtime behaviour ever changes or is disabled — and T-055's tracker acceptance/notes text was corrected to stop asserting tortui "raises" the limit as if the Go runtime weren't the one already doing it | T-055 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.

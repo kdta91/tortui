@@ -141,6 +141,24 @@ var knownSecretPrefixPattern = regexp.MustCompile(
 		`|\bey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b`, // JWTs
 )
 
+// Redact applies the same free-text masking maskText uses on every log
+// record — URLs (including embedded basic-auth and query-string
+// credentials), "key=value"/"key: value" credential pairs, bearer tokens,
+// and known bare secret-token shapes — to an arbitrary string a caller
+// wants to display outside the logger entirely.
+//
+// `tortui doctor` (T-055) is the motivating caller: an indexer reachability
+// check surfaces a raw net/http error, which can embed the request URL
+// (and therefore any api_key/cookie the user configured as a query
+// parameter) verbatim in its Error() text. Piping that error through
+// Redact before printing it gives doctor's output the same masking
+// guarantee — and the same documented limits — as the log file, without a
+// second, drifting copy of the regexes in this file. See the package doc
+// above for exactly what is and is not caught.
+func Redact(s string) string {
+	return maskText(s)
+}
+
 // maskText redacts URLs, credential-shaped substrings, bearer tokens, and
 // known bare secret-token shapes inside free text (log messages and
 // non-sensitive-keyed string attrs), independent of the key-based masking
