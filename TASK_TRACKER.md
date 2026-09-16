@@ -1643,7 +1643,8 @@ adapter. `*Adapter` satisfies the frozen §5 `indexer.Indexer`, asserted at comp
 files, six new test files, six fixtures, one new document, `go.mod`/`go.sum`/`NOTICE`, and this
 tracker. Nothing outside `internal/indexer/scraper/` imports the package (§4). Every request
 goes through T-020's `httpx`, so this package never touches `net/http`, never sees a credential,
-and writes no log lines at all. **There is not one selector anywhere in the Go code** — every
+and writes no log lines at all *(superseded by T-023: the definition loader added in that task is
+the one thing in the package that logs — see DEC-081)*. **There is not one selector anywhere in the Go code** — every
 selector in the package's non-test source is a field of a struct read out of YAML. Package
 coverage is **99.9% of statements** (the one uncovered statement is the `html.Parse` error
 branch, which `golang.org/x/net/html` cannot reach from a byte slice); `make check` and
@@ -1826,10 +1827,106 @@ adapter importing another and the alternative grows the package holding the froz
 
 ### T-023 · Definition loading and hot-reload
 ```
-status: in-progress
+status: done
 depends: T-022
 ```
-**Files:** `internal/indexer/scraper/loader.go`
+**Files:** `internal/indexer/scraper/loader.go` and `loader_test.go`; `internal/config/paths.go`
+and a new `paths_test.go`; the "Where definitions live, and when they are read" section of
+`docs/indexer-definitions.md`; and the package doc in `internal/indexer/scraper/scraper.go`.
+`git diff --stat main` lists exactly those six files: two new source/test pairs, one edited
+source file, one edited document. No §5 type was touched and no TUI file exists yet to touch.
+
+**What landed.** `scraper.NewLoader(LoaderOptions) (*Loader, error)` resolves the definitions
+directory and touches no disk; `(*Loader).Reload() error` reads every `*.yml` in it, parses and
+validates each file independently, and publishes the result as an immutable `*Snapshot` through
+one `atomic.Pointer.Store`. Readers go through `Snapshot()`, `Definitions()`, `Definition(id)`
+and `Skipped()`. The exported surface is, enumerated: `Loader`, `LoaderOptions`, `Snapshot`,
+`Skipped`, `NewLoader`, `ErrDefinitionTooLarge`, `ErrDefinitionIDDuplicated`, and the methods
+just named plus `Dir()`. Every one has a doc comment.
+
+**"Exposed in Settings" — what that means here, literally.** Settings is T-080/T-082 and does not
+exist; `internal/tui/` has no files yet. This task ships `Reload()` as the public seam a settings
+screen calls (README.md already documents `r` in Settings as the reload key) and **no TUI code**.
+Nothing in this branch renders, routes a key, or imports bubbletea. That criterion is therefore
+satisfied as the method-level half only, and the screen-level half belongs to T-080/T-082.
+
+**Path resolution is not duplicated.** `internal/config` gains one field, `Paths.DefinitionsDir`,
+set to `filepath.Join(ConfigDir, "definitions")` **after** the `--config` override, so it follows
+`$TORTUI_HOME`, `--config` and the per-OS root that `internal/platform` already resolves (§14).
+There is no second XDG implementation in this branch: `scraper` calls `config.ResolvePaths("")`
+when `LoaderOptions.Dir` is empty, and `go list -deps ./internal/config` shows `config` importing
+only `internal/platform`, so the new import direction creates no cycle.
+
+**Atomicity is proved by a `-race` test, not asserted.**
+`TestReloadSwapsAtomicallyUnderConcurrentReaders` runs 8 reader goroutines × 200 rounds against
+4 reloader goroutines × 200 rounds and requires every read to see the whole three-definition set
+and an id index that agrees with it. Proved non-vacuous by mutation: rewriting `Reload` to store
+an empty `Snapshot` first and fill its fields in afterwards makes `go test -race` report
+`WARNING: DATA RACE` between `(*Loader).Reload` and `(*Snapshot).Definitions` and fail. The
+mutation was reverted and `diff` against a pre-mutation copy confirms the file is byte-identical.
+
+**Proved by mutation, not asserted.** Each mutation was applied to the named file, the named test
+run, and the change reverted; `git status` is clean afterwards and every one was RED.
+
+| Mutation | Test |
+|---|---|
+| `Reload` publishes an empty snapshot and fills it in afterwards | `TestReloadSwapsAtomicallyUnderConcurrentReaders` (data race) |
+| a file that will not parse aborts the whole load | `TestOneMalformedFileAmongValidOnesIsSkippedAndLogged` |
+| the skip is logged at Debug instead of Error | `TestOneMalformedFileAmongValidOnesIsSkippedAndLogged` |
+| `Parse` stops calling `Validate` | `TestADefinitionThatFailsValidationIsSkippedRatherThanReturned` |
+| the extension match becomes case-sensitive | `TestAnUppercaseExtensionIsReadOnEveryPlatform` |
+| the duplicate-id check is removed | `TestTwoFilesDeclaringTheSameIDKeepTheFirstByFileName` |
+| the size cap is removed | `TestAFileLargerThanTheLimitIsSkipped` |
+| a failed directory read publishes an empty set | `TestADirectoryThatCannotBeReadIsReportedAndLeavesTheLastSetInPlace` |
+| a missing directory is reported as an error | `TestAMissingDirectoryIsNotAFailure` |
+| `Definitions()` hands out the snapshot's own slice | `TestMutatingTheReturnedSliceDoesNotChangeTheLoadersSet` |
+
+**Decisions this task had to make, because the criteria do not.** Each is a `DEC-` row rather
+than a silent choice: what counts as a `*.yml` file and how its case is compared (DEC-079), what
+"skipped" means for a file the criteria do not mention — a missing directory, an unlistable one,
+a duplicate id, an oversized file (DEC-080), and the fact that the loader is the first thing in
+this package that logs at all, which contradicted a sentence in the T-022 package doc (DEC-081).
+
+**Credential safety.** `internal/indexer/scraper`'s no-content-in-errors rule (DEC-073) now has a
+consumer that writes to a log file, so the rule is asserted here rather than inherited.
+`TestNothingTheLoaderLogsOrSkipsCarriesTheCredential` drives five failure modes — a YAML syntax
+error on the line holding the key, an unknown key in a file whose params hold the key, an
+uncompilable selector in a file whose `base_url` holds the key, an oversized file whose padding
+holds the key, and a duplicate id in a file whose params hold the key — through the **real**
+`internal/logging` sink and applies the package's own `assertNoCredentialLeak` to the log file
+and to every `Skipped.Err`. What the loader adds to an error is a file's **base name** and
+nothing else; `readCapped` never repeats the path, and `errWithoutPath` strips it out of an
+`fs.PathError` so "permission denied" survives and the user's home directory does not.
+`TestAFileThatCannotBeReadIsSkippedWithoutNamingItsPath` pins that.
+
+**Hostile input.** The definitions directory is the user's own, so the threat model is a mistake
+rather than an attacker, and the guards are sized accordingly: one file is capped at **1 MiB**
+before it is parsed (a limited reader stops one byte past the bound, so nothing larger is read
+into memory), sub-directories and non-`.yml` entries are never opened, and each file goes through
+T-022's `Parse`, which is strict and already refuses an alias bomb (DEC-075). There is no
+recursion and no symlink walk.
+
+**Portability.** No `runtime.GOOS` switch anywhere, in source or tests (§14). The two tests that
+need an unreadable file or directory ask the filesystem rather than the OS name: `makeUnreadable`
+chmods, then checks whether the thing is genuinely unreadable and **skips** when it is not, which
+covers both root and Windows, where `os.Chmod` only moves the read-only bit. Both ran (not
+skipped) on darwin/arm64 for this branch. `GOOS=windows go vet ./...` and `GOOS=linux go vet
+./...` are green.
+
+**Verification.** `make check` green. `go test -race ./... -count=1` green.
+`internal/indexer/...` coverage is **99.7%** of statements, `internal/indexer/scraper` alone
+**99.5%** — well over §9's 75% floor. The three partly-covered functions in `loader.go` are
+`NewLoader` 92.9% (the `config.ResolvePaths` failure branch), `readCapped` 84.6% and
+`errWithoutPath` 75.0% (the mid-read and close-failure branches); every other function in the
+file is 100%. `scripts/check-indexer-hostnames.sh main` is clean and the script is untouched.
+
+**Deliberately not done.** No filesystem watcher and no polling: "hot-reload" here is the
+explicit `Reload()` the criteria name, driven by the user, and a watcher is backlog `T-942`. No
+registry wiring — nothing turns a loaded definition into a registered `Indexer` yet, and the
+config schema names a definition by **file path** (`definition = "example.yml"`, T-002) while
+this loader indexes by the definition's own `id`; reconciling the two is backlog `T-943`, not a
+guess made here. No `.yaml` extension (`T-944`). No directory creation, no writing, no import
+from a path or URL (that is T-025), and no bundled definition (T-024).
 
 **Acceptance**
 - Loads all `*.yml` from `$XDG_CONFIG_HOME/tortui/definitions/`.
@@ -2763,6 +2860,27 @@ when it reaches it and does not start backlog items on its own.
   so `Query.Offset` can be divided by it. Left out rather than guessed at. Found while building
   T-022.
 
+- `T-942` Watch the definitions directory instead of only reloading on request. T-023 ships
+  `(*Loader).Reload()`, which the user (via Settings) drives; nothing notices a file that changed
+  underneath tortui. A watcher would need a dependency (`fsnotify` or equivalent, so a `DEC-` row
+  and a licence check) or a poll loop, and the criteria asked for neither, so it was left out
+  rather than guessed at. Note that §6.13's "never poll a source on a timer" is about *sources*,
+  not about the local filesystem, so it does not settle this. Found while building T-023.
+
+- `T-943` Decide how a config `[[indexer]]` entry names its definition. `internal/config`'s
+  schema (T-002) gives a scraper indexer a `definition` field documented as a **path**
+  (`definition = "example.yml"`), while T-023's loader indexes the set by the definition's own
+  `id` and keeps a file name only for the files it skipped. Whoever wires config to the registry
+  has to pick one — resolve by file name, resolve by id, or have the loader expose both — and
+  T-023 deliberately did not pick, because the wiring task is the one that can see both sides.
+  Found while building T-023.
+
+- `T-944` Decide whether `*.yaml` should be read as well as `*.yml`. T-023's criterion says
+  `*.yml` and the loader reads exactly that, so a user who names a file `archive.yaml` gets
+  silence: it is not loaded and, because it is never opened, it is not reported as skipped
+  either. Options are to read both extensions, or to keep reading only `.yml` and warn about a
+  `.yaml` file sitting in the directory. Found while building T-023.
+
 
 
 ---
@@ -2851,6 +2969,9 @@ when it reaches it and does not start backlog items on its own.
 | DEC-076 | 2026-09-15 | The json mode's "gjson-style path" is **hand-written** against `encoding/json` — dot-separated keys, an all-digit segment as an array index, `\.` and `\\` escapes — rather than taking `tidwall/gjson` as a dependency | The acceptance criterion's words are "JSON (gjson-style path)", which describes the *syntax shape* a user types, not a library to import. What a scraper definition needs out of a path expression is "walk to this key" and "take this array element", and that is nineteen lines of `switch` over `map[string]any` and `[]any`. Taking gjson would buy wildcards, queries, modifiers and multipaths — an expression language evaluated against attacker-influenced data, inside the one package whose input is attacker-influenced by design — in exchange for a dependency, a `DEC-` row, a `NOTICE` entry and a licence review, to support syntax no definition in this repository uses. AGENT.md §3 requires a decision either way; this is the decision. The subset is small enough to validate exhaustively at parse time (`TestCompilePath` covers six accepted and six rejected expressions) and small enough that nothing in it can recurse, backtrack or evaluate. `encoding/json`'s own nesting limit was verified rather than assumed: a 100,000-deep array is refused as an ordinary syntax error in constant time, not a stack overflow | T-022 |
 | DEC-077 | 2026-09-15 | `maxHTMLDepth` refuses an HTML response nested deeper than **512** elements before `html.Parse` is called, using a linear, allocation-free pre-scan that excludes the elements HTML5 closes implicitly (`li`, `tr`, `td`, `p`, …) and skips comments, doctypes and raw-text elements. 512 is deliberately the same bound `golang.org/x/net v0.45.0+` puts on its own open-element stack | Measured, not assumed, on 2026-09-15 (darwin/arm64, Go 1.27.1) against `golang.org/x/net v0.39.0`: a document that is nothing but nested `<div>` elements costs 8.5ms at depth 1000, 119ms at 5000, 400ms at 10 000, 1.6s at 20 000, 6.4s at 40 000 and **39s at 100 000** — the last two being 440KB and 1.1MB of input, well inside `httpx`'s 8MB cap. The page is written by the source, the parse is one uninterruptible call, and a context deadline does not touch it, so a source can burn a minute of a user's CPU per search with a small page. Excluding the optional-end-tag elements is correctness rather than pragmatism: the parser does not nest them, so counting them would refuse ordinary pages full of unclosed `<li>` and `<tr>` while doing nothing about the case the bound exists for, which needs an element that really does nest. The number matches upstream's so the guard behaves identically before and after the `x/net` upgrade the **Blocked** section asks for; the whole test suite passes against `x/net v0.39.0` and `v0.55.0` with no source change. This is also, discovered afterwards, published as `GO-2026-4440`; the guard mitigates that advisory and does **not** mitigate `GO-2026-4441` (an infinite parse loop), which is why the dependency still blocks the task | T-022 |
 | DEC-078 | 2026-09-16 | The scraper's HTML stack is pinned as the set goquery itself pairs: `golang.org/x/net v0.58.0`, `github.com/PuerkitoBio/goquery v1.13.0` and `github.com/andybalholm/cascadia v1.3.4`. Not `x/net@latest`, and not goquery `v1.10.3` kept in place | This is the pin that closes the block DEC-072 authorised the fix for, so the version is load-bearing and each bound was checked against the release's own `go.mod` rather than assumed. **Upper bound:** `x/net v0.59.0` declares `go 1.26.0`, which would raise the language floor past the 1.25 the owner authorised, so `@latest` is refused on purpose; `v0.58.0` is the newest release still declaring `go 1.25.0`. **Lower bound:** `v0.55.0` fixes all seven advisories reachable from `html.Parse` but still carries `GO-2026-5942` (a panic on an invalid SVCB/HTTPS RR in `dns/dnsmessage`, fixed in `v0.56.0`) — an HTML-only consumer never calls it, so the headline would stay clean, but the same run still reports "1 vulnerability in modules you require", which reads badly against a criterion written as 0. **goquery moved too**, and deliberately: `v1.13.0` is the first release whose own `go.mod` requires `x/net v0.58.0` and `cascadia v1.3.4`, so the pin becomes the pairing upstream ships rather than this repository holding a `v1.10.3` (whose declared `x/net` is `v0.39.0`) nineteen minors above what its author declared — an untested combination in the one package whose input is hostile by design. The constraint that kept T-022 on `v1.10.3` was that `v1.11`/`v1.12`/`v1.13` declare `go 1.24.0`/`1.25.0`/`1.25.0`; after T-941 that constraint is gone and `v1.13.0` matches the floor exactly. Cost accepted: goquery `v1.11`–`v1.13` refactor `array.go`, `filter.go`, `property.go`, `query.go`, `traversal.go`, `type.go` and `utilities.go`, so the move is a real surface — the whole suite, `-race`, and the package's 99.9% coverage are green across it with **no change to any source file**, and the eight goquery calls this package makes (`NewDocumentFromNode`, `Selection`, `FindMatcher`, `Length`, `EachWithBreak`, `First`, `AttrOr`, `Text`) are unchanged in signature and semantics upstream. Licences re-read from the modules' own `LICENSE` files: goquery BSD-3-Clause, cascadia BSD-2-Clause, `x/net` BSD-3-Clause; `make licenses` passes for `GOOS=darwin`, `linux` and `windows` and `NOTICE` is regenerated. `govulncheck ./...` reports `No vulnerabilities found.` with no trailing module count | T-022 |
+| DEC-079 | 2026-09-16 | The loader reads **`*.yml` only**, in the definitions directory itself, and compares the extension **case-insensitively on every platform**. A sub-directory is not descended into, a `.yaml` file is not read, and neither is reported as a skipped definition because neither is ever opened | The extension is what the T-023 criterion says (`*.yml`), so the set of files read is not a choice; how the comparison is made is. macOS's default APFS is case-insensitive, so a user who saves `ARCHIVE.YML` there has a file that works on their machine and silently vanishes when the same config directory is synced to Linux — AGENT.md §13 names that exact class of defect ("APFS is case-insensitive by default"), and the fix that keeps one behaviour on all three tier-1 systems is to fold case everywhere rather than to inherit the filesystem's opinion. `TestAnUppercaseExtensionIsReadOnEveryPlatform` pins it and goes red when the match becomes `filepath.Ext(name) == ".yml"`. The cost, stated rather than hidden: a `.yaml` file gets no diagnostic at all, which is filed as `T-944` rather than decided here, and a non-`.yml` file is deliberately **not** listed in `Skipped` — `Skipped` means "tortui tried to use this definition and could not", and diluting it with every unrelated file in the directory would make the settings screen's problem list useless | T-023 |
+| DEC-080 | 2026-09-16 | Four cases the criteria do not mention resolve as follows. **A missing definitions directory is not an error** — it yields an empty set and one Debug line. **A directory that cannot be listed is an error from `Reload`**, and the previously published set is left exactly as it was. **Two files declaring the same `id`**: the first in filename order wins, the second is skipped with `ErrDefinitionIDDuplicated`. **A file over 1 MiB** is skipped with `ErrDefinitionTooLarge` without being parsed | Each is a place where "one broken file never blocks startup" stops giving an answer, so each had to be decided explicitly rather than falling out of whatever the code happened to do. A **missing directory** is the ordinary state of a fresh install — nothing creates it, and T-024's sources are compiled in — so treating it as a failure would make the common case look broken; it is logged at Debug rather than Error for the same reason. An **unlistable** directory is different in kind: it is a real misconfiguration, no per-file recovery is possible because no file names are known, and the honest answer is to say so and change nothing. Keeping the old set on that path is the conservative half — a user who breaks permissions while tortui is running keeps the sources they already had, instead of watching them disappear — and `TestADirectoryThatCannotBeReadIsReportedAndLeavesTheLastSetInPlace` goes red if a failed read ever publishes an empty set. **Duplicate ids** have to be resolved deterministically or the winner depends on the order the filesystem returned, which differs between filesystems and is the sort of thing that reproduces on one machine and not another; filename order is the only ordering both the user and `os.ReadDir` can see, and `os.ReadDir` already sorts by it. First-wins over last-wins because the alternative makes the effective definition depend on a file the user may not know exists. The **1 MiB cap** is a guard on a mistake rather than on an attacker — the directory is the user's own — but a stray multi-gigabyte file in it should not be read into memory at startup, and the limited reader stops one byte past the bound so the size that decides is the number of bytes actually read rather than a size a directory listing reported earlier and that could have changed. Every one of the four is pinned by a test that was proved red by mutation; the table in the T-023 row lists which | T-023 |
+| DEC-081 | 2026-09-16 | `internal/indexer/scraper`'s package doc no longer says the package "writes no log lines at all". The definition **Loader** logs, and it is the only thing in the package that does: one Error line per skipped file carrying the file's base name and the error, and one Debug line when the directory does not exist. The T-022 tracker row's identical sentence is marked superseded in place | The T-022 claim was true when it was written and this task makes it false, and a stale safety claim is exactly the failure mode this repository keeps rejecting PRs for — so it is corrected where it appears rather than left for a reader to trip over, in the style of DEC-040/046/050/062/066/071. The behaviour itself is forced by the criterion "bad definitions are skipped with a **logged** error": a skip nobody is told about is a source that silently stopped working, which is the one outcome worse than a startup failure. What makes logging safe here is DEC-073 — no error this package produces carries a param value, a path, or the `base_url` — plus the loader adding only a file's base name to that, and `readCapped`/`errWithoutPath` keeping the filesystem path out of the two errors that would otherwise carry one. It is asserted rather than assumed: `TestNothingTheLoaderLogsOrSkipsCarriesTheCredential` drives five failure modes through the **real** `internal/logging` sink with the credential hardcoded into the definitions and greps the file with the package's own `assertNoCredentialLeak`, which also forbids any absolute URL. The logger is resolved at call time with `slog.Default()` as the fallback, the same arrangement as `httpx.Client.log`, so a logger installed after the loader was built is still the one used and nothing reaches stdout or stderr while the TUI owns the terminal (§3) | T-023, T-022 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
