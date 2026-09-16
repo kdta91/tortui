@@ -13,6 +13,10 @@ import (
 // testing (AGENT.md §15).
 const tortuiHomeEnv = "TORTUI_HOME"
 
+// definitionsDirName is the folder inside the config directory that holds
+// the user's own indexer definitions (T-023).
+const definitionsDirName = "definitions"
+
 // Paths bundles the resolved on-disk locations tortui uses for
 // configuration, state, and downloaded data.
 type Paths struct {
@@ -25,6 +29,14 @@ type Paths struct {
 	StateDir string
 	// DownloadDir is the default download destination.
 	DownloadDir string
+
+	// DefinitionsDir is the directory holding the user's own scraper
+	// source definitions, one *.yml file each. It always sits inside
+	// ConfigDir, so it follows --config and $TORTUI_HOME with it, and it
+	// is read by internal/indexer/scraper's Loader (T-023). Nothing
+	// creates it: a fresh install has no user-supplied source and the
+	// lawful defaults are compiled into the binary (T-024).
+	DefinitionsDir string
 }
 
 // ResolvePaths determines where config, state, and download data live,
@@ -73,6 +85,8 @@ func ResolvePaths(flagConfigPath string) (Paths, error) {
 		p.ConfigFile = flagConfigPath
 		p.ConfigDir = filepath.Dir(flagConfigPath)
 	}
+
+	p.DefinitionsDir = filepath.Join(p.ConfigDir, definitionsDirName)
 
 	return p, nil
 }

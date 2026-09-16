@@ -46,9 +46,15 @@
 //     decoded strictly, so an unknown key is an error rather than a place
 //     to hang a YAML alias bomb (DEC-075).
 //
-// This package writes no log lines at all. Every failure is returned as an
-// error the caller can log, which keeps the number of places a credential
-// could reach a log file from inside this package at zero.
+// Nothing in this package logs except the definition Loader (loader.go),
+// which has to: a definition file that will not parse is skipped rather
+// than fatal, and a skip nobody is told about is a source that silently
+// stopped working. Every other failure is returned as an error the caller
+// can log. What the Loader writes is a file's base name and an error out
+// of this package, and the rule above is what makes that safe:
+// TestNothingTheLoaderLogsOrSkipsCarriesTheCredential drives five failure
+// modes through the real internal/logging sink with a credential
+// hardcoded into the definitions and greps the file.
 //
 // # What each Result field carries
 //
