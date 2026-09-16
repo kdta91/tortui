@@ -2351,7 +2351,7 @@ anything new. `make check` and `go test -race ./...` are both green.
 
 ### T-050 · Theme
 ```
-status: in-progress
+status: done
 depends: T-001
 ```
 **Files:** `internal/tui/theme/`
@@ -2366,6 +2366,29 @@ depends: T-001
 - All string widths measured with `rivo/uniseg`. A golden test renders a results row containing
   CJK text and an emoji and asserts column alignment holds.
 - At least two built-in themes selectable from config.
+
+**Notes:** `internal/tui/theme` is pure detection + styling — no bubbletea, no `indexer`/`engine`
+import. `Palette` (`palette.go`) holds two built-in themes (`default`, `dusk`), each one accent
+plus foreground/muted/dim/error/success as truecolor hex, looked up by `Names()`/`Lookup()`.
+`Capability`/`Detect` (`capability.go`) resolve colour depth via `lipgloss.NewRenderer` +
+`termenv.WithEnvironment` (so `NO_COLOR`/`CLICOLOR_FORCE`/`TERM`/`COLORTERM` are read through an
+injectable `termenv.Environ`, never the live process env directly — makes every case unit-testable
+without mutating global state), Unicode-vs-ASCII via `LC_ALL`/`LC_CTYPE`/`LANG` (defaulting to
+Unicode when none is set), and `Interactive` via `TERM != "dumb"` plus an `os.ModeCharDevice`
+check on the output stream. `Detect` and `RefusalMessage` only report/word the "no TUI" case;
+main.go/root (T-051) own actually printing it and calling `os.Exit(1)`, since T-050's Files are
+scoped to the theme package alone. `Theme`/`New` (`theme.go`) turn a `Palette` + `Capability` into
+`lipgloss.Style`s via a renderer whose profile is set explicitly from the detected `ColorLevel`;
+at `ColorNone` no style ever calls `.Foreground`, so NO_COLOR is a hard "never attach colour" path,
+not merely a degraded one. `Width`/`Pad`/`Truncate` (`width.go`) wrap `rivo/uniseg` grapheme-aware
+measurement. Golden tests live in `golden_test.go` against fixtures in `testdata/` (regenerate with
+`UPDATE_GOLDEN=1 go test ./internal/tui/theme/...`, per AGENT.md §15 inspect any diff before
+committing). Coverage 92.9%, well over the §9 threshold. `make check` green; cross-`GOOS`
+`golangci-lint run ./...` clean for windows/linux/darwin (a native `make check` alone would not
+have caught a platform-specific lint failure — there is no OS-specific code in this package, but
+the check was run anyway per the task brief). New dependencies `charmbracelet/lipgloss` (already
+locked by AGENT.md §3), `rivo/uniseg` (already locked), and `muesli/termenv` (lipgloss's own
+terminal-capability backend, used here directly for `Environ`/`WithTTY` injection) — see DEC-088.
 
 ---
 
@@ -3187,6 +3210,7 @@ when it reaches it and does not start backlog items on its own.
 | DEC-085 | 2026-09-16 | T-040 adds `go.etcd.io/bbolt v1.4.3` to `go.mod` — the persistence choice AGENT.md §3 already locked, just not yet a real dependency. Verified MIT against `Makefile`'s `ALLOWED_LICENSES` two ways: reading `LICENSE` at the pinned tag directly, and running `make licenses` (after installing `go-licenses`, not previously on this machine), which passed on all three `GOOS` targets and regenerated `NOTICE` with `go.etcd.io/bbolt,MIT,...`. `internal/store` defines its own `TorrentRecord`/`HistoryEntry`/`Prefs` types rather than importing `internal/engine.Origin` or any `internal/indexer` type, even though `Origin` already carries the IndexerID/SourceURL pair the `torrents` bucket needs — the task brief was explicit that T-040 depends only on T-002 and must not pick up a dependency on the engine, and T-031 (the engine's own torrent-library choice) is separately blocked on a licensing conflict, so keeping `internal/store` buildable with zero awareness of `internal/engine`'s existence was treated as a hard constraint rather than a convenience. The migration hook (`migrations []func(tx *bolt.Tx) error`, indexed by on-disk version) is intentionally empty: `currentSchemaVersion` is `1` and always has been, so there is nothing to migrate *from* yet — the hook exists so the next schema change has somewhere to put a step, not because one was needed now | T-040, T-041, T-042 |
 | DEC-086 | 2026-09-16 | T-042's single-instance lock is implemented as a real OS-level advisory file lock (`internal/platform.TryLockFile`: `flock(2)` on macOS/Linux via `_darwin.go`/`_linux.go`, `LockFileEx` on Windows via `_windows.go`), not a PID-file-and-liveness-check pattern. A PID recorded in the lock file is still read back, purely to name the holder in the "already running" message, using a new `platform.ProcessAlive` (`kill(pid,0)` on macOS/Linux, `OpenProcess`+`GetExitCodeProcess` on Windows) | AGENT.md §13's own wording — "take a lock file" — and a classic PID-file are not the same thing, and the PID approach has a real correctness gap a flock-based one does not: a killed process leaves a lock *file* behind either way, but the operating system already tracks whether that file is still actually locked and releases it the instant every descriptor/handle referencing it closes, including on `SIGKILL` — so "is the previous holder still running" never needs to be answered by inspecting a PID that could, in principle, have been recycled by an unrelated process between the crash and the check. Using the OS's own lock as the correctness mechanism means the "stale lock recovery" acceptance criterion is satisfied by construction rather than by a staleness heuristic, and it is exactly why `TestAcquireLockConcurrentStartAttempt` and the platform-level `TestTryLockFileExclusiveAcrossDescriptors` can run deterministically inside one test process: POSIX `flock(2)` (confirmed against its own manual page) and Windows `LockFileEx` both treat a second file descriptor/handle on the same file, even from the same process, as a distinct lock owner that can be denied — so two `os.OpenFile` calls in one goroutine faithfully reproduce "two instances" without spawning a real subprocess. `platform.ProcessAlive` is not load-bearing for correctness, only for message quality, which is why `AcquireLock` never lets it gate whether the lock is granted | T-042 |
 | DEC-087 | 2026-09-16 | `internal/platform/lock_windows.go`'s `TryLockFile` now locks a fixed sentinel byte range (offset `1 << 30`, 1 byte) instead of offset 0 | QA's `windows-latest` `make check` job never got past `golangci-lint` (an unrelated unchecked `windows.CloseHandle` return, fixed separately), so `go test` had never actually run on Windows for this task; fixing the lint gate immediately exposed `TestAcquireLockConcurrentStartAttempt` and `TestAcquireLockStaleLockRecovery` failing there. Root cause: unlike `flock(2)` on macOS/Linux (advisory and whole-file — never blocks another descriptor's read/write), Windows' `LockFileEx` is mandatory and byte-range, so locking offset 0 collided with `writeHolderPID`/`readHolderPID`'s PID text, which also lives at offset 0. Any handle other than the lock's own — a second instance's `readHolderPID`, or the test's plain `os.ReadFile` — hit `ERROR_LOCK_VIOLATION` reading that range, which is why the "already running" message never named a pid on Windows even though `TestAcquireLockConcurrentStartAttempt` passed everywhere else. Moving the locked range to a fixed offset far past any realistic file size preserves the exclusivity semantics `TestTryLockFileExclusiveAcrossDescriptors` checks (locking past current EOF is valid on Windows) while leaving the PID content at offset 0 unlocked and readable/writable by every handle, matching the POSIX behaviour the tests already assume. Verified with a cross-`GOOS` `golangci-lint run ./...` for windows/linux/darwin and a `go test -c` cross-compile of `internal/platform` and `internal/lifecycle` for windows (this machine cannot execute Windows binaries natively); final confirmation is CI's `windows-latest` job | T-042 |
+| DEC-088 | 2026-09-16 | T-050 adds `github.com/charmbracelet/lipgloss v1.1.0` and `github.com/rivo/uniseg v0.4.7` as real dependencies (AGENT.md §3 already locked both), plus `github.com/muesli/termenv v0.16.0` — lipgloss's own terminal-capability library — as a new *direct* dependency, imported by `internal/tui/theme` for `termenv.Environ`/`termenv.WithEnvironment`/`termenv.WithTTY` so colour-profile detection (`NO_COLOR`, `CLICOLOR_FORCE`, `TERM`, `COLORTERM`) is exercised against an injectable environment in tests instead of the live process environment. All three, plus every transitive dependency they pulled in (`charmbracelet/x/ansi`, `charmbracelet/x/cellbuf`, `charmbracelet/x/term`, `charmbracelet/colorprofile`, `aymanbagabas/go-osc52/v2`, `lucasb-eyer/go-colorful`, `mattn/go-isatty`, `mattn/go-runewidth`, `xo/terminfo`), were checked against `Makefile`'s `ALLOWED_LICENSES` with `go run github.com/google/go-licenses@latest check ./... --ignore github.com/kdta91/tortui --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC`, which passed with no violations (one harmless warning about unix asm files it can't statically inspect, unrelated to licensing) | T-050 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
