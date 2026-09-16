@@ -1,0 +1,56 @@
+# Internet Archive — public domain and openly licensed items the Internet
+# Archive itself distributes over BitTorrent. See docs/bundled-sources.md
+# for why this source qualifies under AGENT.md §2 and how each field below
+# was verified against the Internet Archive's own documentation rather than
+# guessed.
+#
+# Every request goes to the officially documented Advanced Search API
+# (https://archive.org/advancedsearch.php, JSON output —
+# https://archive.org/services/search/v1 describes the same search behind
+# a second documented path). The response is Solr-shaped JSON:
+# response.docs is an array of items, and requesting the "btih" field
+# (verified live: an item with format "Archive BitTorrent" always carries
+# one) returns the BitTorrent v1 infohash of the item's Archive-generated
+# torrent directly — no second, undocumented request to a per-item file
+# listing is needed to build a workable result.
+id: internet-archive
+name: Internet Archive
+base_url: https://archive.org
+mode: json
+
+# Both blocks return the same Solr document shape, so the row and field
+# selectors are shared here and only path/params differ per block.
+rows: response.docs
+
+fields:
+  id:
+    selector: identifier
+  title:
+    selector: title
+  infohash:
+    selector: btih
+  size:
+    selector: item_size
+  published:
+    selector: publicdate
+
+search:
+  path: /advancedsearch.php
+  params:
+    output: json
+    rows: "50"
+    fl: identifier,title,btih,item_size,publicdate
+    # format:"Archive BitTorrent" restricts results to items the Archive
+    # itself distributes over BitTorrent (verified live: this filter and
+    # field combination returns real, currently-seeded items — see
+    # docs/bundled-sources.md). {{query}} is the user's own keyword.
+    q: '({{query}}) AND format:"Archive BitTorrent"'
+
+latest:
+  path: /advancedsearch.php
+  params:
+    output: json
+    rows: "50"
+    fl: identifier,title,btih,item_size,publicdate
+    sort: publicdate desc
+    q: 'format:"Archive BitTorrent"'
