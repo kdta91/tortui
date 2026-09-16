@@ -50,3 +50,6 @@ naming which bundled source it is and a pointer to docs/bundled-sources.md for t
 "why it qualifies under AGENT.md §2" writeup. Do not add anything here that isn't one of those
 bundled sources -- see "What does NOT belong here" above.
 -->
+
+# internet-archive (T-024) -- see docs/bundled-sources.md for why it qualifies
+archive.org

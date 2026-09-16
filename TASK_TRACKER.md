@@ -1938,10 +1938,39 @@ from a path or URL (that is T-025), and no bundled definition (T-024).
 
 ### T-024 · Bundled lawful default sources
 ```
-status: in-progress
+status: done
 depends: T-022, T-023
 ```
 **Files:** `internal/indexer/scraper/builtin/`, `docs/bundled-sources.md`
+
+**Notes:** Ships one bundled source, the Internet Archive
+(`internal/indexer/scraper/builtin/definitions/internet-archive.yml`), against the officially
+documented Advanced Search API (`archive.org/advancedsearch.php`, JSON output). Every field the
+definition reads (`identifier`, `title`, `btih`, `item_size`, `publicdate`) was verified live
+during this task, not inferred — see `docs/bundled-sources.md` for the full verification
+writeup and field-by-field mapping. Both `search` and `latest` blocks are implemented against
+the same endpoint and covered by a live `//go:build integration` test
+(`TestInternetArchiveLiveSearchAndLatest`) plus fixture-driven unit tests reproducing a captured
+real response. Academic Torrents, the other named candidate, was evaluated and dropped — no
+documented per-query search endpoint, and its documented workaround (mirror the full database,
+search offline) independently conflicts with AGENT.md §2's "no index of your own" — recorded in
+DEC-082 and `docs/bundled-sources.md`, with no reference to it left anywhere else in the repo. A
+third, unnamed candidate (a distro release listing) was deliberately not evaluated in this task
+to avoid picking and under-verifying one under time pressure; open as a future candidate if a
+second bundled source is wanted.
+
+`internal/indexer/scraper/builtin.Merge` implements the user-override-by-`id` rule and
+`Definitions()` exposes the embedded, validated set — both fully tested — but neither is wired
+into a running registry or a first-run flow, because `internal/app` (the composition root) does
+not exist yet; nothing in this repository currently starts a search. This is the same
+"implement the package's full behaviour now, defer main-wiring to the task that has somewhere to
+wire it into" pattern T-002/T-003 used (DEC-028), not a shortfall against the "enabled on first
+run" acceptance line: once the composition root exists, wiring in `builtin.Merge(loader.Definitions())`
+ahead of the registry needs no further design decision here.
+
+`docs/indexer-hostname-allowlist.md` gained one entry, `archive.org`, per its own documented
+process. `make check` is green (see PR). No source whose primary use is distributing infringing
+content is named or bundled anywhere in this change.
 
 **Acceptance**
 - Ships definitions for a small set of sources that **officially distribute their own content
@@ -2880,6 +2909,14 @@ when it reaches it and does not start backlog items on its own.
   silence: it is not loaded and, because it is never opened, it is not reported as skipped
   either. Options are to read both extensions, or to keep reading only `.yml` and warn about a
   `.yaml` file sitting in the directory. Found while building T-023.
+- `T-945` A field-concatenation or URL-template capability for the scraper schema, so a field
+  like `source_url` or `torrent_url` could be built from more than one selector (e.g. a fixed
+  prefix plus an `identifier` field) instead of needing the whole value in one selector. The
+  bundled Internet Archive definition (T-024) cannot populate `SourceURL` for exactly this
+  reason: the Advanced Search API returns a bare `identifier`, not the `details/{identifier}`
+  page path, and building that path today would mean hand-formatting a string no response field
+  actually carries, which AGENT.md §16 treats as inference rather than verification. Found while
+  building T-024; see `docs/bundled-sources.md`.
 
 
 
@@ -2972,6 +3009,7 @@ when it reaches it and does not start backlog items on its own.
 | DEC-079 | 2026-09-16 | The loader reads **`*.yml` only**, in the definitions directory itself, and compares the extension **case-insensitively on every platform**. A sub-directory is not descended into, a `.yaml` file is not read, and neither is reported as a skipped definition because neither is ever opened | The extension is what the T-023 criterion says (`*.yml`), so the set of files read is not a choice; how the comparison is made is. macOS's default APFS is case-insensitive, so a user who saves `ARCHIVE.YML` there has a file that works on their machine and silently vanishes when the same config directory is synced to Linux — AGENT.md §13 names that exact class of defect ("APFS is case-insensitive by default"), and the fix that keeps one behaviour on all three tier-1 systems is to fold case everywhere rather than to inherit the filesystem's opinion. `TestAnUppercaseExtensionIsReadOnEveryPlatform` pins it and goes red when the match becomes `filepath.Ext(name) == ".yml"`. The cost, stated rather than hidden: a `.yaml` file gets no diagnostic at all, which is filed as `T-944` rather than decided here, and a non-`.yml` file is deliberately **not** listed in `Skipped` — `Skipped` means "tortui tried to use this definition and could not", and diluting it with every unrelated file in the directory would make the settings screen's problem list useless | T-023 |
 | DEC-080 | 2026-09-16 | Four cases the criteria do not mention resolve as follows. **A missing definitions directory is not an error** — it yields an empty set and one Debug line. **A directory that cannot be listed is an error from `Reload`**, and the previously published set is left exactly as it was. **Two files declaring the same `id`**: the first in filename order wins, the second is skipped with `ErrDefinitionIDDuplicated`. **A file over 1 MiB** is skipped with `ErrDefinitionTooLarge` without being parsed | Each is a place where "one broken file never blocks startup" stops giving an answer, so each had to be decided explicitly rather than falling out of whatever the code happened to do. A **missing directory** is the ordinary state of a fresh install — nothing creates it, and T-024's sources are compiled in — so treating it as a failure would make the common case look broken; it is logged at Debug rather than Error for the same reason. An **unlistable** directory is different in kind: it is a real misconfiguration, no per-file recovery is possible because no file names are known, and the honest answer is to say so and change nothing. Keeping the old set on that path is the conservative half — a user who breaks permissions while tortui is running keeps the sources they already had, instead of watching them disappear — and `TestADirectoryThatCannotBeReadIsReportedAndLeavesTheLastSetInPlace` goes red if a failed read ever publishes an empty set. **Duplicate ids** have to be resolved deterministically or the winner depends on the order the filesystem returned, which differs between filesystems and is the sort of thing that reproduces on one machine and not another; filename order is the only ordering both the user and `os.ReadDir` can see, and `os.ReadDir` already sorts by it. First-wins over last-wins because the alternative makes the effective definition depend on a file the user may not know exists. The **1 MiB cap** is a guard on a mistake rather than on an attacker — the directory is the user's own — but a stray multi-gigabyte file in it should not be read into memory at startup, and the limited reader stops one byte past the bound so the size that decides is the number of bytes actually read rather than a size a directory listing reported earlier and that could have changed. Every one of the four is pinned by a test that was proved red by mutation; the table in the T-023 row lists which | T-023 |
 | DEC-081 | 2026-09-16 | `internal/indexer/scraper`'s package doc no longer says the package "writes no log lines at all". The definition **Loader** logs, and it is the only thing in the package that does: one Error line per skipped file carrying the file's base name and the error, and one Debug line when the directory does not exist. The T-022 tracker row's identical sentence is marked superseded in place | The T-022 claim was true when it was written and this task makes it false, and a stale safety claim is exactly the failure mode this repository keeps rejecting PRs for — so it is corrected where it appears rather than left for a reader to trip over, in the style of DEC-040/046/050/062/066/071. The behaviour itself is forced by the criterion "bad definitions are skipped with a **logged** error": a skip nobody is told about is a source that silently stopped working, which is the one outcome worse than a startup failure. What makes logging safe here is DEC-073 — no error this package produces carries a param value, a path, or the `base_url` — plus the loader adding only a file's base name to that, and `readCapped`/`errWithoutPath` keeping the filesystem path out of the two errors that would otherwise carry one. It is asserted rather than assumed: `TestNothingTheLoaderLogsOrSkipsCarriesTheCredential` drives five failure modes through the **real** `internal/logging` sink with the credential hardcoded into the definitions and greps the file with the package's own `assertNoCredentialLeak`, which also forbids any absolute URL. The logger is resolved at call time with `slog.Default()` as the fallback, the same arrangement as `httpx.Client.log`, so a logger installed after the loader was built is still the one used and nothing reaches stdout or stderr while the TUI owns the terminal (§3) | T-023, T-022 |
+| DEC-082 | 2026-09-16 | T-024 bundles exactly one lawful default source, the Internet Archive, rather than the "two or three" the task's own acceptance text targets. Academic Torrents — the other named candidate — was evaluated live (2026-09-16) and dropped: its own documentation states there is no per-query keyword-search HTTP endpoint, only per-infohash read/write and a recommendation to download the full `database.xml` and search it locally, and that local-mirror approach is independently barred by AGENT.md §2's "no index of your own" regardless of the missing search endpoint. A third, unnamed candidate (a distro release listing, per AGENT.md §2's own example list) was not evaluated in this task, to avoid picking one under time pressure and under-verifying it the way §16 warns against. The Internet Archive definition itself maps `InfoHash` from the Advanced Search API's `btih` field rather than a `TorrentURL` built from `{identifier}_archive.torrent`, even though that filename convention was confirmed live against the Archive's Metadata API during verification (`/metadata/{identifier}` lists a file of exactly that name with `format: "Archive BitTorrent"`) — because the *search* response the scraper's one-request-per-query model actually uses never returns that filename, only the bare `identifier`, and building the URL from it would be templating a value out of two fields, which the field-selector schema has no way to express without guessing at the concatenation. `btih` avoids the guess entirely: it is returned by the same request, verified live, and is already exactly the value `Adapter.Resolve` needs to derive a working magnet. `SourceURL` has the identical gap and stays unmapped, filed as backlog T-945 rather than worked around | T-024 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
