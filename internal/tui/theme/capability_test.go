@@ -97,37 +97,15 @@ func TestDetectCliColorForceZeroDoesNotForce(t *testing.T) {
 	}
 }
 
-func TestDetectColorDegradation(t *testing.T) {
-	tests := []struct {
-		name  string
-		term  string
-		color string
-		want  ColorLevel
-	}{
-		{name: "truecolor via COLORTERM", term: "xterm-256color", color: "truecolor", want: ColorTrue},
-		{name: "256color TERM", term: "screen-256color", color: "", want: Color256},
-		{name: "plain color TERM", term: "xterm-color", color: "", want: Color16},
-		{name: "no color info at all", term: "vt100", color: "", want: ColorNone},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			environ := stubEnviron{"TERM": tc.term}
-			if tc.color != "" {
-				environ["COLORTERM"] = tc.color
-			}
-
-			// AssumeTTY: real terminal detection is covered by
-			// TestDetectInteractiveFalseOnNonTTYStdout; this test is
-			// only about TERM/COLORTERM parsing once a terminal is
-			// present.
-			capability := Detect(DetectOptions{Out: tempFile(t), Environ: environ, AssumeTTY: true})
-			if capability.Color != tc.want {
-				t.Fatalf("Color = %v, want %v", capability.Color, tc.want)
-			}
-		})
-	}
-}
+// TERM/COLORTERM-driven degradation (below) is exercised in
+// capability_posix_test.go / capability_windows_test.go: termenv itself
+// resolves colour profile very differently per OS — POSIX parses
+// TERM/COLORTERM strings, Windows queries the OS build number instead and
+// ignores TERM entirely — so a single cross-platform table over those
+// variables cannot hold both truths at once (this is the same OS-specific
+// behaviour AGENT.md §14's build-tag invariant is about, just already
+// encapsulated inside termenv's own `_windows.go`/POSIX build-tagged files
+// rather than ours).
 
 func TestDetectInteractiveFalseOnTermDumb(t *testing.T) {
 	environ := stubEnviron{"TERM": "dumb"}
