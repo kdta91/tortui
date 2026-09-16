@@ -3415,3 +3415,14 @@ inherited from the initial plan.
   `cascadia v1.3.4` (DEC-078). `govulncheck ./...` reports `No vulnerabilities found.` with no
   trailing module-level count, on darwin/arm64 under go1.27.1; the CI legs are not verifiable
   from here.
+- `T-915` Make `callSearch`'s cancellation path deterministic in `internal/indexer/registry.go`.
+  QA on T-054 (PR #25) reproduced `TestSearchAllParentContextAlreadyCancelled` failing roughly once
+  in a thousand runs (`go test -race -count=1000 -run TestSearchAllParentContextAlreadyCancelled
+  ./internal/indexer/` → `SearchAll with a cancelled context = <nil>, want ErrAllSourcesFailed`).
+  This is a genuine latent race in pre-existing T-012 code, not CI noise: `callSearch` runs
+  `ix.Search(ctx, q)` in a goroutine and then selects over `done` and `ctx.Done()`. When the parent
+  context is already cancelled before the call and the indexer returns instantly, both cases can be
+  ready, and Go's `select` tie-breaks pseudo-randomly — so a stale success is occasionally returned
+  where cancellation was required. Remedy: check `ctx.Err()` before the select, or give the
+  cancellation case priority via a nested select, rather than relying on the tie-break. It surfaced
+  as an intermittent red `make check (macos-latest)` job.
