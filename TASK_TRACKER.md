@@ -2514,7 +2514,7 @@ timeout is a real `components.TickMsg`, not a sleep). Coverage: `internal/tui` 9
 
 ### T-053 · Responsive table component
 ```
-status: todo
+status: in-progress
 depends: T-051
 ```
 **Acceptance**
