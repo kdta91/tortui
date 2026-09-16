@@ -2083,7 +2083,7 @@ third-party format mapping (DEC-083).
 
 ### T-030 · Engine contracts and fake
 ```
-status: todo
+status: in-progress
 depends: T-002
 ```
 **Files:** `internal/engine/engine.go`, `internal/engine/fake/`
