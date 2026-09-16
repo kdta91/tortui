@@ -20,4 +20,7 @@ github.com/PuerkitoBio/goquery,BSD-3-Clause,https://github.com/PuerkitoBio/goque
 github.com/adrg/xdg,MIT,https://github.com/adrg/xdg/blob/v0.5.3/LICENSE
 github.com/andybalholm/cascadia,BSD-2-Clause,https://github.com/andybalholm/cascadia/blob/v1.3.4/LICENSE
 github.com/goccy/go-yaml,MIT,https://github.com/goccy/go-yaml/blob/v1.19.2/LICENSE
+go.etcd.io/bbolt,MIT,https://github.com/etcd-io/bbolt/blob/v1.4.3/LICENSE
 golang.org/x/net/html,BSD-3-Clause,https://cs.opensource.google/go/x/net/+/v0.58.0:LICENSE
+golang.org/x/sys/unix,BSD-3-Clause,https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE
+golang.org/x/sys/windows,BSD-3-Clause,https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE

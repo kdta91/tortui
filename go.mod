@@ -8,6 +8,7 @@ require (
 	github.com/adrg/xdg v0.5.3
 	github.com/andybalholm/cascadia v1.3.4
 	github.com/goccy/go-yaml v1.19.2
+	go.etcd.io/bbolt v1.4.3
 	golang.org/x/net v0.58.0
 )
 
