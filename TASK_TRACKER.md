@@ -2274,9 +2274,61 @@ depends: T-040, T-032
 
 ### T-042 · Single-instance lock and data integrity
 ```
-status: in-progress
+status: done
 depends: T-040
 ```
+**Files:** `internal/lifecycle/` (`lock.go`, `integrity.go`, `shutdown.go`, `signal.go`, plus
+`lock_test.go`, `integrity_test.go`, `shutdown_test.go`); `internal/platform/` (`lock_darwin.go`,
+`lock_linux.go`, `lock_windows.go`, `process_darwin.go`, `process_linux.go`, `process_windows.go`,
+plus a `_test.go` per file); `internal/config/load.go` (`writeDefault` renamed and exported as
+`Save`) plus two new tests in `load_test.go`.
+
+**Notes:** T-031 (the concrete `anacrolix` engine) is still `blocked`, so this task is written
+and tested entirely against the frozen `engine.Engine` interface (AGENT.md §5) and
+`internal/engine/fake` — no concrete engine exists to wire into a real `main`, and no
+`internal/app` composition root exists yet either, so `cmd/tortui/main.go` is untouched; the next
+task that builds the composition root is what calls `lifecycle.AcquireLock`,
+`lifecycle.OpenStore`, and `lifecycle.Shutdown` from `main`, using `lifecycle.NotifySignals()`
+for the `SIGINT`/`SIGTERM` half and a top-level `defer recover()` around it for the panic half —
+`Shutdown`'s own doc comment says this explicitly since it could not be exercised end-to-end here.
+
+The single-instance lock is a real OS-level advisory lock (`platform.TryLockFile`: `flock(2)` on
+macOS/Linux, `LockFileEx` on Windows) rather than a hand-rolled PID-file check, specifically
+because the OS releases it automatically when every descriptor/handle referencing it closes —
+including when the holding process is killed without a chance to clean up — which is what makes
+a stale lock self-correcting with no liveness-guessing logic in the success path. `PID` content
+is still written into the lock file and read back only to *name* the holder in the
+already-running error message, using the new `platform.ProcessAlive` (`kill(pid,0)` /
+`OpenProcess`+`GetExitCodeProcess`) to decide whether that name is worth showing. See DEC-086.
+
+The corrupt-store recovery in `lifecycle.OpenStore` deliberately does **not** quarantine a store
+that `store.Open` reports as merely *locked* (`bolterrors.ErrTimeout`) — that would destroy a
+live database out from under whoever holds it. In the intended startup order this branch should
+be unreachable (`AcquireLock` already refuses a second instance before `OpenStore` is ever
+called), but the check costs nothing and removes a way this package could itself become the
+data-loss bug T-042 exists to prevent.
+
+`config.Save` (previously the unexported `writeDefault`, used only for the first-run write) is
+now the one atomic writer every future config save must go through, including the settings
+screen's eventual persistence (T-080/T-082) — the acceptance criterion "config writes are atomic"
+is general, not first-run-only, and the temp-file/fsync/rename implementation already existed and
+needed no behaviour change, only a name and an exported test surface
+(`TestSaveSurvivesCrashBeforeRename`).
+
+`Shutdown`'s hung-engine test wraps `fake.New()` in a small `hungEngine` whose `Close` blocks
+forever, per the task's instruction to test against "`internal/engine/fake` plus a deliberately
+hung fake" rather than adding hang behaviour to the shared fake package itself.
+
+Coverage: `internal/lifecycle` 77.3%, `internal/platform` 79.2%, `internal/config` 81.9% — all
+above the `internal/engine`-adjacent 75% floor in AGENT.md §9 (lifecycle sits directly on
+`engine.Engine` and `internal/store`, so it was held to the same bar even though §9 does not name
+it explicitly). `go build`/`go vet` were cross-checked for `GOOS=linux` and `GOOS=windows` in
+addition to the native `darwin` run, since the new `internal/platform` files and
+`golang.org/x/sys/windows` usage only compile under their own `GOOS`; `go.mod` now lists
+`golang.org/x/sys` as a direct requirement (it was already an indirect dependency, already listed
+in `NOTICE` as BSD-3-Clause for both its `unix` and `windows` sub-packages) rather than adding
+anything new. `make check` and `go test -race ./...` are both green.
+
 **Acceptance**
 - Lock file in the state dir taken at startup. A second instance exits immediately with a clear
   message naming the running process, rather than two engines fighting over the same store and
@@ -3133,6 +3185,8 @@ when it reaches it and does not start backlog items on its own.
 | DEC-082 | 2026-09-16 | T-024 bundles exactly one lawful default source, the Internet Archive, rather than the "two or three" the task's own acceptance text targets. Academic Torrents — the other named candidate — was evaluated live (2026-09-16) and dropped: its own documentation states there is no per-query keyword-search HTTP endpoint, only per-infohash read/write and a recommendation to download the full `database.xml` and search it locally, and that local-mirror approach is independently barred by AGENT.md §2's "no index of your own" regardless of the missing search endpoint. A third, unnamed candidate (a distro release listing, per AGENT.md §2's own example list) was not evaluated in this task, to avoid picking one under time pressure and under-verifying it the way §16 warns against. The Internet Archive definition itself maps `InfoHash` from the Advanced Search API's `btih` field rather than a `TorrentURL` built from `{identifier}_archive.torrent`, even though that filename convention was confirmed live against the Archive's Metadata API during verification (`/metadata/{identifier}` lists a file of exactly that name with `format: "Archive BitTorrent"`) — because the *search* response the scraper's one-request-per-query model actually uses never returns that filename, only the bare `identifier`, and building the URL from it would be templating a value out of two fields, which the field-selector schema has no way to express without guessing at the concatenation. `btih` avoids the guess entirely: it is returned by the same request, verified live, and is already exactly the value `Adapter.Resolve` needs to derive a working magnet. `SourceURL` has the identical gap and stays unmapped, filed as backlog T-945 rather than worked around | T-024 |
 | DEC-083 | 2026-09-16 | T-025's import supports only the framework's own YAML schema; no third-party definition format is mapped, even though the acceptance text allows it ("if straightforward, support importing it too") | The one format widely used enough to be worth naming — Cardigann, the schema Jackett and Prowlarr definitions are written in — is large (dozens of keys covering paging, form-based login flows, capability negotiation, and category maps with none of the fields this schema's `Field`/`Trust` model has), and almost all publicly circulated Cardigann definitions target exactly the class of source AGENT.md §2 and §16 treat as radioactive; a mapping layer good enough to be useful would need to be tested against real definition files to be trustworthy, and sourcing a representative test corpus that is not itself full of infringement-oriented site definitions is not a five-minute problem. Attempting a partial, lightly-tested mapping under this task's time budget risked exactly the kind of "helpful" scope creep AGENT.md §16 warns an agent against, for a feature the acceptance criteria itself makes conditional rather than required. Native-schema import is complete and independently useful — it is what lets a user hand-author or download a plain YAML file and install it in one step — and third-party mapping is left as backlog rather than guessed at here | T-025 |
 | DEC-085 | 2026-09-16 | T-040 adds `go.etcd.io/bbolt v1.4.3` to `go.mod` — the persistence choice AGENT.md §3 already locked, just not yet a real dependency. Verified MIT against `Makefile`'s `ALLOWED_LICENSES` two ways: reading `LICENSE` at the pinned tag directly, and running `make licenses` (after installing `go-licenses`, not previously on this machine), which passed on all three `GOOS` targets and regenerated `NOTICE` with `go.etcd.io/bbolt,MIT,...`. `internal/store` defines its own `TorrentRecord`/`HistoryEntry`/`Prefs` types rather than importing `internal/engine.Origin` or any `internal/indexer` type, even though `Origin` already carries the IndexerID/SourceURL pair the `torrents` bucket needs — the task brief was explicit that T-040 depends only on T-002 and must not pick up a dependency on the engine, and T-031 (the engine's own torrent-library choice) is separately blocked on a licensing conflict, so keeping `internal/store` buildable with zero awareness of `internal/engine`'s existence was treated as a hard constraint rather than a convenience. The migration hook (`migrations []func(tx *bolt.Tx) error`, indexed by on-disk version) is intentionally empty: `currentSchemaVersion` is `1` and always has been, so there is nothing to migrate *from* yet — the hook exists so the next schema change has somewhere to put a step, not because one was needed now | T-040, T-041, T-042 |
+| DEC-086 | 2026-09-16 | T-042's single-instance lock is implemented as a real OS-level advisory file lock (`internal/platform.TryLockFile`: `flock(2)` on macOS/Linux via `_darwin.go`/`_linux.go`, `LockFileEx` on Windows via `_windows.go`), not a PID-file-and-liveness-check pattern. A PID recorded in the lock file is still read back, purely to name the holder in the "already running" message, using a new `platform.ProcessAlive` (`kill(pid,0)` on macOS/Linux, `OpenProcess`+`GetExitCodeProcess` on Windows) | AGENT.md §13's own wording — "take a lock file" — and a classic PID-file are not the same thing, and the PID approach has a real correctness gap a flock-based one does not: a killed process leaves a lock *file* behind either way, but the operating system already tracks whether that file is still actually locked and releases it the instant every descriptor/handle referencing it closes, including on `SIGKILL` — so "is the previous holder still running" never needs to be answered by inspecting a PID that could, in principle, have been recycled by an unrelated process between the crash and the check. Using the OS's own lock as the correctness mechanism means the "stale lock recovery" acceptance criterion is satisfied by construction rather than by a staleness heuristic, and it is exactly why `TestAcquireLockConcurrentStartAttempt` and the platform-level `TestTryLockFileExclusiveAcrossDescriptors` can run deterministically inside one test process: POSIX `flock(2)` (confirmed against its own manual page) and Windows `LockFileEx` both treat a second file descriptor/handle on the same file, even from the same process, as a distinct lock owner that can be denied — so two `os.OpenFile` calls in one goroutine faithfully reproduce "two instances" without spawning a real subprocess. `platform.ProcessAlive` is not load-bearing for correctness, only for message quality, which is why `AcquireLock` never lets it gate whether the lock is granted | T-042 |
+| DEC-087 | 2026-09-16 | `internal/platform/lock_windows.go`'s `TryLockFile` now locks a fixed sentinel byte range (offset `1 << 30`, 1 byte) instead of offset 0 | QA's `windows-latest` `make check` job never got past `golangci-lint` (an unrelated unchecked `windows.CloseHandle` return, fixed separately), so `go test` had never actually run on Windows for this task; fixing the lint gate immediately exposed `TestAcquireLockConcurrentStartAttempt` and `TestAcquireLockStaleLockRecovery` failing there. Root cause: unlike `flock(2)` on macOS/Linux (advisory and whole-file — never blocks another descriptor's read/write), Windows' `LockFileEx` is mandatory and byte-range, so locking offset 0 collided with `writeHolderPID`/`readHolderPID`'s PID text, which also lives at offset 0. Any handle other than the lock's own — a second instance's `readHolderPID`, or the test's plain `os.ReadFile` — hit `ERROR_LOCK_VIOLATION` reading that range, which is why the "already running" message never named a pid on Windows even though `TestAcquireLockConcurrentStartAttempt` passed everywhere else. Moving the locked range to a fixed offset far past any realistic file size preserves the exclusivity semantics `TestTryLockFileExclusiveAcrossDescriptors` checks (locking past current EOF is valid on Windows) while leaving the PID content at offset 0 unlocked and readable/writable by every handle, matching the POSIX behaviour the tests already assume. Verified with a cross-`GOOS` `golangci-lint run ./...` for windows/linux/darwin and a `go test -c` cross-compile of `internal/platform` and `internal/lifecycle` for windows (this machine cannot execute Windows binaries natively); final confirmation is CI's `windows-latest` job | T-042 |
 
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
