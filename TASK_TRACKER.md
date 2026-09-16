@@ -2394,7 +2394,7 @@ terminal-capability backend, used here directly for `Environ`/`WithTTY` injectio
 
 ### T-051 · Root model and routing
 ```
-status: todo
+status: in-progress
 depends: T-050, T-012, T-030
 ```
 **Files:** `internal/tui/root.go`, `internal/tui/keymap.go`
