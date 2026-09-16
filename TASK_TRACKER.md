@@ -2677,7 +2677,7 @@ its test, and `doctor`'s corrected wording were added in remediation on the same
 
 ### T-056 · Demo mode
 ```
-status: todo
+status: in-progress
 depends: T-051, T-030
 ```
 **Files:** `internal/app/demo.go`, `internal/indexer/fake/`
