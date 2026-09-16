@@ -1826,7 +1826,7 @@ adapter importing another and the alternative grows the package holding the froz
 
 ### T-023 · Definition loading and hot-reload
 ```
-status: todo
+status: in-progress
 depends: T-022
 ```
 **Files:** `internal/indexer/scraper/loader.go`
