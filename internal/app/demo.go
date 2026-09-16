@@ -129,6 +129,16 @@ type DemoOptions struct {
 	// theme.Detect). The zero value is the maximally-conservative one:
 	// no colour, ASCII glyphs.
 	Capability theme.Capability
+
+	// BaseDir overrides the parent directory NewDemo creates its sandbox
+	// under (os.MkdirTemp's dir argument). Empty selects the OS default
+	// temp directory, exactly like os.MkdirTemp("", ...) — the only thing
+	// production code (cmd/tortui) ever leaves it as. Tests set it to an
+	// isolated directory (e.g. t.TempDir()) so a test that asserts on the
+	// *system* temp directory's exact contents isn't racing every other
+	// package's own temp-file activity when `go test ./...` runs
+	// packages concurrently.
+	BaseDir string
 }
 
 // NewDemo builds a Demo: a fresh temp-dir sandbox (nothing is ever written
@@ -144,7 +154,7 @@ type DemoOptions struct {
 // the sandbox directory is removed and the demo clock goroutine, once
 // started, is stopped.
 func NewDemo(opts DemoOptions) (*Demo, error) {
-	dir, err := os.MkdirTemp("", "tortui-demo-*")
+	dir, err := os.MkdirTemp(opts.BaseDir, "tortui-demo-*")
 	if err != nil {
 		return nil, fmt.Errorf("app: create demo sandbox: %w", err)
 	}

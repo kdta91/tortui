@@ -135,24 +135,37 @@ func TestCloseRemovesTheSandboxAndLeavesNothingBehind(t *testing.T) {
 	}
 }
 
+// TestNothingIsWrittenOutsideTheSandbox uses DemoOptions.BaseDir to point
+// NewDemo's sandbox at a directory this test alone owns (t.TempDir()),
+// rather than snapshotting the real, process-wide os.TempDir(): `go test
+// ./...` runs every package's tests concurrently, and other packages
+// legitimately create their own temp files in the same shared OS temp
+// directory at the same time (observed in CI: internal/config's own
+// t.TempDir()-backed tests raced this one when both happened to resolve
+// under the same parent). Isolating to a directory only this test writes
+// into is what actually proves "NewDemo writes nothing outside its own
+// sandbox," without asserting anything about directories this test has no
+// business asserting on.
 func TestNothingIsWrittenOutsideTheSandbox(t *testing.T) {
-	before := snapshotTempDirEntries(t)
+	base := t.TempDir()
 
-	d, err := NewDemo(DemoOptions{})
+	before := snapshotDirEntries(t, base)
+
+	d, err := NewDemo(DemoOptions{BaseDir: base})
 	if err != nil {
 		t.Fatalf("NewDemo: %v", err)
 	}
 
 	sandbox := filepath.Base(d.SandboxDir())
 
-	after := snapshotTempDirEntries(t)
+	after := snapshotDirEntries(t, base)
 
 	for name := range after {
 		if before[name] {
 			continue
 		}
 		if name != sandbox {
-			t.Errorf("unexpected new entry in the system temp dir: %q (sandbox is %q)", name, sandbox)
+			t.Errorf("unexpected new entry under BaseDir: %q (sandbox is %q)", name, sandbox)
 		}
 	}
 
@@ -161,12 +174,12 @@ func TestNothingIsWrittenOutsideTheSandbox(t *testing.T) {
 	}
 }
 
-func snapshotTempDirEntries(t *testing.T) map[string]bool {
+func snapshotDirEntries(t *testing.T, dir string) map[string]bool {
 	t.Helper()
 
-	entries, err := os.ReadDir(os.TempDir())
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("ReadDir(TempDir): %v", err)
+		t.Fatalf("ReadDir(%q): %v", dir, err)
 	}
 
 	out := make(map[string]bool, len(entries))
