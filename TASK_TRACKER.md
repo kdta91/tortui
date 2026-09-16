@@ -2609,7 +2609,7 @@ the 50% floor. See DEC-093 for the `Theme.Border` addition.
 
 ### T-055 · Terminal capability detection and `doctor`
 ```
-status: todo
+status: in-progress
 depends: T-050, T-002
 ```
 **Files:** `internal/tui/capability.go`, `cmd/tortui/doctor.go`
