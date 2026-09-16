@@ -2453,7 +2453,7 @@ it. See DEC-090 for the license check, and DEC-091 for one transitive-dependency
 
 ### T-052 · Status bar
 ```
-status: todo
+status: in-progress
 depends: T-051
 ```
 **Acceptance**
