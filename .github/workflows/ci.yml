@@ -118,8 +118,12 @@ jobs:
       # AGENT.md §3/§16's MIT/Apache-2.0/BSD/ISC/MPL-2.0 allowlist (which also
       # catches GPL/AGPL/LGPL and unlicensed dependencies, since none of those
       # are in the allowlist -- MPL-2.0 is a single named exception for
-      # anacrolix/torrent, T-942/DEC-098, not a general copyleft admission)
-      # before it ever gets to regenerating NOTICE. Like
+      # anacrolix/torrent, T-942/DEC-098, not a general copyleft admission).
+      # That allowlist has no per-module scoping on its own, so `make
+      # licenses` also runs scripts/check-license-scope.sh, which fails the
+      # build if any MPL-2.0 module other than anacrolix/torrent shows up
+      # (see AGENT.md §16 for why the allowlist alone can't enforce this).
+      # Both checks run before NOTICE is regenerated. Like
       # build-all, this runs once on ubuntu-latest: the Makefile target
       # itself loops GOOS=darwin/linux/windows internally (see the Makefile's
       # T-006 comment), so one host is enough to analyze all three.

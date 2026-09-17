@@ -104,7 +104,12 @@ Any additional dependency requires a `DEC-` entry in the decision log with a lic
 (MIT / Apache-2.0 / BSD / ISC / **MPL-2.0** only — **no GPL/AGPL**). MPL-2.0 is admitted as a
 single, named exception for `anacrolix/torrent`, the locked torrent engine on this table — see
 §16. It does not open the door to copyleft dependencies generally; GPL and AGPL remain barred
-without exception.
+without exception. **That scope is enforced, not just stated:** `go-licenses check
+--allowed_licenses` (what `make licenses` runs) has no per-module scoping, so once MPL-2.0 is on
+the allowlist it would pass any MPL-2.0 module by itself. `scripts/check-license-scope.sh` closes
+that gap — it reads the `go-licenses report` data the `licenses` target already generates and
+fails the build, naming the offender, if any MPL-2.0 row is not `anacrolix/torrent`. See §16 and
+DEC-098 for the mechanism and its residual gap.
 
 ---
 
@@ -706,6 +711,22 @@ restricted to MIT / Apache-2.0 / BSD / ISC, plus one named exception, MPL-2.0, a
 `anacrolix/torrent` alone (§3, DEC-098) so a `NOTICE` file can enumerate them accurately.
 `go-licenses` runs in CI and still fails the build on any other copyleft dependency — the
 allowlist gained one entry, not a category.
+
+**"For `anacrolix/torrent` alone" is a two-part mechanism, and only one part is a true allowlist.**
+`go-licenses check --allowed_licenses=...` (`Makefile`'s `ALLOWED_LICENSES`) has no per-module
+targeting flag — confirmed against `go-licenses check --help` (v2.0.1): `--allowed_licenses` is a
+flat list of license names, full stop. Once MPL-2.0 is in that list, the check by itself would
+pass **any** MPL-2.0 module, present or future, not only the one named here. The narrowness is
+enforced by a second, independent check on the same data: `scripts/check-license-scope.sh` reads
+the CSV `go-licenses report` already produces (the same data `make licenses` merges into `NOTICE`
+— no second scan) and fails the build, naming the offender, if any MPL-2.0 row belongs to a
+module other than `anacrolix/torrent`. It runs on all three `LICENSE_OSES`, and its own test
+(`scripts/check-license-scope_test.sh`, wired into `make check`/`test-scripts`) proves it rejects
+an unrelated MPL-2.0 module and still accepts the real repo. **The residual gap:**
+`ALLOWED_LICENSES` itself remains a global list — a future MIT/Apache-2.0/BSD/ISC dependency is
+still checked only against that flat list, which is correct, since the per-module check exists
+solely to narrow MPL-2.0, the one license family admitted by name rather than by permissiveness.
+Nothing wider than that is scoped or needs to be. See DEC-098 for the full accounting.
 
 **Why MPL-2.0 and not GPL/AGPL.** MPL-2.0 is *file-level* ("weak") copyleft: its obligations
 attach to the individual source files that carry the MPL notice, not to every file that is

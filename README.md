@@ -408,3 +408,12 @@ dependency's own source files and do not extend to tortui's MIT-licensed code. S
 [`AGENT.md`](AGENT.md) §16 for the reasoning and scope. (`anacrolix/torrent` is not yet a
 `go.mod` dependency as of this writing — it lands with the engine implementation — so it does
 not yet appear in `NOTICE`.)
+
+**How the "one named exception" is actually enforced.** `go-licenses check --allowed_licenses`,
+which `make licenses` runs, is a global license allowlist with no per-module scoping — putting
+MPL-2.0 on that list makes it pass for *any* MPL-2.0 module, not only `anacrolix/torrent`. The
+narrowness is enforced by a second, separate check: `scripts/check-license-scope.sh` reads the
+same `go-licenses report` data `NOTICE` is built from and fails the build, naming the offender,
+if any MPL-2.0 row belongs to a module other than `anacrolix/torrent`. Both checks run on every
+`make licenses` invocation, for all three tier-1 operating systems. See DEC-098 for the residual
+gap this still leaves (the allowlist itself stays global; only the second check is scoped).

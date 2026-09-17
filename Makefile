@@ -69,7 +69,17 @@ LICENSE_OSES := darwin linux windows
 # This stays an allowlist, not a blanket copyleft admission: GPL/AGPL and every
 # other copyleft family are still absent from this list and still fail
 # `go-licenses check` on sight.
+#
+# T-942 QA remediation: `go-licenses check --allowed_licenses` has no
+# per-module scoping (confirmed against `go-licenses check --help`) -- once
+# MPL-2.0 is in ALLOWED_LICENSES, the check by itself admits ANY MPL-2.0
+# module, not just the one named below. ALLOWED_MPL_MODULE is enforced
+# separately by scripts/check-license-scope.sh against the same
+# `go-licenses report` data the NOTICE pipeline below already generates, so
+# the "for anacrolix/torrent alone" scope is something the gate actually
+# fails on, not just prose (DEC-098).
 ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
+ALLOWED_MPL_MODULE := github.com/anacrolix/torrent
 NOTICE_TMP := .notice.tmp
 
 .PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames test-scripts
@@ -123,7 +133,12 @@ licenses:
 	done
 	@set -eu; rm -f $(NOTICE_TMP); \
 	for goos in $(LICENSE_OSES); do \
-		GOOS=$$goos go-licenses report ./... --ignore $(MODULE) 2>/dev/null >> $(NOTICE_TMP); \
+		goos_report=$(NOTICE_TMP).$$goos; \
+		GOOS=$$goos go-licenses report ./... --ignore $(MODULE) 2>/dev/null > "$$goos_report"; \
+		echo "make licenses: checking MPL-2.0 is scoped to $(ALLOWED_MPL_MODULE) for GOOS=$$goos"; \
+		scripts/check-license-scope.sh $(ALLOWED_MPL_MODULE) "$$goos_report"; \
+		cat "$$goos_report" >> $(NOTICE_TMP); \
+		rm -f "$$goos_report"; \
 	done; \
 	LC_ALL=C sort -u $(NOTICE_TMP) -o $(NOTICE_TMP)
 	@set -eu; { \
@@ -168,8 +183,14 @@ check-hostnames:
 # this needs no base ref from the ambient repo -- it builds its own disposable
 # scratch git repo -- so it belongs in the commit gate, not standing apart
 # from it the way check-hostnames does (DEC-041).
+#
+# T-942 QA remediation: same convention applied to
+# scripts/check-license-scope.sh -- its own test builds disposable CSV
+# fixtures rather than depending on go-licenses or go.mod, so it also runs
+# unconditionally in the commit gate.
 test-scripts:
 	set -eu; scripts/check-indexer-hostnames_test.sh
+	set -eu; scripts/check-license-scope_test.sh
 
 cover:
 	set -eu; go test -coverprofile=$(COVERPROFILE) $(PKG)
