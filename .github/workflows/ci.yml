@@ -115,9 +115,11 @@ jobs:
         run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       # `make licenses` itself fails if any dependency's license is outside
-      # AGENT.md §3/§16's MIT/Apache-2.0/BSD/ISC allowlist (which also catches
-      # GPL/AGPL/LGPL and unlicensed dependencies, since none of those are in
-      # the allowlist) before it ever gets to regenerating NOTICE. Like
+      # AGENT.md §3/§16's MIT/Apache-2.0/BSD/ISC/MPL-2.0 allowlist (which also
+      # catches GPL/AGPL/LGPL and unlicensed dependencies, since none of those
+      # are in the allowlist -- MPL-2.0 is a single named exception for
+      # anacrolix/torrent, T-942/DEC-098, not a general copyleft admission)
+      # before it ever gets to regenerating NOTICE. Like
       # build-all, this runs once on ubuntu-latest: the Makefile target
       # itself loops GOOS=darwin/linux/windows internally (see the Makefile's
       # T-006 comment), so one host is enough to analyze all three.

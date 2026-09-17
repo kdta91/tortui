@@ -101,7 +101,10 @@ These are not negotiable and not subject to task-level override.
 | Testing | stdlib `testing` + `charmbracelet/x/exp/teatest` | Golden-file fixtures for adapters |
 
 Any additional dependency requires a `DEC-` entry in the decision log with a license check
-(MIT / Apache-2.0 / BSD only — **no GPL/AGPL**).
+(MIT / Apache-2.0 / BSD / ISC / **MPL-2.0** only — **no GPL/AGPL**). MPL-2.0 is admitted as a
+single, named exception for `anacrolix/torrent`, the locked torrent engine on this table — see
+§16. It does not open the door to copyleft dependencies generally; GPL and AGPL remain barred
+without exception.
 
 ---
 
@@ -698,9 +701,28 @@ constraints rather than style preferences, and does not "helpfully" relax one.*
 
 ### Project license
 
-MIT, in `LICENSE` at the repo root. Dependencies are restricted to MIT / Apache-2.0 / BSD /
-ISC (§3) so the license stays clean and a `NOTICE` file can enumerate them accurately.
-`go-licenses` runs in CI and fails the build on a copyleft dependency.
+MIT, in `LICENSE` at the repo root, and unchanged by anything below. Dependencies are
+restricted to MIT / Apache-2.0 / BSD / ISC, plus one named exception, MPL-2.0, admitted for
+`anacrolix/torrent` alone (§3, DEC-098) so a `NOTICE` file can enumerate them accurately.
+`go-licenses` runs in CI and still fails the build on any other copyleft dependency — the
+allowlist gained one entry, not a category.
+
+**Why MPL-2.0 and not GPL/AGPL.** MPL-2.0 is *file-level* ("weak") copyleft: its obligations
+attach to the individual source files that carry the MPL notice, not to every file that is
+merely compiled or linked alongside them. Modifying one of those files and distributing the
+result requires releasing that file's source under MPL-2.0 (§3.1); distributing tortui as a
+compiled binary that includes unmodified `anacrolix/torrent` code requires only that recipients
+be told where that Covered Software's source is available (§3.2) — which `NOTICE`'s
+`license_url` column already does for every dependency, MPL-2.0 or not. Critically, MPL-2.0
+explicitly permits combining Covered Software with code under other licenses into a "Larger
+Work" (§3.3) without pulling that other code under MPL. It does **not** reach tortui's own
+MIT-licensed source, and tortui accepts no obligation to publish source it would not publish
+anyway. GPL and AGPL are *strong* copyleft: they extend to the whole combined work (GPL) or to
+network use of the whole combined work (AGPL), which would force tortui's own source under
+GPL/AGPL terms and is exactly what §3's "no GPL/AGPL" line exists to keep out. That distinction
+— not a general softening on copyleft — is why this exception names one module and one license
+family rather than widening the gate. **Not legal advice**; see DEC-098 for the authorisation
+and its scope.
 
 ### Why the §2 rules exist
 

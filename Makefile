@@ -64,7 +64,12 @@ SHELLCHECK_SOURCES := $(wildcard scripts/*)
 # in any locale, matching or not.
 MODULE := github.com/kdta91/tortui
 LICENSE_OSES := darwin linux windows
-ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC
+# T-942: MPL-2.0 is admitted as a single, named exception for the locked torrent
+# engine (github.com/anacrolix/torrent, MPL-2.0 -- AGENT.md section 3/16, DEC-098).
+# This stays an allowlist, not a blanket copyleft admission: GPL/AGPL and every
+# other copyleft family are still absent from this list and still fail
+# `go-licenses check` on sight.
+ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
 NOTICE_TMP := .notice.tmp
 
 .PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames test-scripts
