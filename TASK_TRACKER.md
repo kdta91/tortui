@@ -2216,8 +2216,8 @@ authorised, not agent-initiated, and it does **not** reopen DEC-001 or any other
 
 ### T-031 · anacrolix engine — add and list
 ```
-status: blocked
-depends: T-030
+status: todo
+depends: T-030, T-942
 ```
 **Files:** `internal/engine/anacrolix/`
 
@@ -3606,7 +3606,11 @@ inherited from the initial plan.
 
 ## Blocked
 
-- `T-031` (2026-09-16). **License policy conflicts with the locked torrent-engine dependency.**
+*(empty — append `T-0NN` blocks here with the exact input needed to unblock)*
+
+### Resolved
+
+- `T-031` (2026-09-16 → 2026-09-17). **License policy conflicts with the locked torrent-engine dependency.**
   T-031 builds `internal/engine/anacrolix`, which requires `github.com/anacrolix/torrent` — the
   engine AGENT.md §3 locks ("do not re-litigate") and DEC-001 selected. That module is licensed
   **MPL-2.0** (verified from the upstream `LICENSE` at
@@ -3628,9 +3632,17 @@ inherited from the initial plan.
   2. Replace the locked engine with an MIT/Apache-2.0/BSD/ISC-licensed alternative, which
      overrides DEC-001 and a locked §3 stack row and would rename `internal/engine/anacrolix`.
 
-  No branch was created, no code written, and `go.mod` is untouched. T-031 remains `blocked`.
+  No branch was created, no code written, and `go.mod` is untouched.
 
-### Resolved
+  **Resolved on 2026-09-17.** The project owner chose option 1 and authorised admitting MPL-2.0
+  rather than replacing the locked engine. `T-942` landed that as PR #28 (`3ed0f69`): the `Makefile`
+  admits MPL-2.0, and because `go-licenses check --allowed_licenses` has no per-module scoping, a
+  separate `scripts/check-license-scope.sh` enforces that the only MPL-2.0 module is
+  `github.com/anacrolix/torrent` — so the narrow scope is a gate CI fails on, not just prose. See
+  DEC-098 for the authorisation and its scope, DEC-099 for the two-part mechanism and the residual
+  gap it still leaves. QA independently proved a rogue MPL-2.0 module is rejected and that GPL and
+  AGPL still fail. T-031 returned to `todo`; nothing about DEC-001 or any other §3 stack row was
+  reopened.
 
 - `T-022` (2026-09-15 → 2026-09-16). Blocked on seven `golang.org/x/net` advisories reachable from
   the scraper's `html.Parse` under the pinned Go 1.23. The project owner authorised raising the
