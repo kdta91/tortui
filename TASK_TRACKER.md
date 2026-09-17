@@ -2216,7 +2216,7 @@ authorised, not agent-initiated, and it does **not** reopen DEC-001 or any other
 
 ### T-031 · anacrolix engine — add and list
 ```
-status: todo
+status: in-progress
 depends: T-030, T-942
 ```
 **Files:** `internal/engine/anacrolix/`
