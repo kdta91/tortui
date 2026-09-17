@@ -2126,6 +2126,40 @@ added, per AGENT.md §11.5's "do not build ahead."
 
 ---
 
+### T-942 · Admit MPL-2.0 for the torrent engine
+
+```
+status: in-progress
+depends: T-030
+```
+**Files:** `AGENT.md`, `Makefile`, `NOTICE`, `README.md`
+
+**Why this exists.** T-031 is `blocked` on it — see the Blocked section for the full finding.
+`github.com/anacrolix/torrent`, the engine AGENT.md §3 locks and DEC-001 selected, is **MPL-2.0**.
+Every license gate in the project excludes it: AGENT.md §3's footer, AGENT.md §16 / DEC-009, and
+`Makefile`'s `ALLOWED_LICENSES`. `make licenses` therefore fails the moment the engine enters
+`go.mod`, and the whole T-031 → T-034 → T-041 → T-070+ chain is dead behind it.
+
+**The project owner authorised this on 2026-09-17**, choosing to admit MPL-2.0 rather than replace
+the locked engine. This is a deliberate change to the license policy in AGENT.md §3 and §16 — it is
+authorised, not agent-initiated, and it does **not** reopen DEC-001 or any other §3 stack row.
+
+**Acceptance**
+- `ALLOWED_LICENSES` in the `Makefile` admits MPL-2.0, and `make licenses` still passes on all
+  three `LICENSE_OSES`. The allowlist stays an allowlist — no blanket copyleft admission, and
+  GPL/AGPL stay excluded.
+- AGENT.md §3's footer and §16's dependency-license paragraph are updated together, so no gate is
+  left contradicting another. §16's reasoning is extended to say *why* file-level copyleft is
+  admissible here and strong copyleft is not.
+- `NOTICE` regenerates cleanly and attributes the MPL-2.0 dependency correctly, including where its
+  source can be obtained (MPL-2.0 §3.2).
+- `README.md` states the project's own license is unchanged (MIT) and notes the MPL-2.0 dependency.
+- A `DEC-` row records the authorisation, the exact scope of the exception, the obligations
+  accepted, and what was explicitly *not* changed.
+- No engine code. T-031 stays a separate task; this one only moves the gate.
+
+---
+
 ### T-031 · anacrolix engine — add and list
 ```
 status: blocked
