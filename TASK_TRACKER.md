@@ -2216,7 +2216,7 @@ authorised, not agent-initiated, and it does **not** reopen DEC-001 or any other
 
 ### T-031 · anacrolix engine — add and list
 ```
-status: in-progress
+status: blocked
 depends: T-030, T-942
 ```
 **Files:** `internal/engine/anacrolix/`
@@ -2231,6 +2231,15 @@ depends: T-030, T-942
 - Metadata fetch timeout (default 60s) transitions to `StateErrored` with a readable message.
 - `List()` maps engine internals onto `TorrentStatus` with correct progress and rates.
 - `Close()` is idempotent and leaves no goroutines (verified with `goleak`).
+
+**Blocked on 2026-09-17 (second block, different cause from the first).** No acceptance criterion
+was attempted. Adding `github.com/anacrolix/torrent v1.61.0` — the only action this task can start
+with — fails `make licenses` on two independent grounds that T-942/DEC-098 did not anticipate,
+because that task authorised MPL-2.0 for one module without the module's transitive tree being
+enumerated (it could not be: the dependency was deliberately not added there). See the Blocked
+section for the full finding, the exact offending modules, and the two owner decisions that would
+unblock it. `go.mod`/`go.sum` are unchanged on this branch; no engine code was written and
+`internal/engine/anacrolix/` does not exist.
 
 ---
 
@@ -3606,7 +3615,72 @@ inherited from the initial plan.
 
 ## Blocked
 
-*(empty — append `T-0NN` blocks here with the exact input needed to unblock)*
+- `T-031` (2026-09-17). **The MPL-2.0 exception authorised by DEC-098 is narrower than
+  `anacrolix/torrent`'s own dependency tree, and that tree also contains a module with no
+  detectable license at all.** T-031's first action is `go get github.com/anacrolix/torrent`
+  (resolves to `v1.61.0`). With the dependency added and a single-import probe package under
+  `internal/engine/anacrolix/` so `go-licenses`' import walk actually reaches it, `make licenses`
+  fails, for two separate reasons:
+
+  1. **Seven further MPL-2.0 modules, none of them `anacrolix/torrent`.** They are the engine's own
+     sibling libraries, reached as compile-time imports of `github.com/anacrolix/torrent` itself, so
+     they are not optional and cannot be dropped by importing a narrower package:
+     `github.com/anacrolix/dht/v2`, `github.com/anacrolix/generics`, `github.com/anacrolix/log`,
+     `github.com/anacrolix/multiless`, `github.com/anacrolix/sync`, `github.com/anacrolix/upnp`,
+     `github.com/anacrolix/utp`. `scripts/check-license-scope.sh` fails on all three `LICENSE_OSES`
+     and names all seven — which is exactly what it was built (DEC-099) to do. This is the case the
+     task brief calls out explicitly: a further MPL-2.0 module is an owner decision, not a script
+     edit, so the script was not touched and `ALLOWED_LICENSES` was not widened.
+
+  2. **`github.com/go-llsqlite/adapter` (and `github.com/go-llsqlite/adapter/sqlitex`) ship no
+     license file**, so `go-licenses` cannot classify them at all:
+     `Did not find license for library 'github.com/go-llsqlite/adapter'.` — `make licenses` exits 1
+     on `GOOS=darwin` before it ever reaches the scope check. This one is not a scope question: an
+     unlicensed dependency is admitted by no allowlist, present or widened, and `NOTICE` cannot
+     attribute it. `go mod why` puts it on an unavoidable path:
+     `internal/engine/anacrolix` → `github.com/anacrolix/torrent` → `github.com/anacrolix/torrent/storage`
+     → `github.com/go-llsqlite/adapter`. The module directory contains `go.mod`, `go.sum`, and four
+     `.go` files, and no `LICENSE`/`LICENCE`/`COPYING` of any name — confirmed by listing the module
+     cache directory, not inferred from the tool's message.
+
+  **Not a blocker, recorded for completeness.** No GPL or AGPL module appears anywhere in the tree
+  on any of the three `LICENSE_OSES` — the failure mode the task brief warned about most loudly did
+  not occur. License census per `GOOS` (`go-licenses report ./...`): darwin 59 MIT / 19 BSD-3-Clause
+  / 9 Apache-2.0 / 8 MPL-2.0 / 3 BSD-2-Clause / 2 ISC / 2 Unknown; linux and windows the same minus
+  the two Unknown rows (that package is darwin-reachable only in this graph). `govulncheck ./...` on
+  the new tree: `No vulnerabilities found.` for called symbols — 0 vulnerabilities our code reaches;
+  4 vulnerabilities in imported packages and 3 in required modules, none called
+  (`GO-2026-6278` gorilla/websocket, `GO-2026-6165` pion/dtls, `GO-2026-6163` pion/stun,
+  `GO-2026-5506` otel; `GO-2026-6355`/`GO-2026-6354`/`GO-2026-5932` x/crypto). Those are worth a
+  look whenever the engine does land, but none of them is what blocks this task.
+
+  **What would unblock it — a project-owner decision, recorded as a DEC- entry.** Both parts need
+  answering; resolving only one leaves `make licenses` red.
+
+  For (1), either:
+  - **1a.** Extend the DEC-098 exception from one module to the `github.com/anacrolix/*` family
+    that `anacrolix/torrent` compiles against — the same MPL-2.0 reasoning in AGENT.md §16 applies
+    unchanged to every one of them (same author, same license, same file-level copyleft, all
+    unmodified) — and widen `ALLOWED_MPL_MODULE` in the `Makefile` plus
+    `scripts/check-license-scope.sh` to accept that set rather than one literal string. This keeps
+    the gate an enforced allowlist; it admits seven named modules, still not a license family.
+  - **1b.** Replace the locked engine, which overrides DEC-001 and a locked AGENT.md §3 stack row.
+
+  For (2), either:
+  - **2a.** Determine `go-llsqlite/adapter`'s actual license from upstream and, if it is admissible,
+    record it as an explicit exception with a `--ignore` entry or an equivalent so `NOTICE` states
+    the finding rather than silently omitting the module. An unlicensed dependency shipped in a
+    distributed binary is a real exposure, not a paperwork problem, so this needs a deliberate
+    answer either way.
+  - **2b.** Establish whether `anacrolix/torrent` can be built without its `storage` package's
+    sqlite backend (a build tag or a fork-free import path that omits it). Nothing in the module's
+    public API obviously offers that, and the root `torrent` package imports `torrent/storage`
+    unconditionally, so this looks unlikely — but it is the only route that removes the module
+    instead of admitting it.
+
+  No script, `Makefile` variable, or AGENT.md gate was edited, and `go.mod`/`go.sum`/`NOTICE` are
+  unchanged on `task/T-031-anacrolix-engine`. The probe package used to produce the evidence above
+  was deleted after the runs; the branch carries this finding and nothing else.
 
 ### Resolved
 
