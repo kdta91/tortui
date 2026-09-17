@@ -3682,6 +3682,19 @@ inherited from the initial plan.
   unchanged on `task/T-031-anacrolix-engine`. The probe package used to produce the evidence above
   was deleted after the runs; the branch carries this finding and nothing else.
 
+  **Orchestrator verification (2026-09-17), independent of the implementing agent.** Spot-checked
+  upstream `LICENSE` files directly: `anacrolix/dht` and `anacrolix/log` are Mozilla Public License
+  2.0 at `master`, consistent with finding (1). For finding (2) the picture is more specific than
+  "no license": `github.com/go-llsqlite/adapter`'s **upstream `master` does carry an MPL-2.0
+  `LICENSE`**, but the revision the engine pins — `v0.0.0-20230927005056-7f5ce7f0c916`, a
+  2023-09-27 pseudo-version — ships without one; the cached module directory contains only
+  `go.mod`, `go.sum`, `crawshaw.go`, `llsqlite.go`, `result-code.go`, `zombiezen.go` and
+  `sqlitex/`. So (2) is a *pinned-revision* gap, not an unlicensed project, which makes **2a**
+  answerable: the license exists upstream, and a newer revision or an explicitly recorded finding
+  could satisfy it. It does not make (2) go away on its own — and note that under **1a** this
+  module would need admitting as MPL-2.0 too, so the two findings resolve together, not
+  separately.
+
 ### Resolved
 
 - `T-031` (2026-09-16 → 2026-09-17). **License policy conflicts with the locked torrent-engine dependency.**
