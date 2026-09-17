@@ -20,7 +20,7 @@
 # header) -- see the `licenses` target -- rather than running a second scan,
 # and asserts every MPL-2.0 row names the one allowed module. This still
 # leaves ALLOWED_LICENSES itself as a global allowlist (see the Makefile
-# comment above it and DEC-098's "residual gap" note); this script is what
+# comment above it and DEC-099's "residual gap" note); this script is what
 # turns "for X alone" from prose into something that fails a build.
 #
 # Usage:

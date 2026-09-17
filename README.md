@@ -415,5 +415,5 @@ MPL-2.0 on that list makes it pass for *any* MPL-2.0 module, not only `anacrolix
 narrowness is enforced by a second, separate check: `scripts/check-license-scope.sh` reads the
 same `go-licenses report` data `NOTICE` is built from and fails the build, naming the offender,
 if any MPL-2.0 row belongs to a module other than `anacrolix/torrent`. Both checks run on every
-`make licenses` invocation, for all three tier-1 operating systems. See DEC-098 for the residual
+`make licenses` invocation, for all three tier-1 operating systems. See DEC-099 for the residual
 gap this still leaves (the allowlist itself stays global; only the second check is scoped).

@@ -109,7 +109,7 @@ without exception. **That scope is enforced, not just stated:** `go-licenses che
 the allowlist it would pass any MPL-2.0 module by itself. `scripts/check-license-scope.sh` closes
 that gap — it reads the `go-licenses report` data the `licenses` target already generates and
 fails the build, naming the offender, if any MPL-2.0 row is not `anacrolix/torrent`. See §16 and
-DEC-098 for the mechanism and its residual gap.
+DEC-099 for the mechanism and its residual gap.
 
 ---
 
@@ -726,7 +726,7 @@ an unrelated MPL-2.0 module and still accepts the real repo. **The residual gap:
 `ALLOWED_LICENSES` itself remains a global list — a future MIT/Apache-2.0/BSD/ISC dependency is
 still checked only against that flat list, which is correct, since the per-module check exists
 solely to narrow MPL-2.0, the one license family admitted by name rather than by permissiveness.
-Nothing wider than that is scoped or needs to be. See DEC-098 for the full accounting.
+Nothing wider than that is scoped or needs to be. See DEC-099 for the full accounting.
 
 **Why MPL-2.0 and not GPL/AGPL.** MPL-2.0 is *file-level* ("weak") copyleft: its obligations
 attach to the individual source files that carry the MPL notice, not to every file that is

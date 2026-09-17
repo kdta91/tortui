@@ -77,7 +77,7 @@ LICENSE_OSES := darwin linux windows
 # separately by scripts/check-license-scope.sh against the same
 # `go-licenses report` data the NOTICE pipeline below already generates, so
 # the "for anacrolix/torrent alone" scope is something the gate actually
-# fails on, not just prose (DEC-098).
+# fails on, not just prose (DEC-099).
 ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
 ALLOWED_MPL_MODULE := github.com/anacrolix/torrent
 NOTICE_TMP := .notice.tmp
