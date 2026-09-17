@@ -101,7 +101,15 @@ These are not negotiable and not subject to task-level override.
 | Testing | stdlib `testing` + `charmbracelet/x/exp/teatest` | Golden-file fixtures for adapters |
 
 Any additional dependency requires a `DEC-` entry in the decision log with a license check
-(MIT / Apache-2.0 / BSD only — **no GPL/AGPL**).
+(MIT / Apache-2.0 / BSD / ISC / **MPL-2.0** only — **no GPL/AGPL**). MPL-2.0 is admitted as a
+single, named exception for `anacrolix/torrent`, the locked torrent engine on this table — see
+§16. It does not open the door to copyleft dependencies generally; GPL and AGPL remain barred
+without exception. **That scope is enforced, not just stated:** `go-licenses check
+--allowed_licenses` (what `make licenses` runs) has no per-module scoping, so once MPL-2.0 is on
+the allowlist it would pass any MPL-2.0 module by itself. `scripts/check-license-scope.sh` closes
+that gap — it reads the `go-licenses report` data the `licenses` target already generates and
+fails the build, naming the offender, if any MPL-2.0 row is not `anacrolix/torrent`. See §16 and
+DEC-099 for the mechanism and its residual gap.
 
 ---
 
@@ -698,9 +706,44 @@ constraints rather than style preferences, and does not "helpfully" relax one.*
 
 ### Project license
 
-MIT, in `LICENSE` at the repo root. Dependencies are restricted to MIT / Apache-2.0 / BSD /
-ISC (§3) so the license stays clean and a `NOTICE` file can enumerate them accurately.
-`go-licenses` runs in CI and fails the build on a copyleft dependency.
+MIT, in `LICENSE` at the repo root, and unchanged by anything below. Dependencies are
+restricted to MIT / Apache-2.0 / BSD / ISC, plus one named exception, MPL-2.0, admitted for
+`anacrolix/torrent` alone (§3, DEC-098) so a `NOTICE` file can enumerate them accurately.
+`go-licenses` runs in CI and still fails the build on any other copyleft dependency — the
+allowlist gained one entry, not a category.
+
+**"For `anacrolix/torrent` alone" is a two-part mechanism, and only one part is a true allowlist.**
+`go-licenses check --allowed_licenses=...` (`Makefile`'s `ALLOWED_LICENSES`) has no per-module
+targeting flag — confirmed against `go-licenses check --help` (v2.0.1): `--allowed_licenses` is a
+flat list of license names, full stop. Once MPL-2.0 is in that list, the check by itself would
+pass **any** MPL-2.0 module, present or future, not only the one named here. The narrowness is
+enforced by a second, independent check on the same data: `scripts/check-license-scope.sh` reads
+the CSV `go-licenses report` already produces (the same data `make licenses` merges into `NOTICE`
+— no second scan) and fails the build, naming the offender, if any MPL-2.0 row belongs to a
+module other than `anacrolix/torrent`. It runs on all three `LICENSE_OSES`, and its own test
+(`scripts/check-license-scope_test.sh`, wired into `make check`/`test-scripts`) proves it rejects
+an unrelated MPL-2.0 module and still accepts the real repo. **The residual gap:**
+`ALLOWED_LICENSES` itself remains a global list — a future MIT/Apache-2.0/BSD/ISC dependency is
+still checked only against that flat list, which is correct, since the per-module check exists
+solely to narrow MPL-2.0, the one license family admitted by name rather than by permissiveness.
+Nothing wider than that is scoped or needs to be. See DEC-099 for the full accounting.
+
+**Why MPL-2.0 and not GPL/AGPL.** MPL-2.0 is *file-level* ("weak") copyleft: its obligations
+attach to the individual source files that carry the MPL notice, not to every file that is
+merely compiled or linked alongside them. Modifying one of those files and distributing the
+result requires releasing that file's source under MPL-2.0 (§3.1); distributing tortui as a
+compiled binary that includes unmodified `anacrolix/torrent` code requires only that recipients
+be told where that Covered Software's source is available (§3.2) — which `NOTICE`'s
+`license_url` column already does for every dependency, MPL-2.0 or not. Critically, MPL-2.0
+explicitly permits combining Covered Software with code under other licenses into a "Larger
+Work" (§3.3) without pulling that other code under MPL. It does **not** reach tortui's own
+MIT-licensed source, and tortui accepts no obligation to publish source it would not publish
+anyway. GPL and AGPL are *strong* copyleft: they extend to the whole combined work (GPL) or to
+network use of the whole combined work (AGPL), which would force tortui's own source under
+GPL/AGPL terms and is exactly what §3's "no GPL/AGPL" line exists to keep out. That distinction
+— not a general softening on copyleft — is why this exception names one module and one license
+family rather than widening the gate. **Not legal advice**; see DEC-098 for the authorisation
+and its scope.
 
 ### Why the §2 rules exist
 
