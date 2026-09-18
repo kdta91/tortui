@@ -64,22 +64,39 @@ SHELLCHECK_SOURCES := $(wildcard scripts/*)
 # in any locale, matching or not.
 MODULE := github.com/kdta91/tortui
 LICENSE_OSES := darwin linux windows
-# T-942: MPL-2.0 is admitted as a single, named exception for the locked torrent
-# engine (github.com/anacrolix/torrent, MPL-2.0 -- AGENT.md section 3/16, DEC-098).
-# This stays an allowlist, not a blanket copyleft admission: GPL/AGPL and every
-# other copyleft family are still absent from this list and still fail
-# `go-licenses check` on sight.
+# T-942: MPL-2.0 is admitted as a named exception for the locked torrent
+# engine (github.com/anacrolix/torrent, MPL-2.0 -- AGENT.md section 3/16,
+# DEC-098). This stays an allowlist, not a blanket copyleft admission:
+# GPL/AGPL/LGPL and every other copyleft family are still absent from this
+# list and still fail `go-licenses check` on sight.
 #
 # T-942 QA remediation: `go-licenses check --allowed_licenses` has no
 # per-module scoping (confirmed against `go-licenses check --help`) -- once
 # MPL-2.0 is in ALLOWED_LICENSES, the check by itself admits ANY MPL-2.0
-# module, not just the one named below. ALLOWED_MPL_MODULE is enforced
+# module, not just the ones named below. ALLOWED_MPL_MODULES is enforced
 # separately by scripts/check-license-scope.sh against the same
 # `go-licenses report` data the NOTICE pipeline below already generates, so
-# the "for anacrolix/torrent alone" scope is something the gate actually
-# fails on, not just prose (DEC-099).
+# the named-module scope is something the gate actually fails on, not just
+# prose (DEC-099).
+#
+# T-943 (DEC-100, owner-authorised 2026-09-18): the exception covers a named
+# SET, not one module -- github.com/anacrolix/torrent does not compile
+# without its sibling libraries, all MPL-2.0 by the same author, all
+# unmodified, plus github.com/go-llsqlite/adapter reached through
+# torrent/storage. The set below was derived empirically from
+# `go-licenses report ./...` over all three LICENSE_OSES with
+# anacrolix/torrent v1.61.0 in go.mod, not from a guess: anacrolix/utp is on
+# the linux/windows paths, anacrolix/mmsg on the cgo-enabled darwin path
+# (via anacrolix/go-libutp, itself MIT), so both are listed even though no
+# single GOOS report contains all ten.
+#
+# It is an ENUMERATION on purpose. `github.com/anacrolix/*` as a prefix would
+# be shorter and would silently admit any future module published under that
+# path; the point of this gate is that admitting a module is a deliberate,
+# reviewed act with a DEC- entry behind it. Adding an entry here without one
+# fails scripts/check-license-scope_test.sh, which pins this exact list.
 ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
-ALLOWED_MPL_MODULE := github.com/anacrolix/torrent
+ALLOWED_MPL_MODULES := github.com/anacrolix/torrent,github.com/anacrolix/dht/v2,github.com/anacrolix/generics,github.com/anacrolix/log,github.com/anacrolix/mmsg,github.com/anacrolix/multiless,github.com/anacrolix/sync,github.com/anacrolix/upnp,github.com/anacrolix/utp,github.com/go-llsqlite/adapter
 NOTICE_TMP := .notice.tmp
 
 .PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames test-scripts
@@ -135,8 +152,8 @@ licenses:
 	for goos in $(LICENSE_OSES); do \
 		goos_report=$(NOTICE_TMP).$$goos; \
 		GOOS=$$goos go-licenses report ./... --ignore $(MODULE) 2>/dev/null > "$$goos_report"; \
-		echo "make licenses: checking MPL-2.0 is scoped to $(ALLOWED_MPL_MODULE) for GOOS=$$goos"; \
-		scripts/check-license-scope.sh $(ALLOWED_MPL_MODULE) "$$goos_report"; \
+		echo "make licenses: checking MPL-2.0 is scoped to the named module set for GOOS=$$goos"; \
+		scripts/check-license-scope.sh $(ALLOWED_MPL_MODULES) "$$goos_report"; \
 		cat "$$goos_report" >> $(NOTICE_TMP); \
 		rm -f "$$goos_report"; \
 	done; \
