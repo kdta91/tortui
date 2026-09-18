@@ -725,20 +725,27 @@ the allowlist gained one entry, not a category.
 | `github.com/anacrolix/dht/v2` | Compile-time import of the engine — peer discovery. |
 | `github.com/anacrolix/generics` | Compile-time import of the engine — generic containers. |
 | `github.com/anacrolix/log` | Compile-time import of the engine — its logging façade. |
-| `github.com/anacrolix/mmsg` | Reached on the cgo-enabled darwin path via `anacrolix/go-libutp` (itself MIT). |
+| `github.com/anacrolix/mmsg` | Reached on any **cgo-enabled** build via `anacrolix/go-libutp` (itself MIT). |
 | `github.com/anacrolix/multiless` | Compile-time import of the engine — multi-key comparison. |
 | `github.com/anacrolix/sync` | Compile-time import of the engine — instrumented sync primitives. |
 | `github.com/anacrolix/upnp` | Compile-time import of the engine — port mapping. |
-| `github.com/anacrolix/utp` | uTP transport on the linux/windows (cgo-disabled) paths. |
-| `github.com/go-llsqlite/adapter` | Reached through `anacrolix/torrent/storage`; MPL-2.0 from `v0.1.0` on. |
+| `github.com/anacrolix/utp` | The pure-Go uTP transport, used whenever `CGO_ENABLED=0`, on every `GOOS`. |
+| `github.com/go-llsqlite/adapter` | Reached through `anacrolix/torrent/storage`; MPL-2.0 from `v0.2.0` on — `v0.1.0` and the earlier pseudo-version ship no LICENSE, so **T-031 must pin `v0.2.0` or later**. |
 
 All ten are MPL-2.0, unmodified, and unavoidable: the set was derived from
 `go-licenses report ./...` run over all three `LICENSE_OSES` with the engine in `go.mod`, not from
-a guess. No single per-OS report contains all ten — `utp` and `mmsg` sit on different build paths
-— so the set is the union across them. It is a **set of module names, not a license family and
-not a path prefix**: `github.com/anacrolix/*` would be shorter and would silently admit any
-future module published under that path, which is precisely the reviewed-decision property this
-gate exists to preserve.
+a guess. No single report contains all ten — `utp` and `mmsg` are alternative uTP transports, and
+which one is in the graph is decided by **`CGO_ENABLED`, not by `GOOS`**: measured over all six
+combinations, cgo-enabled builds pull `mmsg` (via `anacrolix/go-libutp`) on darwin, linux *and*
+windows alike, and cgo-disabled builds pull `utp` on all three. Darwin only looks special because
+on a Mac `GOOS=darwin` is the native target, where cgo defaults on, while the other two are
+cross-compiled with it off; on the Linux CI runner it is `GOOS=linux` that is native. Neither
+`make licenses` nor `ci.yml` pins `CGO_ENABLED` (only `build-all` does, at `CGO_ENABLED=0`), so
+both modules must be listed or the gate fails on one host or the other. The set is therefore the
+union across build configurations, not across operating systems. It is a **set of module names,
+not a license family and not a path prefix**: `github.com/anacrolix/*` would be shorter and would
+silently admit any future module published under that path, which is precisely the
+reviewed-decision property this gate exists to preserve.
 
 **The named scope is a two-part mechanism, and only one part is a true allowlist.**
 `go-licenses check --allowed_licenses=...` (`Makefile`'s `ALLOWED_LICENSES`) has no per-module

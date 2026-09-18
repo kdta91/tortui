@@ -85,10 +85,17 @@ LICENSE_OSES := darwin linux windows
 # unmodified, plus github.com/go-llsqlite/adapter reached through
 # torrent/storage. The set below was derived empirically from
 # `go-licenses report ./...` over all three LICENSE_OSES with
-# anacrolix/torrent v1.61.0 in go.mod, not from a guess: anacrolix/utp is on
-# the linux/windows paths, anacrolix/mmsg on the cgo-enabled darwin path
-# (via anacrolix/go-libutp, itself MIT), so both are listed even though no
-# single GOOS report contains all ten.
+# anacrolix/torrent v1.61.0 in go.mod, not from a guess.
+#
+# anacrolix/utp and anacrolix/mmsg are alternative uTP transports and never
+# appear together: which one is in the import graph is decided by
+# CGO_ENABLED, NOT by GOOS. Measured over all six combinations --
+# cgo-enabled pulls mmsg (via anacrolix/go-libutp, itself MIT) on darwin,
+# linux and windows alike; cgo-disabled pulls utp on all three. Neither this
+# target nor ci.yml pins CGO_ENABLED (only build-all does, CGO_ENABLED=0),
+# so whichever GOOS is native to the host runs with cgo on and the rest
+# cross-compile with it off. Both modules are therefore listed: no single
+# build configuration yields all ten.
 #
 # It is an ENUMERATION on purpose. `github.com/anacrolix/*` as a prefix would
 # be shorter and would silently admit any future module published under that
@@ -153,7 +160,7 @@ licenses:
 		goos_report=$(NOTICE_TMP).$$goos; \
 		GOOS=$$goos go-licenses report ./... --ignore $(MODULE) 2>/dev/null > "$$goos_report"; \
 		echo "make licenses: checking MPL-2.0 is scoped to the named module set for GOOS=$$goos"; \
-		scripts/check-license-scope.sh $(ALLOWED_MPL_MODULES) "$$goos_report"; \
+		scripts/check-license-scope.sh "$(ALLOWED_MPL_MODULES)" "$$goos_report"; \
 		cat "$$goos_report" >> $(NOTICE_TMP); \
 		rm -f "$$goos_report"; \
 	done; \

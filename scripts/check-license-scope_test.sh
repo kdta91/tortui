@@ -92,10 +92,10 @@ if ! run_check "$ALLOWED_MODULES" "$tmp_dir/case1.csv" "$tmp_dir/out1.txt"; then
 	fail "the full admitted module set was rejected"
 fi
 
-# --- Case 2: each listed module on its own passes. The real per-GOOS reports
-# do not all carry the same rows (anacrolix/utp appears on linux/windows,
-# anacrolix/mmsg only on the cgo-enabled darwin path), so no single module may
-# depend on another being present.
+# --- Case 2: each listed module on its own passes. The real reports do not all
+# carry the same rows (anacrolix/utp and anacrolix/mmsg are alternative uTP
+# transports, selected by CGO_ENABLED rather than by GOOS, and never appear
+# together), so no single module may depend on another being present.
 for mod in $ALLOWED_MODULES_SPACED; do
 	cat >"$tmp_dir/case2.csv" <<EOF
 github.com/BurntSushi/toml,https://example.invalid/toml/LICENSE,MIT
@@ -174,6 +174,37 @@ for mod in $ALLOWED_MODULES_SPACED; do
 		;;
 	esac
 done
+
+# --- Case 6b: membership is exact, not substring or prefix. A module whose
+# path contains an admitted one, or extends it, must still be rejected --
+# otherwise `github.com/anacrolix/torrent-fork` (or a path that merely embeds
+# an admitted one) would ride in on a listed module's name.
+cat >"$tmp_dir/case6b.csv" <<'EOF'
+github.com/anacrolix/torrent-fork,https://example.invalid/fork/LICENSE,MPL-2.0
+evil.example/github.com/anacrolix/log,https://example.invalid/embed/LICENSE,MPL-2.0
+github.com/anacrolix/torren,https://example.invalid/short/LICENSE,MPL-2.0
+EOF
+if run_check "$ALLOWED_MODULES" "$tmp_dir/case6b.csv" "$tmp_dir/out6b.txt"; then
+	cat "$tmp_dir/out6b.txt" >&2
+	fail "modules matching an admitted path only as a substring were not rejected"
+fi
+for mod in github.com/anacrolix/torrent-fork evil.example/github.com/anacrolix/log github.com/anacrolix/torren; do
+	grep -q "^  - $mod\$" "$tmp_dir/out6b.txt" ||
+		fail "substring-match rejection output did not name $mod"
+done
+
+# --- Case 6c: a malformed row with an empty module field must still fail,
+# named, rather than being silently dropped. go-licenses does not emit this
+# today; the gate must fail closed if it ever does.
+cat >"$tmp_dir/case6c.csv" <<'EOF'
+,https://example.invalid/mystery/LICENSE,MPL-2.0
+EOF
+if run_check "$ALLOWED_MODULES" "$tmp_dir/case6c.csv" "$tmp_dir/out6c.txt"; then
+	cat "$tmp_dir/out6c.txt" >&2
+	fail "an MPL-2.0 row with an empty module field was accepted"
+fi
+grep -q "(unnamed module)" "$tmp_dir/out6c.txt" ||
+	fail "empty-module-field rejection output did not flag the unnamed module"
 
 # --- Case 7: multiple non-allowed MPL-2.0 modules must all be named. -------
 cat >"$tmp_dir/case7.csv" <<EOF

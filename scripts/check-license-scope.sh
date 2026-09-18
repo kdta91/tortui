@@ -70,6 +70,17 @@ fi
 # against a blank trailing line producing a spurious empty-string "module".
 # Module paths never contain a comma, so splitting the allowed list on "," is
 # unambiguous.
+#
+# Membership is exact (`in`), never a substring or prefix test: a module whose
+# path merely contains or extends an admitted one -- say
+# `github.com/anacrolix/torrent-fork` or `evil.example/github.com/anacrolix/log`
+# -- is an offender like any other.
+#
+# A malformed row with an empty module field is reported as "(unnamed module)"
+# rather than as an empty string, because an empty offender would be stripped
+# by the command substitution below and the build would pass on a row nothing
+# could account for. go-licenses does not emit such a row today; the gate
+# fails closed anyway.
 offenders=$(printf '%s\n' "$report" | LC_ALL=C awk -F, -v allowed="$allowed_modules" '
 	BEGIN {
 		n = split(allowed, allowed_list, ",")
@@ -79,7 +90,9 @@ offenders=$(printf '%s\n' "$report" | LC_ALL=C awk -F, -v allowed="$allowed_modu
 			}
 		}
 	}
-	NF >= 3 && $3 == "MPL-2.0" && !($1 in is_allowed) { print $1 }
+	NF >= 3 && $3 == "MPL-2.0" && !($1 in is_allowed) {
+		print ($1 == "" ? "(unnamed module)" : $1)
+	}
 ')
 
 if [ -n "$offenders" ]; then
