@@ -2329,9 +2329,18 @@ cross-compiled for `GOOS=windows/linux/darwin`, `make build-all`.
 
 ### T-031 · anacrolix engine — add and list
 ```
-status: in-progress
+status: todo
 depends: T-030, T-942, T-943
 ```
+**Interrupted run (2026-09-18).** A first implementation pass was stopped by the user partway
+through. Its partial work is preserved, **unpushed and not `make check`-green**, as a single WIP
+commit `1473bde` on the local branch `task/T-031-anacrolix-engine-impl`: `go.mod` pins
+`anacrolix/torrent v1.61.0` and `go-llsqlite/adapter v0.2.0` (DEC-100's carry-over, honoured), and
+`internal/engine/anacrolix/` holds `engine.go`, `logging.go`, `paths.go`, `rates.go`, `storage.go`
+plus five `_test.go` files. The agent was still writing the paths, rates and stderr tests when it
+stopped; no gate — `make check`, `make licenses`, `NOTICE`, coverage, cross-GOOS lint, CI — has
+been run against any of it. **Treat it as a starting point to review, not as work already done**,
+or discard the branch and start clean. Status is back to `todo`; nothing is in flight.
 **Files:** `internal/engine/anacrolix/`
 
 **Acceptance**
