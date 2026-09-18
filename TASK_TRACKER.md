@@ -3682,6 +3682,21 @@ inherited from the initial plan.
   unchanged on `task/T-031-anacrolix-engine`. The probe package used to produce the evidence above
   was deleted after the runs; the branch carries this finding and nothing else.
 
+  **Owner decision (2026-09-18): option 1b — replace the locked engine.** The project owner chose
+  to replace `github.com/anacrolix/torrent` rather than widen the MPL-2.0 exception to its
+  `anacrolix/*` siblings plus `go-llsqlite/adapter`. This overrides DEC-001 and the Torrent-engine
+  row of AGENT.md §3 ("locked — do not re-litigate"), which only a project-owner decision can do,
+  and it will be recorded as a `DEC-` entry naming the replacement once one is selected. **T-031
+  stays `blocked` until then** — the replacement engine is itself a material choice (§12: two
+  reasonable implementations would differ materially), so it is not an agent's pick to make
+  silently. Candidate evaluation is in flight against the hard gates: pure Go with no cgo (six
+  cross-compiled tier-1 targets, §14), an embedded library rather than a daemon (§2 standalone
+  contract), MIT/Apache-2.0/BSD/ISC across the *whole transitive tree* — the failure mode that
+  blocked this task in the first place — maintained inside 24 months and CVE-clean (§12), and able
+  to satisfy the frozen §5 `Engine` interface without changing it. Once selected, this also
+  reopens whether T-942's MPL-2.0 admission (DEC-098/DEC-099) should stand or be reverted, since
+  its sole named beneficiary would no longer be a dependency.
+
   **Orchestrator verification (2026-09-17), independent of the implementing agent.** Spot-checked
   upstream `LICENSE` files directly: `anacrolix/dht` and `anacrolix/log` are Mozilla Public License
   2.0 at `master`, consistent with finding (1). For finding (2) the picture is more specific than
