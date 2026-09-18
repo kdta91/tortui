@@ -2217,7 +2217,7 @@ authorised, not agent-initiated, and it does **not** reopen DEC-001 or any other
 ### T-943 · Extend the MPL-2.0 exception to the engine's named module set
 
 ```
-status: in-progress
+status: done
 depends: T-942
 ```
 **Files:** `AGENT.md`, `Makefile`, `README.md`, `scripts/check-license-scope.sh`,
@@ -2227,6 +2227,71 @@ depends: T-942
 pursued and no replacement engine cleared the gates. Widens DEC-098's single-module MPL-2.0
 exception to the named set `anacrolix/torrent` actually compiles against. Adds no dependency and
 no `.go` file — T-031 still owns that.
+
+**Done on 2026-09-18.** `ALLOWED_MPL_MODULE` became `ALLOWED_MPL_MODULES`, a comma-separated
+enumeration of ten module paths; `scripts/check-license-scope.sh` now splits that list into a set
+in its existing `awk` pass and keeps its contract unchanged (exit 0 in scope, exit 1 naming every
+offender plus the admitted set, exit 2 on usage error — now including an empty list — POSIX `sh`,
+`shellcheck -s sh` clean). AGENT.md §3's footer and §16's "Project license" section (which gained
+a table of the ten modules and why each is in the set), `README.md`'s License section and
+`.github/workflows/ci.yml`'s licenses-job comment all describe a named module **set**, still not a
+license family and explicitly not an `anacrolix/*` prefix. See **DEC-100** for the authorisation,
+the derivation, the proofs and what did not change.
+
+**The set was derived empirically, and it is not quite the list in the acceptance criteria.** In a
+disposable copy of the repo outside the working tree: `go get github.com/anacrolix/torrent`
+(v1.61.0) + a one-line probe package, then `go-licenses report ./...` on all three `LICENSE_OSES`.
+The union of MPL-2.0 rows is **ten** modules — the eight the acceptance criteria name, plus
+`github.com/go-llsqlite/adapter`, **plus `github.com/anacrolix/mmsg`, which the acceptance list
+omits.** Reported here rather than added quietly: `mmsg` is reached via
+`github.com/anacrolix/go-libutp` (itself MIT) on **any cgo-enabled build**, and `anacrolix/utp` is
+the pure-Go uTP transport used whenever `CGO_ENABLED=0`. The two never appear together, and which
+one is in the graph is decided by **`CGO_ENABLED`, not `GOOS`** — all six combinations were
+measured: cgo on gives `mmsg` and no `utp` on darwin, linux and windows alike; cgo off gives `utp`
+and no `mmsg` on all three. Darwin only looks special because on a Mac `GOOS=darwin` is the native,
+cgo-enabled target while the others cross-compile with cgo off; on the Linux CI runner `GOOS=linux`
+is the native one. Both must be listed or `make licenses` fails on one host or the other. `mmsg` is
+inside the owner's authorisation as written ("the `github.com/anacrolix/*` family that
+`anacrolix/torrent` compiles against"): MPL-2.0, same author, unmodified, unavoidable. No module
+the acceptance list names is absent from the tree.
+
+**`go-llsqlite/adapter` resolved visibly, with no `--ignore`.** The pinned
+`v0.0.0-20230927005056-7f5ce7f0c916` really does ship no LICENSE (reproduced: `make licenses`
+exits 1 on `GOOS=darwin` with `Did not find license for library 'github.com/go-llsqlite/adapter'`).
+The module now has tags, but **`v0.1.0` is equally unlicensed** — its module directory carries no
+license file of any name (listed directly, plus a recursive `*licen*`/`*copying*` search that
+returns nothing). `v0.2.0` is the first revision that carries the upstream MPL-2.0 `LICENSE`; it
+builds against `anacrolix/torrent v1.61.0` and leaves **zero `Unknown` rows** in any per-GOOS
+report, so it is admitted as a named MPL-2.0 module like the other nine. **T-031 must pin it at
+`v0.2.0` or later** — `go get github.com/anacrolix/torrent` on its own selects the unlicensed
+pseudo-version and will fail `make licenses`.
+
+**The regression test is the deliverable, and it was mutation-checked.**
+`scripts/check-license-scope_test.sh` proves every listed module passes alone and all together,
+that an unlisted MPL-2.0 module fails and is named (including
+`github.com/anacrolix/not-a-listed-sibling`, which shares the admitted prefix — the set is names,
+not a wildcard), and that a partially-listed set fails on exactly its unlisted members. A case
+also pins the `Makefile`'s `ALLOWED_MPL_MODULES` to the list the test exercises, so widening the
+gate without updating the test fails `make check`. Three mutations were confirmed to fail it:
+stubbing the check script to `exit 0`, rewriting the enumeration as an `^github\.com/anacrolix/`
+regex, and appending an extra module to the `Makefile`'s list.
+
+**Enforcement and barred-family proofs, with the real `go-licenses` v2.0.1 binary.** With the
+widened gate and the engine in the scratch copy, `make licenses` passes on all three
+`LICENSE_OSES` and generates a `NOTICE` with exactly ten MPL-2.0 rows, each with a `license_url`
+(MPL-2.0 §3.2). Adding a throwaway `github.com/example/fake-unrelated-mpl-module` fails the build
+at the scope step, named, even though `go-licenses check --allowed_licenses` passed it on all
+three OSes. GPL-3.0, AGPL-3.0 and LGPL-3.0 each fail `go-licenses check` under the widened
+`ALLOWED_LICENSES` (throwaway modules carrying the real FSF texts; LGPL additionally proven
+against the real `github.com/juju/ratelimit`).
+
+**Unchanged:** `go.mod`, `go.sum`, `NOTICE` (byte-identical — every dependency experiment lived in
+a disposable copy outside the repo), no `.go` file, `ALLOWED_LICENSES` itself, and DEC-099's
+residual gap, which is still disclosed rather than overclaimed. T-031 is left `blocked` for the
+orchestrator to move once this merges. Verified: `make check`, `make licenses`
+(darwin/linux/windows, `NOTICE` unchanged), `sh scripts/check-license-scope_test.sh`,
+`shellcheck -s sh scripts/check-license-scope.sh`, `go test -race ./...`, `golangci-lint run`
+cross-compiled for `GOOS=windows/linux/darwin`, `make build-all`.
 
 **Acceptance**
 - The MPL-2.0 exception covers an **explicitly enumerated list of module paths**, not a prefix
@@ -3656,6 +3721,8 @@ when it reaches it and does not start backlog items on its own.
 
 | DEC-099 | 2026-09-17 | **QA remediation of PR #28 (T-942/DEC-098): the "MPL-2.0 for `anacrolix/torrent` alone" scope is now enforced by `make licenses`, not only stated in AGENT.md/README/DEC-098.** QA passed all six T-942 acceptance criteria and the §16 reasoning, and failed the PR on exactly one finding: `go-licenses check --allowed_licenses`, which is what `ALLOWED_LICENSES` feeds, has no per-module scoping — confirmed against `go-licenses check --help` (v2.0.1), whose only relevant flags are `--allowed_licenses` (a flat license-name list) and `--ignore` (a package-path-prefix exclusion, not a license scope). Once MPL-2.0 is in that list, the check by itself passes **any** MPL-2.0 module, present or future, so a future task adding an unrelated MPL-2.0 dependency would silently pass `make licenses` with nothing disclosing that the "for X alone" scope was prose rather than enforcement. **Fix: made the scope real rather than disclosing the gap in prose**, per the remediation instructions' stated preference. `scripts/check-license-scope.sh` (new) reads the CSV `go-licenses report ./...` output the `Makefile`'s `licenses` target already generates per `LICENSE_OSES` for `NOTICE` — no second `go-licenses` invocation — and fails with a named offender if any row's license is `MPL-2.0` and its module is not `github.com/anacrolix/torrent`. It is wired into the existing per-GOOS report loop (`Makefile`), so it runs on `darwin`/`linux`/`windows` exactly like the pre-existing `go-licenses check` loop, with `LC_ALL=C` on its `awk` pass matching the determinism reasoning already documented for the NOTICE merge (T-006). `scripts/check-license-scope_test.sh` (new) is its regression test, following the `check-indexer-hostnames.sh`/`_test.sh` convention already established in this repo (disposable fixtures, no network dependency, wired into `test-scripts` so `make check` runs it). **Enforcement proof, not simulated:** in a disposable, uncommitted copy of this repository, a throwaway local module `github.com/example/fake-unrelated-mpl-module` was created carrying `anacrolix/torrent`'s own real MPL-2.0 `LICENSE` text (the same text DEC-098 already fetched and quotes from), wired in via a `replace` directive and referenced from a scratch `internal/licenseproof` package so `go-licenses`' import walk actually reaches it. Running `make licenses` there: the pre-existing `go-licenses check --allowed_licenses=...` loop **passed** (proving the scope gap QA found was real, not theoretical), then the new scope check failed the build: `check-license-scope: MPL-2.0 is admitted only for github.com/anacrolix/torrent (AGENT.md section 3/16, DEC-098) -- found MPL-2.0 module(s) outside that scope: - github.com/example/fake-unrelated-mpl-module`, `make: *** [licenses] Error 1`. Removing the fake module and re-running `make licenses` in the same scratch copy passed cleanly with `NOTICE` regenerating byte-identical to the real repo's. The real repo's own `make licenses` (no fake module involved) passes unchanged on all three `LICENSE_OSES`, `NOTICE` byte-identical to before this remediation. **Docs corrected to match the mechanism, not just the intent:** AGENT.md §3's footer and §16's "Project license" paragraph, `README.md`'s License section, and the `.github/workflows/ci.yml` licenses-job comment all now describe the two-part mechanism (a global `ALLOWED_LICENSES` allowlist, plus a separate per-module scope check for MPL-2.0 specifically) instead of implying the allowlist alone was scoped. **Residual gap, disclosed rather than papered over:** `ALLOWED_LICENSES` itself remains, and will remain, a global list with no per-module targeting — that is unavoidable with `go-licenses check` as it exists (v2.0.1 has no such flag), and it is also the *correct* shape for that list, since every license on it besides MPL-2.0 is admitted as a permissive category (MIT/Apache-2.0/BSD/ISC), not as a named exception for one module — there is nothing to scope there. The per-module check exists solely because MPL-2.0 is the one license admitted by module name rather than by license family, and it now closes exactly that gap and no other. No engine code touched, no `.go` file outside the new scratch proof (which lived only in a disposable copy of the repo and was discarded, never committed), `go.mod`/`go.sum` unchanged, T-031 unchanged (`blocked`). Re-verified: `make check`, `make licenses` (darwin/linux/windows, `NOTICE` unchanged), `go test -race ./...`, `golangci-lint run` cross-compiled for `GOOS=windows/linux/darwin` (0 issues each), `make build-all` (all six tier-1 targets) | T-942, T-031, T-034, T-041, T-070+ |
 
+| DEC-100 | 2026-09-18 | **The MPL-2.0 exception is widened from one named module to a named set of ten**, enforced the same way DEC-099 built: `Makefile`'s `ALLOWED_MPL_MODULE` becomes `ALLOWED_MPL_MODULES` (a comma-separated list), `scripts/check-license-scope.sh` accepts a list instead of one literal, and AGENT.md §3/§16, `README.md` and `.github/workflows/ci.yml` move with it. **Owner-authorised on 2026-09-18** (option 1a from T-031's Blocked entry), after option 1b — replacing the locked engine — was pursued and no candidate cleared the gates (`cenkalti/rain` would have traded this set for LGPL-3.0 `juju/ratelimit`, two MPL-2.0 modules, the permanently unlicensed `nictuku/nettools`, **and** a redesign of per-torrent destinations, since it has no per-torrent save-path API and so cannot honour the frozen §5 `AddSource.SavePath`). This is an authorised change to a locked §3/§16 policy, not an agent-initiated one, and it reopens neither DEC-001 nor any other §3 stack row. **The set, derived empirically rather than copied from the task brief:** in a disposable copy of this repo outside the working tree, `go get github.com/anacrolix/torrent` (resolves to v1.61.0) plus a one-line probe package importing it, then `go-licenses report ./...` on all three `LICENSE_OSES` (on a macOS host, which as the next point explains means cgo on for `darwin` and off for the two cross-compiled targets — that is what makes the union of those three runs cover all ten); the MPL-2.0 rows across their union are exactly `github.com/anacrolix/torrent` (the engine itself), `github.com/anacrolix/dht/v2`, `github.com/anacrolix/generics`, `github.com/anacrolix/log`, `github.com/anacrolix/mmsg`, `github.com/anacrolix/multiless`, `github.com/anacrolix/sync`, `github.com/anacrolix/upnp`, `github.com/anacrolix/utp` (all compile-time imports of the engine, same author, same license, all unmodified) and `github.com/go-llsqlite/adapter` (reached via `anacrolix/torrent/storage`). **One module is in the real tree that T-943's acceptance list did not name: `github.com/anacrolix/mmsg`** — reported rather than quietly added, and admitted only because it is squarely inside what the owner authorised ("the `github.com/anacrolix/*` family that `anacrolix/torrent` compiles against"): MPL-2.0 by the same author, unmodified, and unavoidable. It is reached through `github.com/anacrolix/go-libutp` (itself MIT) on **any cgo-enabled build**. **The determinant is `CGO_ENABLED`, not `GOOS`** — corrected during QA remediation of PR #30, where the first version of this entry wrongly called it "the cgo-enabled darwin path". All six combinations were measured, in this order: `CGO_ENABLED=1` with `GOOS=darwin`, `linux` and `windows` each report `mmsg` and **not** `utp`; `CGO_ENABLED=0` with `GOOS=darwin`, `linux` and `windows` each report `utp` and **not** `mmsg`. `utp` and `mmsg` are alternative uTP transports and never appear together. Darwin only looked special because on a Mac `GOOS=darwin` is the native target, where cgo defaults on, while `linux`/`windows` cross-compile with it off; on the Linux CI runner it is `GOOS=linux` that is native. Neither the `licenses` target nor `ci.yml` pins `CGO_ENABLED` (only `build-all` does, at `CGO_ENABLED=0`). No single build configuration yields all ten, so the admitted set is the union across configurations — and both `utp` and `mmsg` must be listed or `make licenses` fails on one host or the other. **`go-llsqlite/adapter` is resolved visibly, not with a silent `--ignore`:** its pinned `v0.0.0-20230927005056-7f5ce7f0c916` (2023-09-27) genuinely ships no LICENSE, so `go-licenses` cannot classify it and `make licenses` exits 1 on `GOOS=darwin` with `Did not find license for library 'github.com/go-llsqlite/adapter'` — reproduced here, not taken on trust. The module has since been tagged: `v0.1.0` and `v0.2.0` exist. **`v0.1.0` does not fix it** — its module directory holds `crawshaw.go`, `go.mod`, `go.sum`, `llsqlite.go`, `result-code.go`, `zombiezen.go` and `sqlitex/` and no license file of any name, confirmed by listing the extracted module and by a recursive search for `*licen*`/`*copying*` that returns nothing. `v0.2.0` is the first revision that carries one: the same files plus a 16,724-byte `LICENSE` whose first line is "Mozilla Public License Version 2.0". With `go get github.com/go-llsqlite/adapter@v0.2.0` in the scratch copy, `go build ./...` still succeeds against `anacrolix/torrent v1.61.0`, `go-licenses check` passes on all three `LICENSE_OSES`, **zero `Unknown` rows remain** in any report, and the generated `NOTICE` carries `github.com/go-llsqlite/adapter,MPL-2.0,https://github.com/go-llsqlite/adapter/blob/v0.2.0/LICENSE`. So it is admitted as a named MPL-2.0 module like the rest, with no `--ignore` entry anywhere and nothing omitted from `NOTICE`. **T-031 must pin `github.com/go-llsqlite/adapter` at `v0.2.0` or later** — not `v0.1.0`, which is equally unlicensed (a `go get github.com/anacrolix/torrent` alone leaves the unlicensed pseudo-version and will fail `make licenses`); that is the one carry-over obligation this decision places on the next task. **Why an enumeration and not `github.com/anacrolix/*`:** a prefix would be shorter and would silently admit any future module published under that path, which destroys the only property this gate has — that admitting a module is a deliberate, reviewed act. `scripts/check-license-scope_test.sh` therefore pins the exact list (a case asserts the `Makefile`'s `ALLOWED_MPL_MODULES` equals the list the test exercises, so widening the gate without updating the test and adding a `DEC-` entry fails `make check`) and proves all three halves of the contract: every listed module passes alone and together, an unlisted MPL-2.0 module fails and is named — including `github.com/anacrolix/not-a-listed-sibling`, which shares the admitted path prefix — and a partially-listed set fails on exactly its unlisted members. The test was mutation-checked in a scratch copy: stubbing the check script to `exit 0` fails it, and rewriting the enumeration into an `^github\.com/anacrolix/` regex fails it on the same-prefix case. **Enforcement proof on the real tree, not simulated:** with the widened `Makefile` and script in the scratch copy carrying the engine, `make licenses` passes on all three `LICENSE_OSES` and regenerates a `NOTICE` with exactly ten MPL-2.0 rows, each with a `license_url`. Adding a throwaway `github.com/example/fake-unrelated-mpl-module` (real `anacrolix/torrent` MPL-2.0 `LICENSE` text, wired in by a `replace` directive and imported from the probe package) then fails the build at the scope step — `check-license-scope: MPL-2.0 is admitted only for the named module set ... - github.com/example/fake-unrelated-mpl-module`, `make: *** [licenses] Error 1` — even though `go-licenses check --allowed_licenses` passed it on all three OSes, confirming the widened list did not dissolve the gate. **GPL, AGPL and LGPL were proven to still fail under the widened `ALLOWED_LICENSES`**, with the real `go-licenses` v2.0.1 binary, using DEC-098's throwaway-module technique: three disposable modules carrying the real FSF GPL-3.0, AGPL-3.0 and LGPL-3.0 texts as their `LICENSE`, each imported from a scratch `main` package, each checked against `MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0` — `Not allowed license 'GPL-3.0' found`, `Not allowed license 'AGPL-3.0' found`, `Not allowed license 'LGPL-3.0' found`, exit 1 in all three cases. LGPL was additionally proven against the **real** `github.com/juju/ratelimit` (the module the rain evaluation surfaced): `Not allowed license 'LGPL-3.0' found for library 'github.com/juju/ratelimit'`, exit 1. **Obligations accepted — unchanged in kind from DEC-098, only in count:** MPL-2.0 §3.1 (modify a Covered Software file and that file's source ships under MPL-2.0 — tortui modifies none of these), §3.2 (distributing the compiled binary requires telling recipients where the Covered Software's source is, satisfied by `NOTICE`'s existing `license_url` column, which the scratch run confirms is populated for all ten), and §3.3's "Larger Work" permission, which is what keeps tortui's own MIT source out of scope. **What did not change:** `go.mod`, `go.sum` and `NOTICE` (byte-identical on this branch — `git diff --exit-code -- NOTICE` after `make licenses` on all three `LICENSE_OSES`; T-031 still owns adding the dependency, and every dependency experiment above lived in a disposable copy outside the repo), no `.go` file, `ALLOWED_LICENSES` itself (same six entries), DEC-099's residual gap (`ALLOWED_LICENSES` remains a global list with no per-module targeting — still correct, since every other license on it is admitted as a permissive category rather than by module name) and the `check-license-scope.sh` contract (exit 0 in scope, exit 1 naming every offender, exit 2 on usage error, POSIX `sh`, `shellcheck -s sh` clean). Verified: `make check`, `make licenses` (darwin/linux/windows, `NOTICE` unchanged), `sh scripts/check-license-scope_test.sh`, `shellcheck -s sh scripts/check-license-scope.sh`, `go test -race ./...`, `golangci-lint run` cross-compiled for `GOOS=windows/linux/darwin`, `make build-all` | T-943, T-031, T-034, T-041, T-070+ |
+
 Append a row whenever you make a choice a future reader would question. Empty date means
 inherited from the initial plan.
 
@@ -3809,6 +3876,23 @@ inherited from the initial plan.
   could satisfy it. It does not make (2) go away on its own — and note that under **1a** this
   module would need admitting as MPL-2.0 too, so the two findings resolve together, not
   separately.
+
+  **T-943 landed the policy change (2026-09-18, DEC-100) — two carry-overs for T-031.** (i) The
+  admitted set is **ten** modules, not the eight listed above: `github.com/anacrolix/mmsg` is also
+  in the tree, reached via `github.com/anacrolix/go-libutp` (MIT) on **any cgo-enabled build**.
+  `mmsg` and `utp` are alternative uTP transports and never appear together; the determinant is
+  `CGO_ENABLED`, **not** `GOOS` (measured over all six combinations: cgo on → `mmsg`, cgo off →
+  `utp`, identically on darwin, linux and windows). Both are in the `Makefile`'s
+  `ALLOWED_MPL_MODULES`, because whichever `GOOS` is native to the host builds with cgo on while
+  the rest cross-compile with it off. (ii) Finding (2) is resolved by **pinning
+  `github.com/go-llsqlite/adapter` at `v0.2.0` or later** — **not `v0.1.0`, which carries no
+  license file either** — that tag carries the upstream MPL-2.0 `LICENSE` the 2023 pseudo-version
+  lacks, builds against `anacrolix/torrent v1.61.0`, and leaves
+  zero `Unknown` rows on any `LICENSE_OSES`. A bare `go get github.com/anacrolix/torrent` selects
+  the unlicensed pseudo-version and still fails `make licenses`, so T-031 must
+  `go get github.com/go-llsqlite/adapter@v0.2.0` explicitly. No `--ignore` entry was added and
+  `NOTICE` omits nothing. The `govulncheck` findings recorded above are untouched by T-943 and are
+  still worth a look when the engine lands.
 
 ### Resolved
 

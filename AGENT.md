@@ -101,15 +101,20 @@ These are not negotiable and not subject to task-level override.
 | Testing | stdlib `testing` + `charmbracelet/x/exp/teatest` | Golden-file fixtures for adapters |
 
 Any additional dependency requires a `DEC-` entry in the decision log with a license check
-(MIT / Apache-2.0 / BSD / ISC / **MPL-2.0** only — **no GPL/AGPL**). MPL-2.0 is admitted as a
-single, named exception for `anacrolix/torrent`, the locked torrent engine on this table — see
-§16. It does not open the door to copyleft dependencies generally; GPL and AGPL remain barred
-without exception. **That scope is enforced, not just stated:** `go-licenses check
---allowed_licenses` (what `make licenses` runs) has no per-module scoping, so once MPL-2.0 is on
-the allowlist it would pass any MPL-2.0 module by itself. `scripts/check-license-scope.sh` closes
-that gap — it reads the `go-licenses report` data the `licenses` target already generates and
-fails the build, naming the offender, if any MPL-2.0 row is not `anacrolix/torrent`. See §16 and
-DEC-099 for the mechanism and its residual gap.
+(MIT / Apache-2.0 / BSD / ISC / **MPL-2.0** only — **no GPL/AGPL/LGPL**). MPL-2.0 is admitted as
+an exception for an **explicitly named set of module paths**, not as a license family: the locked
+torrent engine on this table plus the modules it actually compiles against — see §16 for the list
+and the reasoning. It does not open the door to copyleft dependencies generally; GPL, AGPL and
+LGPL remain barred without exception. **That scope is enforced, not just stated:** `go-licenses
+check --allowed_licenses` (what `make licenses` runs) has no per-module scoping, so once MPL-2.0
+is on the allowlist it would pass any MPL-2.0 module by itself.
+`scripts/check-license-scope.sh` closes that gap — it reads the `go-licenses report` data the
+`licenses` target already generates and fails the build, naming the offender, if any MPL-2.0 row
+names a module outside `ALLOWED_MPL_MODULES` (the `Makefile`'s authoritative list). The set is an
+enumeration, never an `anacrolix/*` prefix: a wildcard would silently admit any future module
+published under that path, and admitting a module must stay a deliberate, reviewed act with a
+`DEC-` entry behind it. See §16, DEC-099 (the mechanism and its residual gap) and DEC-100 (the
+widened set).
 
 ---
 
@@ -707,33 +712,65 @@ constraints rather than style preferences, and does not "helpfully" relax one.*
 ### Project license
 
 MIT, in `LICENSE` at the repo root, and unchanged by anything below. Dependencies are
-restricted to MIT / Apache-2.0 / BSD / ISC, plus one named exception, MPL-2.0, admitted for
-`anacrolix/torrent` alone (§3, DEC-098) so a `NOTICE` file can enumerate them accurately.
-`go-licenses` runs in CI and still fails the build on any other copyleft dependency — the
-allowlist gained one entry, not a category.
+restricted to MIT / Apache-2.0 / BSD / ISC, plus one named exception, MPL-2.0, admitted for an
+enumerated set of module paths (§3, DEC-098, DEC-100) so a `NOTICE` file can enumerate them
+accurately. `go-licenses` runs in CI and still fails the build on any other copyleft dependency —
+the allowlist gained one entry, not a category.
 
-**"For `anacrolix/torrent` alone" is a two-part mechanism, and only one part is a true allowlist.**
+**The admitted set**, authoritative copy in the `Makefile`'s `ALLOWED_MPL_MODULES`:
+
+| Module | Why it is in the set |
+|---|---|
+| `github.com/anacrolix/torrent` | The locked torrent engine itself (§3, DEC-001, DEC-098). |
+| `github.com/anacrolix/dht/v2` | Compile-time import of the engine — peer discovery. |
+| `github.com/anacrolix/generics` | Compile-time import of the engine — generic containers. |
+| `github.com/anacrolix/log` | Compile-time import of the engine — its logging façade. |
+| `github.com/anacrolix/mmsg` | Reached on any **cgo-enabled** build via `anacrolix/go-libutp` (itself MIT). |
+| `github.com/anacrolix/multiless` | Compile-time import of the engine — multi-key comparison. |
+| `github.com/anacrolix/sync` | Compile-time import of the engine — instrumented sync primitives. |
+| `github.com/anacrolix/upnp` | Compile-time import of the engine — port mapping. |
+| `github.com/anacrolix/utp` | The pure-Go uTP transport, used whenever `CGO_ENABLED=0`, on every `GOOS`. |
+| `github.com/go-llsqlite/adapter` | Reached through `anacrolix/torrent/storage`; MPL-2.0 from `v0.2.0` on — `v0.1.0` and the earlier pseudo-version ship no LICENSE, so **T-031 must pin `v0.2.0` or later**. |
+
+All ten are MPL-2.0, unmodified, and unavoidable: the set was derived from
+`go-licenses report ./...` run over all three `LICENSE_OSES` with the engine in `go.mod`, not from
+a guess. No single report contains all ten — `utp` and `mmsg` are alternative uTP transports, and
+which one is in the graph is decided by **`CGO_ENABLED`, not by `GOOS`**: measured over all six
+combinations, cgo-enabled builds pull `mmsg` (via `anacrolix/go-libutp`) on darwin, linux *and*
+windows alike, and cgo-disabled builds pull `utp` on all three. Darwin only looks special because
+on a Mac `GOOS=darwin` is the native target, where cgo defaults on, while the other two are
+cross-compiled with it off; on the Linux CI runner it is `GOOS=linux` that is native. Neither
+`make licenses` nor `ci.yml` pins `CGO_ENABLED` (only `build-all` does, at `CGO_ENABLED=0`), so
+both modules must be listed or the gate fails on one host or the other. The set is therefore the
+union across build configurations, not across operating systems. It is a **set of module names,
+not a license family and not a path prefix**: `github.com/anacrolix/*` would be shorter and would
+silently admit any future module published under that path, which is precisely the
+reviewed-decision property this gate exists to preserve.
+
+**The named scope is a two-part mechanism, and only one part is a true allowlist.**
 `go-licenses check --allowed_licenses=...` (`Makefile`'s `ALLOWED_LICENSES`) has no per-module
 targeting flag — confirmed against `go-licenses check --help` (v2.0.1): `--allowed_licenses` is a
 flat list of license names, full stop. Once MPL-2.0 is in that list, the check by itself would
-pass **any** MPL-2.0 module, present or future, not only the one named here. The narrowness is
+pass **any** MPL-2.0 module, present or future, not only the ones named here. The narrowness is
 enforced by a second, independent check on the same data: `scripts/check-license-scope.sh` reads
 the CSV `go-licenses report` already produces (the same data `make licenses` merges into `NOTICE`
 — no second scan) and fails the build, naming the offender, if any MPL-2.0 row belongs to a
-module other than `anacrolix/torrent`. It runs on all three `LICENSE_OSES`, and its own test
-(`scripts/check-license-scope_test.sh`, wired into `make check`/`test-scripts`) proves it rejects
-an unrelated MPL-2.0 module and still accepts the real repo. **The residual gap:**
-`ALLOWED_LICENSES` itself remains a global list — a future MIT/Apache-2.0/BSD/ISC dependency is
-still checked only against that flat list, which is correct, since the per-module check exists
-solely to narrow MPL-2.0, the one license family admitted by name rather than by permissiveness.
-Nothing wider than that is scoped or needs to be. See DEC-099 for the full accounting.
+module outside `ALLOWED_MPL_MODULES`. It runs on all three `LICENSE_OSES`, and its own test
+(`scripts/check-license-scope_test.sh`, wired into `make check`/`test-scripts`) proves every
+listed module passes, an unlisted MPL-2.0 module still fails and is named — including one sharing
+the `github.com/anacrolix/` prefix — and a partially-listed set fails on exactly its unlisted
+members. **The residual gap, unchanged by widening the set:** `ALLOWED_LICENSES` itself remains a
+global list — a future MIT/Apache-2.0/BSD/ISC dependency is still checked only against that flat
+list, which is correct, since the per-module check exists solely to narrow MPL-2.0, the one
+license family admitted by name rather than by permissiveness. Nothing wider than that is scoped
+or needs to be. See DEC-099 for the full accounting and DEC-100 for the widening.
 
 **Why MPL-2.0 and not GPL/AGPL.** MPL-2.0 is *file-level* ("weak") copyleft: its obligations
 attach to the individual source files that carry the MPL notice, not to every file that is
 merely compiled or linked alongside them. Modifying one of those files and distributing the
 result requires releasing that file's source under MPL-2.0 (§3.1); distributing tortui as a
-compiled binary that includes unmodified `anacrolix/torrent` code requires only that recipients
-be told where that Covered Software's source is available (§3.2) — which `NOTICE`'s
+compiled binary that includes unmodified code from the admitted modules requires only that
+recipients be told where that Covered Software's source is available (§3.2) — which `NOTICE`'s
 `license_url` column already does for every dependency, MPL-2.0 or not. Critically, MPL-2.0
 explicitly permits combining Covered Software with code under other licenses into a "Larger
 Work" (§3.3) without pulling that other code under MPL. It does **not** reach tortui's own
@@ -741,9 +778,12 @@ MIT-licensed source, and tortui accepts no obligation to publish source it would
 anyway. GPL and AGPL are *strong* copyleft: they extend to the whole combined work (GPL) or to
 network use of the whole combined work (AGPL), which would force tortui's own source under
 GPL/AGPL terms and is exactly what §3's "no GPL/AGPL" line exists to keep out. That distinction
-— not a general softening on copyleft — is why this exception names one module and one license
-family rather than widening the gate. **Not legal advice**; see DEC-098 for the authorisation
-and its scope.
+— not a general softening on copyleft — is why this exception names a fixed set of modules and
+one license family rather than widening the gate. **LGPL is barred for the same reason as GPL**
+and is not a borderline case here: it was proven empirically to fail `go-licenses check` under
+the current `ALLOWED_LICENSES` (DEC-100), including against the real `github.com/juju/ratelimit`,
+the LGPL-3.0 module that surfaced while evaluating a replacement engine. **Not legal advice**;
+see DEC-098 for the original authorisation and DEC-100 for the widened set.
 
 ### Why the §2 rules exist
 
