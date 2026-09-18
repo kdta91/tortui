@@ -2214,6 +2214,54 @@ authorised, not agent-initiated, and it does **not** reopen DEC-001 or any other
 
 ---
 
+### T-943 · Extend the MPL-2.0 exception to the engine's named module set
+
+```
+status: in-progress
+depends: T-942
+```
+**Files:** `AGENT.md`, `Makefile`, `README.md`, `scripts/check-license-scope.sh`,
+`scripts/check-license-scope_test.sh`, `.github/workflows/ci.yml`, `TASK_TRACKER.md`
+
+**Owner-authorised on 2026-09-18** (option 1a from T-031's Blocked entry), after option 1b was
+pursued and no replacement engine cleared the gates. Widens DEC-098's single-module MPL-2.0
+exception to the named set `anacrolix/torrent` actually compiles against. Adds no dependency and
+no `.go` file — T-031 still owns that.
+
+**Acceptance**
+- The MPL-2.0 exception covers an **explicitly enumerated list of module paths**, not a prefix
+  wildcard and not a license family: `github.com/anacrolix/torrent` plus `dht/v2`, `generics`,
+  `log`, `multiless`, `sync`, `upnp`, `utp`, and `github.com/go-llsqlite/adapter`. Verify the set
+  empirically against the real dependency graph rather than copying this list — if the tree names
+  a module this list omits, report it rather than silently adding it.
+- `ALLOWED_MPL_MODULE` becomes a list (rename to `ALLOWED_MPL_MODULES`), and
+  `scripts/check-license-scope.sh` accepts several allowed modules while keeping its current
+  contract: exit 0 when every MPL-2.0 row is in the set, exit 1 naming every offender otherwise,
+  exit 2 on usage error, POSIX `sh`, `shellcheck -s sh` clean.
+- `scripts/check-license-scope_test.sh` proves: each listed module passes, an **unlisted** MPL-2.0
+  module still fails, and a partially-listed set fails on the unlisted one. The regression test is
+  the point of the task — a wider allowlist that nothing polices is worse than the status quo.
+- `github.com/go-llsqlite/adapter`'s missing LICENSE is resolved **visibly**. Preferred: move to a
+  revision that carries the upstream MPL-2.0 `LICENSE` (upstream `master` has one; the pinned
+  `v0.0.0-20230927005056-7f5ce7f0c916` does not), so it is admitted as a named MPL-2.0 module like
+  the rest. Fallback only if that is not reachable: record it as an explicit, documented exception
+  with evidence. **A silent `--ignore` entry is not acceptable** — `NOTICE` must not omit a module
+  without the omission being stated.
+- GPL, AGPL **and LGPL** are proven — empirically, with the real `go-licenses` binary, not
+  asserted — to still fail under the widened list. LGPL matters now: T-031's evaluation of
+  `cenkalti/rain` surfaced `juju/ratelimit` as LGPL-3.0, so the barred-families claim in §16 must
+  be tested, not assumed.
+- AGENT.md §3's dependency-license footer, §16's "Project license" paragraph, `README.md`'s
+  License section, and `.github/workflows/ci.yml`'s licenses-job comment all describe the widened
+  mechanism accurately — a named module **set**, still not a license family.
+- Decision Log entry (next free id, **DEC-100** — verify against `origin/main`) recording the
+  owner authorisation, the exact set and why each member is in it, the obligations accepted
+  (unchanged from DEC-098: MPL-2.0 §3.2 satisfied by `NOTICE`'s `license_url` column), and what
+  did **not** change.
+- `NOTICE` byte-identical on all three `LICENSE_OSES` (no dependency is added by this task).
+
+---
+
 ### T-031 · anacrolix engine — add and list
 ```
 status: blocked
@@ -3696,6 +3744,14 @@ inherited from the initial plan.
   to satisfy the frozen §5 `Engine` interface without changing it. Once selected, this also
   reopens whether T-942's MPL-2.0 admission (DEC-098/DEC-099) should stand or be reverted, since
   its sole named beneficiary would no longer be a dependency.
+
+  **Owner decision (2026-09-18, final): option 1a — extend the MPL-2.0 exception.** After the 1b
+  evaluation returned no viable replacement, the owner chose to widen DEC-098's exception to the
+  named module set rather than accept rain's LGPL-3.0 + unlicensed-module tree and redesign
+  per-torrent destinations. Filed as **T-943**, which carries the policy change, the widened
+  scope gate and its regression test, and the `go-llsqlite/adapter` resolution. **T-031 stays
+  `blocked` until T-943 merges**, then returns to `todo` — it is unchanged in scope and still owns
+  adding the dependency and writing the engine.
 
   **Option 1b was pursued and did not survive contact with the evidence (2026-09-18).** Candidates
   were evaluated against five hard gates: pure Go/no cgo (six cross-compiled tier-1 targets),
