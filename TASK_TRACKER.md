@@ -2329,8 +2329,8 @@ cross-compiled for `GOOS=windows/linux/darwin`, `make build-all`.
 
 ### T-031 · anacrolix engine — add and list
 ```
-status: blocked
-depends: T-030, T-942
+status: in-progress
+depends: T-030, T-942, T-943
 ```
 **Files:** `internal/engine/anacrolix/`
 
@@ -3730,7 +3730,11 @@ inherited from the initial plan.
 
 ## Blocked
 
-- `T-031` (2026-09-17). **The MPL-2.0 exception authorised by DEC-098 is narrower than
+*(empty — append `T-0NN` blocks here with the exact input needed to unblock)*
+
+### Resolved
+
+- `T-031` (2026-09-17 → 2026-09-18). **The MPL-2.0 exception authorised by DEC-098 is narrower than
   `anacrolix/torrent`'s own dependency tree, and that tree also contains a module with no
   detectable license at all.** T-031's first action is `go get github.com/anacrolix/torrent`
   (resolves to `v1.61.0`). With the dependency added and a single-import probe package under
@@ -3894,7 +3898,29 @@ inherited from the initial plan.
   `NOTICE` omits nothing. The `govulncheck` findings recorded above are untouched by T-943 and are
   still worth a look when the engine lands.
 
-### Resolved
+  **Resolved on 2026-09-18.** The project owner first chose to **replace** the locked engine
+  (option 1b). That was pursued and returned no viable target: of the pure-Go embedded candidates,
+  `cenkalti/rain` embeds cleanly (`RPCEnabled=false`, no control socket, peer port only) but its
+  tree carries **LGPL-3.0** (`juju/ratelimit`), two MPL-2.0 modules and the permanently unlicensed
+  `nictuku/nettools`, and it has **no per-torrent save-path API**, so it cannot honour the frozen
+  §5 `AddSource.SavePath` that T-034's multi-root containment depends on; every other candidate
+  was a fork of `anacrolix/torrent` (same MPL tree), a protocol toolkit with no download engine,
+  archived, or a toy. `NO CANDIDATE CLEARS THE GATES` was the recorded result. The owner therefore
+  chose **option 1a** on 2026-09-18, and `T-943` landed it as PR #30 (`9f20748`): the MPL-2.0
+  exception is now an **enumerated set of ten named modules** — deliberately not an
+  `anacrolix/*` prefix, so admitting a module stays a reviewed act — policed by the widened
+  `scripts/check-license-scope.sh` and its mutation-checked regression test. Finding (2) was
+  resolved the preferred way rather than with an `--ignore`: `github.com/go-llsqlite/adapter`
+  moves to **`v0.2.0`**, the first revision carrying the upstream MPL-2.0 `LICENSE`
+  (`v0.1.0` and the earlier pseudo-version carry none), leaving zero `Unknown` rows.
+  QA failed PR #30 once on two false statements in AGENT.md — an incorrect adapter version, and
+  the `mmsg`/`utp` split attributed to `GOOS` when the determinant is `CGO_ENABLED` — both
+  remediated on the same branch and independently re-verified by a second reviewer. **Two
+  carry-overs bind T-031:** it must pin `github.com/go-llsqlite/adapter@v0.2.0` explicitly (a bare
+  `go get github.com/anacrolix/torrent` selects the unlicensed pseudo-version and fails
+  `make licenses`), and the admitted set already includes both `anacrolix/utp` and
+  `anacrolix/mmsg` because no single build configuration yields all ten. The `govulncheck`
+  findings recorded above are untouched and still worth a look when the engine lands.
 
 - `T-031` (2026-09-16 → 2026-09-17). **License policy conflicts with the locked torrent-engine dependency.**
   T-031 builds `internal/engine/anacrolix`, which requires `github.com/anacrolix/torrent` — the
