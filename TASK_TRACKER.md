@@ -3697,6 +3697,50 @@ inherited from the initial plan.
   reopens whether T-942's MPL-2.0 admission (DEC-098/DEC-099) should stand or be reverted, since
   its sole named beneficiary would no longer be a dependency.
 
+  **Option 1b was pursued and did not survive contact with the evidence (2026-09-18).** Candidates
+  were evaluated against five hard gates: pure Go/no cgo (six cross-compiled tier-1 targets),
+  embedded library rather than a daemon (§2 standalone contract, and the README's "No daemon, no
+  indexer proxy, no Transmission or qBittorrent behind it" promise), MIT/Apache-2.0/BSD/ISC across
+  the *whole transitive tree*, maintained inside 24 months and CVE-clean (§12), and able to
+  satisfy the frozen §5 `Engine` interface. **No candidate cleared all five.**
+
+  `github.com/cenkalti/rain` v2.4.0 (MIT, the owner's preferred pick) **passes gates 1, 2 and 4**
+  — notably gate 2, proved rather than assumed: `torrent.NewSession` runs fully in-process with
+  `RPCEnabled=false` (the default is `true` on `127.0.0.1:7246` and must be explicitly disabled),
+  no child process, no control socket, only the BitTorrent peer port. It **fails gates 3 and 5**:
+
+  - *Gate 3.* Its tree carries `github.com/juju/ratelimit` (**LGPL-3.0**, with a static-linking
+    exception), `hashicorp/errwrap` and `hashicorp/go-multierror` (MPL-2.0), and
+    `github.com/nictuku/nettools` (**no license at all, upstream, and unmaintained since 2015** —
+    unlike `go-llsqlite/adapter`, there is no newer revision to move to). All are unavoidable
+    compile-time imports; `DHTEnabled=false` does not remove `nettools` from the graph. Verified
+    independently by the orchestrator from the module cache and the GitHub API.
+  - *Gate 5.* rain has **no per-torrent save-path API**. `AddTorrentOptions` is
+    `{ID, Stopped, StopAfterDownload, StopAfterMetadata, Sequential}` — confirmed by reading
+    `torrent/session_add.go:24` directly. Destination comes only from session-wide `Config.DataDir`.
+    `Config.CustomStorage` is not an escape hatch: its type lives in rain's `internal/` tree and an
+    external module cannot implement it. `Torrent.Move` relocates to another rain **daemon**, which
+    gate 2 rules out. The frozen §5 interface still *compiles* — `AddSource.SavePath` is untouched
+    — but rain cannot honour its semantics, which breaks T-034's multi-root containment model
+    (§6.12) as written.
+
+  So replacing the engine with rain would trade eight MPL-2.0 modules plus one pinned-revision
+  licensing gap for one **LGPL-3.0** module (a step *further* along the copyleft scale than
+  anything §16 admits), two MPL-2.0 modules, one permanently unlicensed module, **and** a redesign
+  of per-torrent destinations. It does not avoid a license exception; it enlarges one and adds a
+  contract failure. The other candidates fail earlier: forks of `anacrolix/torrent` inherit its MPL
+  tree, `xgfone/go-bt` is a protocol toolkit with no download engine, and the remainder are
+  archived, pre-module, or single-digit-star projects.
+
+  **The decision therefore returns to the owner, at option 1a + 2a**, unless the owner prefers to
+  accept rain's licensing and redesign per-torrent destinations with full knowledge of the above.
+  T-031 remains `blocked`. DEC-098/DEC-099 are **not** reverted under any of these outcomes: rain's
+  own tree contains MPL-2.0, so the `ALLOWED_LICENSES` entry stays either way, and
+  `scripts/check-license-scope.sh` becomes *more* load-bearing, not less — it is the only gate that
+  caught either tree. If 1a is taken, `ALLOWED_MPL_MODULE` should become an explicit list of named
+  modules rather than a license family, with `check-license-scope_test.sh` still proving an
+  unlisted MPL-2.0 module fails.
+
   **Orchestrator verification (2026-09-17), independent of the implementing agent.** Spot-checked
   upstream `LICENSE` files directly: `anacrolix/dht` and `anacrolix/log` are Mozilla Public License
   2.0 at `master`, consistent with finding (1). For finding (2) the picture is more specific than
