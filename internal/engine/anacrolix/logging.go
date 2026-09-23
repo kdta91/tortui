@@ -77,7 +77,7 @@ func (s slogSink) Handle(r alog.Record) {
 		return
 	}
 
-	logger.LogAttrs(context.Background(), level, r.Msg.String(),
+	logger.LogAttrs(context.Background(), level, r.String(),
 		slog.String("source", "anacrolix"),
 		slog.String("names", strings.Join(r.Names, "/")),
 	)

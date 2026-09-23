@@ -350,7 +350,7 @@ func (e *Engine) Add(ctx context.Context, src engine.AddSource) (string, error) 
 		return e.addSpec(spec, dest)
 
 	case sourceURL:
-		return e.addFromURL(src.TorrentURL, dest)
+		return e.addFromURL(ctx, src.TorrentURL, dest)
 
 	default:
 		return "", ErrNoSource
@@ -480,8 +480,12 @@ func (e *Engine) addSpec(spec *torrent.TorrentSpec, dest string) (string, error)
 }
 
 // addFromURL accepts a .torrent URL immediately and fetches it in the
-// background, so Add never blocks on the network (AGENT.md §6.1).
-func (e *Engine) addFromURL(rawURL, dest string) (string, error) {
+// background, so Add never blocks on the network (AGENT.md §6.1). The
+// background fetch carries ctx's values (e.g. tracing) forward but not its
+// cancellation or deadline: ctx belongs to the Add call, which has already
+// returned by the time the fetch runs, while the fetch's own lifetime is
+// governed by the metadata timeout instead.
+func (e *Engine) addFromURL(ctx context.Context, rawURL, dest string) (string, error) {
 	tr, err := e.track(dest, rawURL)
 	if err != nil {
 		return "", err
@@ -491,7 +495,7 @@ func (e *Engine) addFromURL(rawURL, dest string) (string, error) {
 
 	go func() {
 		defer e.wg.Done()
-		e.fetchAndAttach(tr, rawURL, dest)
+		e.fetchAndAttach(ctx, tr, rawURL, dest)
 	}()
 
 	return tr.id, nil
@@ -501,8 +505,8 @@ func (e *Engine) addFromURL(rawURL, dest string) (string, error) {
 // entry with a readable reason if either step does not work out. The fetch is
 // bounded by the metadata timeout — a .torrent that will not download is the
 // same user-visible problem as an info dictionary that never arrives.
-func (e *Engine) fetchAndAttach(tr *tracked, rawURL, dest string) {
-	ctx, cancel := context.WithTimeout(context.Background(), e.metadataTimeout)
+func (e *Engine) fetchAndAttach(ctx context.Context, tr *tracked, rawURL, dest string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), e.metadataTimeout)
 	defer cancel()
 
 	// Abandon the fetch if the engine closes under it.
