@@ -146,6 +146,29 @@ type tracked struct {
 	// around.
 	prePauseState engine.State
 
+	// done is closed exactly once, by Remove, so every goroutine that
+	// exists solely to service this one torrent — awaitInfo waiting on
+	// metadata, fetchAndAttach's cancel-on-shutdown watcher — can wake up
+	// and exit as soon as the torrent is removed, rather than only when
+	// the whole Engine closes or the metadata timeout eventually fires.
+	// anacrolix/torrent v1.61.0's Torrent.Drop does not close the
+	// channel GotInfo waits on (only receiving an info dictionary does),
+	// so without this a Remove of a still-pending torrent leaked
+	// awaitInfo for up to the metadata timeout.
+	//
+	// Remove is the only writer: once it removes tr.id from e.torrents,
+	// lookupLocked can never find tr again, so nothing can call Remove a
+	// second time for the same tracked torrent and close this twice.
+	done chan struct{}
+
+	// removed is set by Remove under Engine.mu at the same time done is
+	// closed. attach checks it after a client.AddTorrentSpec call that
+	// may have run concurrently with, or just after, a Remove — so a
+	// torrent whose fetch/attach was still in flight when it was removed
+	// is dropped immediately instead of being resurrected into an active,
+	// untracked swarm nothing will ever manage or close.
+	removed bool
+
 	down rateMeter
 	up   rateMeter
 }
@@ -459,6 +482,7 @@ func (e *Engine) track(dest, name string) (*tracked, error) {
 		savePath: dest,
 		name:     name,
 		state:    engine.StateChecking,
+		done:     make(chan struct{}),
 	}
 
 	e.torrents[t.id] = t
@@ -518,13 +542,17 @@ func (e *Engine) fetchAndAttach(ctx context.Context, tr *tracked, rawURL, dest s
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), e.metadataTimeout)
 	defer cancel()
 
-	// Abandon the fetch if the engine closes under it.
+	// Abandon the fetch if the engine closes, or this specific torrent is
+	// removed, out from under it — either way there is no longer anyone
+	// who will read the result.
 	stop := make(chan struct{})
 	defer close(stop)
 
 	go func() {
 		select {
 		case <-e.done:
+			cancel()
+		case <-tr.done:
 			cancel()
 		case <-stop:
 		}
@@ -586,6 +614,19 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 	}
 
 	e.mu.Lock()
+	if tr.removed {
+		// Remove ran while this torrent's URL fetch (or, for a magnet
+		// or local file, an implausibly fast concurrent Remove right
+		// at attach time) was still in flight. tr.t was nil when
+		// Remove looked at it, so there was nothing to Drop then — do
+		// it now instead of resurrecting a torrent the caller already
+		// asked to forget, and never spawn awaitInfo for it.
+		e.mu.Unlock()
+		t.Drop()
+
+		return nil
+	}
+
 	tr.t = t
 	if tr.state == engine.StateChecking {
 		tr.name = t.Name()
@@ -609,6 +650,18 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 	select {
 	case <-e.done:
+		return
+
+	case <-tr.done:
+		// Removed while its info dictionary was still pending.
+		// anacrolix/torrent's Drop does not close the channel GotInfo
+		// waits on (only a real info dictionary arriving does), so
+		// without this case this goroutine would otherwise sit here
+		// until the metadata timeout regardless of Remove. Remove
+		// itself already called t.Drop() when it found tr.t non-nil,
+		// which it always is here — attach sets it before spawning
+		// this goroutine — so there is nothing left to clean up
+		// beyond exiting.
 		return
 
 	case <-time.After(e.metadataTimeout):
@@ -1012,6 +1065,9 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 	if t != nil && t.Info() != nil {
 		name = t.Info().BestName()
 	}
+
+	tr.removed = true
+	close(tr.done)
 
 	delete(e.torrents, id)
 

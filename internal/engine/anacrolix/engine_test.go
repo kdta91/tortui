@@ -923,7 +923,7 @@ func TestDeleteTorrentDataRefusesASymlinkedDirectoryComponent(t *testing.T) {
 
 	link := filepath.Join(root, "linked")
 	if err := os.Symlink(outside, link); err != nil {
-		if errors.Is(err, os.ErrPermission) {
+		if isUnprivilegedSymlinkError(err) {
 			t.Skip("creating a symlink requires a privilege this environment does not grant")
 		}
 		t.Fatalf("Symlink: %v", err)
@@ -1020,4 +1020,156 @@ func TestCloseWithPausedAndRemovedTorrentsLeavesNoGoroutines(t *testing.T) {
 	}
 
 	goleak.VerifyNone(t, ignore)
+}
+
+// engineLifetimeGoroutines names the goroutines an *Engine (and the
+// torrent.Client it wraps) starts once at construction and only ever reaps
+// on Close: the rate sampler this package starts, and one the underlying
+// torrent.Client starts internally. The tests that use waitForNoLeaks
+// deliberately never call Close before asserting — the whole point is
+// proving Remove alone reaps a torrent's own goroutines, not that Close
+// eventually would — so these two must be named rather than mistaken for
+// the leak under test.
+var engineLifetimeGoroutines = []goleak.Option{
+	goleak.IgnoreTopFunction("github.com/kdta91/tortui/internal/engine/anacrolix.(*Engine).sampleRates"),
+	goleak.IgnoreTopFunction("github.com/anacrolix/torrent.(*Client).acceptLimitClearer"),
+}
+
+// waitForNoLeaks polls goleak.Find until it reports no leaked goroutines
+// (ignoring those named by ignore and by engineLifetimeGoroutines) or the
+// budget runs out, without ever calling Close on the engine under test.
+func waitForNoLeaks(t *testing.T, ignore goleak.Option) {
+	t.Helper()
+
+	opts := append([]goleak.Option{ignore}, engineLifetimeGoroutines...)
+
+	deadline := time.Now().Add(2 * time.Second)
+
+	var last error
+	for time.Now().Before(deadline) {
+		if err := goleak.Find(opts...); err == nil {
+			return
+		} else {
+			last = err
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	t.Fatalf("goroutine(s) still running: %v", last)
+}
+
+// TestRemoveOfAPendingMetadataTorrentLeavesNoGoroutine is the regression
+// test for the QA-reported leak: anacrolix/torrent v1.61.0's Torrent.Drop
+// does not close the channel GotInfo waits on (only a real info dictionary
+// arriving does), so awaitInfo for a torrent whose metadata never arrived
+// used to sit in its select until either the metadata timeout or Close —
+// never in response to Remove itself. The metadata timeout here is an hour,
+// so only the fix (awaitInfo also selecting on tr.done, closed by Remove)
+// can make this pass; Close is deliberately never called before the
+// assertion.
+func TestRemoveOfAPendingMetadataTorrentLeavesNoGoroutine(t *testing.T) {
+	ignore := goleak.IgnoreCurrent()
+
+	e, err := New(Options{
+		Config:          config.Config{DownloadDir: t.TempDir()},
+		Logger:          discardLogger(),
+		MetadataTimeout: time.Hour,
+		Offline:         true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := e.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	id, err := e.Add(context.Background(), engine.AddSource{Magnet: magnetURI("remove-pending-metadata")})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	if st := statusOf(t, e, id); st.State != engine.StateChecking {
+		t.Fatalf("State before Remove = %s, want %s", st.State, engine.StateChecking)
+	}
+
+	if err := e.Remove(id, false); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	waitForNoLeaks(t, ignore)
+}
+
+// TestRemoveDuringAnInFlightTorrentURLFetchDoesNotLeakOrReattach covers the
+// other half of the QA finding: a .torrent URL fetch still in flight when
+// Remove runs has no *torrent.Torrent yet (tr.t is nil), so Remove cannot
+// Drop anything at that moment. Once the fetch completes and attach() does
+// get a real *torrent.Torrent, it must see the torrent was already removed,
+// drop it immediately, and never spawn awaitInfo or leave it reachable from
+// List/Files — not resurrect it into an active, untracked swarm.
+func TestRemoveDuringAnInFlightTorrentURLFetchDoesNotLeakOrReattach(t *testing.T) {
+	ignore := goleak.IgnoreCurrent()
+
+	release := make(chan struct{})
+	body := encodeTorrent(t, buildInfo("remove-during-fetch-fixture", [][]string{{"a.bin"}}))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release
+		w.Header().Set("Content-Type", "application/x-bittorrent")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close) // idempotent; closed explicitly below before the leak check
+
+	e, err := New(Options{
+		Config:          config.Config{DownloadDir: t.TempDir()},
+		Logger:          discardLogger(),
+		MetadataTimeout: time.Hour,
+		Offline:         true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := e.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	id, err := e.Add(context.Background(), engine.AddSource{TorrentURL: srv.URL + "/fixture.torrent"})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	if st := statusOf(t, e, id); st.State != engine.StateChecking {
+		t.Fatalf("State before the fetch completes = %s, want %s", st.State, engine.StateChecking)
+	}
+
+	if err := e.Remove(id, false); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	// Let the deferred HTTP handler respond now that the torrent has
+	// already been removed, giving fetchAndAttach/attach every chance to
+	// resurrect it if the removed-check were missing.
+	close(release)
+
+	if _, err := e.Files(id); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Files after Remove during an in-flight fetch = %v, want ErrNotFound", err)
+	}
+
+	// Close the test server itself before the leak check: its accept
+	// loop is this test's own goroutine to account for, not the engine's,
+	// and it is no longer needed once the (possibly cancelled) fetch has
+	// settled one way or the other.
+	srv.Close()
+
+	waitForNoLeaks(t, ignore)
+
+	if n := len(e.List()); n != 0 {
+		t.Errorf("List() = %d entries after Remove during an in-flight fetch, want 0", n)
+	}
 }
