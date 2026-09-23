@@ -7,6 +7,24 @@ import (
 	"testing"
 )
 
+// absPath returns filepath.Abs(filepath.Join(parts...)), failing the test on
+// error. It exists so a fixture root built from a leading separator (e.g.
+// "/downloads/tortui") matches what cleanAbsPath actually produces on every
+// platform: on Windows, filepath.Abs prefixes a path that starts with a
+// separator but no volume with the current drive, so an expectation
+// constructed with plain filepath.Join alone (with no volume) would never
+// match cleanAbsPath's real output there.
+func absPath(t *testing.T, parts ...string) string {
+	t.Helper()
+
+	abs, err := filepath.Abs(filepath.Join(parts...))
+	if err != nil {
+		t.Fatalf("filepath.Abs(%q): %v", parts, err)
+	}
+
+	return abs
+}
+
 func TestCheckComponentRejectsHostileNames(t *testing.T) {
 	t.Parallel()
 
@@ -132,7 +150,7 @@ func TestCleanAbsPathRejectsEmptyAndNulPaths(t *testing.T) {
 		t.Fatalf("cleanAbsPath: %v", err)
 	}
 
-	if want := filepath.Join(string(filepath.Separator), "downloads", "tortui"); got != want {
+	if want := absPath(t, string(filepath.Separator), "downloads", "tortui"); got != want {
 		t.Errorf("cleanAbsPath = %q, want %q", got, want)
 	}
 }
@@ -141,8 +159,8 @@ func TestResolveDestination(t *testing.T) {
 	t.Parallel()
 
 	sep := string(filepath.Separator)
-	fallback := filepath.Join(sep, "downloads", "tortui")
-	saved := filepath.Join(sep, "media", "archive")
+	fallback := absPath(t, sep, "downloads", "tortui")
+	saved := absPath(t, sep, "media", "archive")
 	roots := []string{fallback, saved}
 
 	got, err := resolveDestination("", fallback, roots)
@@ -159,7 +177,7 @@ func TestResolveDestination(t *testing.T) {
 		t.Errorf("saved destination = (%q, %v), want (%q, nil)", got, err, nested)
 	}
 
-	outside := filepath.Join(sep, "etc")
+	outside := absPath(t, sep, "etc")
 	if _, err := resolveDestination(outside, fallback, roots); !errors.Is(err, ErrOutsideRoots) {
 		t.Errorf("destination outside every root = %v, want ErrOutsideRoots", err)
 	}
