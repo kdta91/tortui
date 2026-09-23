@@ -2329,7 +2329,7 @@ cross-compiled for `GOOS=windows/linux/darwin`, `make build-all`.
 
 ### T-031 · anacrolix engine — add and list
 ```
-status: todo
+status: in-progress
 depends: T-030, T-942, T-943
 ```
 **Interrupted run (2026-09-18).** A first implementation pass was stopped by the user partway
