@@ -3,6 +3,7 @@ package anacrolix
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -152,6 +153,73 @@ func checkComponent(c string) error {
 	}
 
 	return nil
+}
+
+// resolveSymlinks resolves p to its real, symlink-free form as far as an
+// existing filesystem entry allows. p need not exist: EvalSymlinks is walked
+// up the ancestor chain until it finds a component that does exist, that
+// prefix is resolved, and the remaining components — which by definition
+// cannot themselves be symlinks, since nothing has been created there yet —
+// are rejoined onto it literally.
+//
+// This is what lets a delete-time containment check see through a symlinked
+// *directory component*, not just a symlinked leaf (AGENT.md §6.11, §6.12):
+// a destination root or an intermediate directory swapped for a symlink
+// after Add would otherwise defeat a check that only resolved the final
+// path element.
+func resolveSymlinks(p string) (string, error) {
+	clean := filepath.Clean(p)
+
+	var suffix []string
+
+	dir := clean
+	for {
+		resolved, err := filepath.EvalSymlinks(dir)
+		if err == nil {
+			full := resolved
+			for i := len(suffix) - 1; i >= 0; i-- {
+				full = filepath.Join(full, suffix[i])
+			}
+
+			return filepath.Clean(full), nil
+		}
+
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("resolve symlinks in %q: %w", p, err)
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Nothing on this path exists at all; there is nothing left
+			// to resolve.
+			return clean, nil
+		}
+
+		suffix = append(suffix, filepath.Base(dir))
+		dir = parent
+	}
+}
+
+// containedInRoot reports whether target sits inside root once both are
+// resolved through any symlinks present in their existing path components.
+// It never treats root itself as a valid target: Remove must delete only a
+// torrent's own files/dir under a root, never the root (AGENT.md §6.12).
+func containedInRoot(root, target string) (bool, error) {
+	resolvedRoot, err := resolveSymlinks(root)
+	if err != nil {
+		return false, err
+	}
+
+	resolvedTarget, err := resolveSymlinks(target)
+	if err != nil {
+		return false, err
+	}
+
+	if resolvedTarget == resolvedRoot {
+		return false, nil
+	}
+
+	return containedIn(resolvedRoot, resolvedTarget), nil
 }
 
 // checkTorrentPath validates one file's declared path components and returns

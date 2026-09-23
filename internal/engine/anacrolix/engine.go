@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -68,11 +69,6 @@ var ErrAmbiguousSource = errors.New("anacrolix: set exactly one of Magnet, Torre
 
 // ErrNotFound reports an id that does not name a currently-tracked torrent.
 var ErrNotFound = errors.New("anacrolix: torrent not found")
-
-// ErrNotImplemented reports an engine.Engine method whose behaviour a later
-// task owns. It is a typed error rather than a panic or a silent no-op so a
-// caller wired up early gets a clear answer instead of a wrong one.
-var ErrNotImplemented = errors.New("anacrolix: not implemented yet")
 
 // ErrMetadataTimeout reports a torrent whose info dictionary did not arrive
 // within the configured metadata timeout.
@@ -136,6 +132,19 @@ type tracked struct {
 
 	state engine.State
 	err   error
+
+	// paused is set by Pause and cleared by Resume. It is checked
+	// independently of state because a torrent can be paused before its
+	// info dictionary ever arrives (state engine.StateChecking) — see
+	// awaitInfo and DEC-102.
+	paused bool
+
+	// prePauseState is the state to restore on Resume: whatever state was
+	// showing at the moment Pause was called, so resuming a
+	// still-checking torrent goes back to StateChecking and resuming a
+	// downloading one goes back to StateDownloading, never the other way
+	// around.
+	prePauseState engine.State
 
 	down rateMeter
 	up   rateMeter
@@ -631,12 +640,29 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 
 	e.mu.Lock()
 	tr.name = t.Name()
-	if tr.state == engine.StateChecking {
+	paused := tr.paused
+	switch {
+	case paused:
+		// The torrent is displaying engine.StatePaused and stays there;
+		// record what it would have become so Resume restores
+		// StateDownloading rather than the stale StateChecking it was
+		// paused from (DEC-102).
+		tr.prePauseState = engine.StateDownloading
+	case tr.state == engine.StateChecking:
 		tr.state = engine.StateDownloading
 	}
 	e.mu.Unlock()
 
+	// Register the torrent's data as wanted regardless of pause state —
+	// priorities and file wantedness are independent of the transfer
+	// gate below — then apply the gate a pause requested before metadata
+	// ever arrived (DEC-102).
 	t.DownloadAll()
+
+	if paused {
+		t.DisallowDataDownload()
+		t.DisallowDataUpload()
+	}
 }
 
 // validateSpecPaths validates the info dictionary a spec already carries, if
@@ -870,24 +896,249 @@ func (e *Engine) Updates() <-chan []engine.TorrentStatus {
 	return e.updates
 }
 
-// Pause is implemented by T-032.
+// lookupLocked resolves id to its tracked torrent, or a wrapped ErrNotFound.
+// Engine.mu must be held.
+func (e *Engine) lookupLocked(id string) (*tracked, error) {
+	tr, ok := e.torrents[id]
+	if !ok {
+		return nil, fmt.Errorf("%q: %w", id, ErrNotFound)
+	}
+
+	return tr, nil
+}
+
+// Pause stops a torrent's transfers without removing it. Pausing an
+// already-paused torrent is a no-op, and pausing a torrent whose info
+// dictionary has not arrived yet is accepted immediately: the torrent shows
+// engine.StatePaused right away, and awaitInfo (DEC-102) holds its transfers
+// as soon as the info dictionary does arrive, instead of racing to
+// StateDownloading first.
 func (e *Engine) Pause(id string) error {
-	return fmt.Errorf("anacrolix: pause %s: %w (T-032)", id, ErrNotImplemented)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.closed {
+		return ErrClosed
+	}
+
+	tr, err := e.lookupLocked(id)
+	if err != nil {
+		return err
+	}
+
+	if tr.paused {
+		return nil
+	}
+
+	tr.paused = true
+
+	if tr.state != engine.StateErrored {
+		tr.prePauseState = tr.state
+		tr.state = engine.StatePaused
+	}
+
+	tr.down.reset()
+	tr.up.reset()
+
+	if tr.t != nil {
+		tr.t.DisallowDataDownload()
+		tr.t.DisallowDataUpload()
+	}
+
+	return nil
 }
 
-// Resume is implemented by T-032.
+// Resume restarts a paused torrent's transfers, restoring whatever state it
+// showed at the moment it was paused (StateChecking, StateDownloading, or
+// StateSeeding). Resuming a torrent that is not paused is a no-op.
 func (e *Engine) Resume(id string) error {
-	return fmt.Errorf("anacrolix: resume %s: %w (T-032)", id, ErrNotImplemented)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.closed {
+		return ErrClosed
+	}
+
+	tr, err := e.lookupLocked(id)
+	if err != nil {
+		return err
+	}
+
+	if !tr.paused {
+		return nil
+	}
+
+	tr.paused = false
+
+	if tr.state == engine.StatePaused {
+		tr.state = tr.prePauseState
+	}
+
+	if tr.t != nil {
+		tr.t.AllowDataDownload()
+		tr.t.AllowDataUpload()
+	}
+
+	return nil
 }
 
-// Remove is implemented by T-032.
+// Remove stops and forgets a torrent. When deleteData is true, its
+// downloaded data is also deleted, but only after re-checking — at delete
+// time, not trusting the check Add already did (AGENT.md §6.11) — that the
+// torrent's own data directory resolves inside one of the engine's currently
+// known destination roots, following any symlink in the path first
+// (AGENT.md §6.12). A destination that no longer belongs to the known root
+// set, or that resolves outside every root via a symlinked component,
+// refuses the delete with a logged, wrapped ErrOutsideRoots rather than
+// deleting nothing found there but also never touching data it should not.
 func (e *Engine) Remove(id string, deleteData bool) error {
-	return fmt.Errorf("anacrolix: remove %s (delete data %t): %w (T-032)", id, deleteData, ErrNotImplemented)
+	e.mu.Lock()
+
+	if e.closed {
+		e.mu.Unlock()
+		return ErrClosed
+	}
+
+	tr, err := e.lookupLocked(id)
+	if err != nil {
+		e.mu.Unlock()
+		return err
+	}
+
+	t := tr.t
+	savePath := tr.savePath
+
+	var name string
+	if t != nil && t.Info() != nil {
+		name = t.Info().BestName()
+	}
+
+	delete(e.torrents, id)
+
+	for i, existing := range e.order {
+		if existing == id {
+			e.order = append(e.order[:i], e.order[i+1:]...)
+			break
+		}
+	}
+
+	roots := append([]string(nil), e.roots...)
+	e.mu.Unlock()
+
+	if t != nil {
+		t.Drop()
+	}
+
+	if !deleteData {
+		return nil
+	}
+
+	return e.deleteTorrentData(id, savePath, name, roots)
 }
 
-// Files is implemented by T-032.
+// deleteTorrentData removes a torrent's own file or directory — savePath
+// joined with the torrent's own declared name, exactly the layout
+// checkTorrentPath validated at Add time — from disk, refusing (and
+// logging) if that target does not resolve, through any symlink, inside any
+// of roots. roots is read fresh from the engine at the moment of the call
+// (Remove's caller), not cached from Add time, so a root removed from the
+// known set since Add is honoured here.
+func (e *Engine) deleteTorrentData(id, savePath, name string, roots []string) error {
+	if name == "" {
+		// No info dictionary ever arrived (or the torrent was dropped
+		// before it did): nothing was ever written to disk for it.
+		return nil
+	}
+
+	target := filepath.Join(savePath, name)
+
+	var (
+		insideAny bool
+		lastErr   error
+	)
+
+	for _, root := range roots {
+		cleanRoot, err := cleanAbsPath(root)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		ok, err := containedInRoot(cleanRoot, target)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if ok {
+			insideAny = true
+			break
+		}
+	}
+
+	if !insideAny {
+		refusal := fmt.Errorf("%w: refusing to delete data for torrent %s at %s", ErrOutsideRoots, id, target)
+		e.logger.Warn("anacrolix: refused to delete torrent data outside every known destination root",
+			"id", id, "target", target, "roots", roots, "error", lastErr)
+
+		return refusal
+	}
+
+	resolvedTarget, err := resolveSymlinks(target)
+	if err != nil {
+		return fmt.Errorf("anacrolix: resolve delete target for torrent %s: %w", id, err)
+	}
+
+	if err := os.RemoveAll(resolvedTarget); err != nil {
+		return fmt.Errorf("anacrolix: delete data for torrent %s: %w", id, err)
+	}
+
+	return nil
+}
+
+// Files returns the per-file progress for one torrent: its path relative to
+// the torrent's own root, size, bytes downloaded, and fractional progress
+// (AGENT.md §5's engine.FileStatus — which carries no priority field, so
+// none is reported; see DEC-102). It returns an empty slice, not an error,
+// for a torrent whose info dictionary has not arrived yet: there is no file
+// list to report, and that is not a failure — it is simply not known yet.
 func (e *Engine) Files(id string) ([]engine.FileStatus, error) {
-	return nil, fmt.Errorf("anacrolix: files %s: %w (T-032)", id, ErrNotImplemented)
+	e.mu.Lock()
+
+	if e.closed {
+		e.mu.Unlock()
+		return nil, ErrClosed
+	}
+
+	tr, err := e.lookupLocked(id)
+	if err != nil {
+		e.mu.Unlock()
+		return nil, err
+	}
+
+	t := tr.t
+	e.mu.Unlock()
+
+	if t == nil || t.Info() == nil {
+		return []engine.FileStatus{}, nil
+	}
+
+	files := t.Files()
+	out := make([]engine.FileStatus, 0, len(files))
+
+	for _, f := range files {
+		length := f.Length()
+		downloaded := min(f.BytesCompleted(), length)
+
+		out = append(out, engine.FileStatus{
+			Path:            f.Path(),
+			SizeBytes:       length,
+			DownloadedBytes: downloaded,
+			Progress:        progress(downloaded, length),
+		})
+	}
+
+	return out, nil
 }
 
 // Close stops every background worker, closes the underlying client and its

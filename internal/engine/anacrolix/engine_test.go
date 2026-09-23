@@ -3,6 +3,8 @@ package anacrolix
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -501,25 +503,25 @@ func TestUpdatesChannelClosesExactlyOnce(t *testing.T) {
 	}
 }
 
-func TestLaterTaskMethodsReportNotImplemented(t *testing.T) {
+func TestUnknownIDReportsErrNotFoundNeverPanics(t *testing.T) {
 	t.Parallel()
 
 	e := newTestEngine(t, nil)
 
-	if err := e.Pause("an-1"); !errors.Is(err, ErrNotImplemented) {
-		t.Errorf("Pause = %v, want ErrNotImplemented", err)
+	if err := e.Pause("nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Pause = %v, want ErrNotFound", err)
 	}
 
-	if err := e.Resume("an-1"); !errors.Is(err, ErrNotImplemented) {
-		t.Errorf("Resume = %v, want ErrNotImplemented", err)
+	if err := e.Resume("nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Resume = %v, want ErrNotFound", err)
 	}
 
-	if err := e.Remove("an-1", true); !errors.Is(err, ErrNotImplemented) {
-		t.Errorf("Remove = %v, want ErrNotImplemented", err)
+	if err := e.Remove("nope", true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Remove = %v, want ErrNotFound", err)
 	}
 
-	if _, err := e.Files("an-1"); !errors.Is(err, ErrNotImplemented) {
-		t.Errorf("Files = %v, want ErrNotImplemented", err)
+	if _, err := e.Files("nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Files = %v, want ErrNotFound", err)
 	}
 }
 
@@ -635,6 +637,386 @@ func TestCloseWhileMetadataIsStillPending(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Close blocked behind a torrent waiting for metadata")
+	}
+
+	goleak.VerifyNone(t, ignore)
+}
+
+func TestPauseAndResumeReflectInListAndAreIdempotent(t *testing.T) {
+	t.Parallel()
+
+	e := newTestEngine(t, nil)
+	path := writeTorrentFile(t, buildInfo("pause-fixture", [][]string{{"a.bin"}}))
+
+	id, err := e.Add(context.Background(), engine.AddSource{FilePath: path})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	waitForState(t, e, id, engine.StateDownloading)
+
+	if err := e.Pause(id); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+
+	st := statusOf(t, e, id)
+	if st.State != engine.StatePaused {
+		t.Fatalf("State after Pause = %s, want %s", st.State, engine.StatePaused)
+	}
+
+	if st.DownRate != 0 || st.UpRate != 0 {
+		t.Errorf("rates = %d/%d while paused, want 0/0", st.DownRate, st.UpRate)
+	}
+
+	// Pausing an already-paused torrent is a no-op, not an error.
+	if err := e.Pause(id); err != nil {
+		t.Fatalf("second Pause: %v", err)
+	}
+
+	if got := statusOf(t, e, id).State; got != engine.StatePaused {
+		t.Fatalf("State after a second Pause = %s, want %s", got, engine.StatePaused)
+	}
+
+	if err := e.Resume(id); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	if got := statusOf(t, e, id).State; got != engine.StateDownloading {
+		t.Fatalf("State after Resume = %s, want %s", got, engine.StateDownloading)
+	}
+
+	// Resuming a torrent that is not paused is a no-op, not an error.
+	if err := e.Resume(id); err != nil {
+		t.Fatalf("second Resume: %v", err)
+	}
+}
+
+// TestPauseWhileTorrentURLIsStillFetchingHoldsDownloadOnceAttached exercises
+// DEC-102: pausing a torrent before its info dictionary has arrived is
+// accepted immediately (the torrent reads StatePaused right away) and the
+// transfer is held, never briefly starting, once metadata does arrive.
+func TestPauseWhileTorrentURLIsStillFetchingHoldsDownloadOnceAttached(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	body := encodeTorrent(t, buildInfo("pause-url-fixture", [][]string{{"a.bin"}}))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release
+		w.Header().Set("Content-Type", "application/x-bittorrent")
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	e := newTestEngine(t, nil)
+
+	id, err := e.Add(context.Background(), engine.AddSource{TorrentURL: srv.URL + "/fixture.torrent"})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	if st := statusOf(t, e, id); st.State != engine.StateChecking {
+		t.Fatalf("State before the fetch completes = %s, want %s", st.State, engine.StateChecking)
+	}
+
+	if err := e.Pause(id); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+
+	if st := statusOf(t, e, id); st.State != engine.StatePaused {
+		t.Fatalf("State right after Pause = %s, want %s", st.State, engine.StatePaused)
+	}
+
+	close(release)
+
+	deadline := time.Now().Add(2 * time.Second)
+	var last engine.TorrentStatus
+	for time.Now().Before(deadline) {
+		last = statusOf(t, e, id)
+		if last.State == engine.StateDownloading {
+			t.Fatal("torrent started downloading despite being paused before its metadata arrived")
+		}
+		if last.State == engine.StatePaused && last.TotalBytes > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if last.State != engine.StatePaused || last.TotalBytes == 0 {
+		t.Fatalf("final state = %+v, want StatePaused with metadata arrived", last)
+	}
+
+	if err := e.Resume(id); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	waitForState(t, e, id, engine.StateDownloading)
+}
+
+func TestFilesIsEmptyBeforeMetadataArrives(t *testing.T) {
+	t.Parallel()
+
+	e := newTestEngine(t, func(o *Options) { o.MetadataTimeout = time.Hour })
+
+	id, err := e.Add(context.Background(), engine.AddSource{Magnet: magnetURI("files-before-metadata")})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	files, err := e.Files(id)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+
+	if len(files) != 0 {
+		t.Errorf("Files = %v, want an empty slice before metadata arrives", files)
+	}
+}
+
+func TestFilesMapsPerFileProgress(t *testing.T) {
+	t.Parallel()
+
+	e := newTestEngine(t, nil)
+	path := writeTorrentFile(t, buildInfo("files-fixture", [][]string{{"a.bin"}, {"sub", "b.bin"}}))
+
+	id, err := e.Add(context.Background(), engine.AddSource{FilePath: path})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	waitForState(t, e, id, engine.StateDownloading)
+
+	files, err := e.Files(id)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+
+	if len(files) != 2 {
+		t.Fatalf("Files returned %d entries, want 2", len(files))
+	}
+
+	var total int64
+	for _, f := range files {
+		total += f.SizeBytes
+
+		if f.Path == "" {
+			t.Error("file has an empty Path")
+		}
+
+		if f.Progress != 0 {
+			t.Errorf("Progress = %v, want 0 with nothing downloaded", f.Progress)
+		}
+
+		if f.DownloadedBytes != 0 {
+			t.Errorf("DownloadedBytes = %d, want 0", f.DownloadedBytes)
+		}
+	}
+
+	if total != 1024+2048 {
+		t.Errorf("total size = %d, want %d", total, 1024+2048)
+	}
+}
+
+func TestRemoveWithoutDeleteDataLeavesFilesOnDisk(t *testing.T) {
+	t.Parallel()
+
+	e := newTestEngine(t, nil)
+	path := writeTorrentFile(t, buildInfo("remove-keep-fixture", [][]string{{"a.bin"}}))
+
+	id, err := e.Add(context.Background(), engine.AddSource{FilePath: path})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	st := waitForState(t, e, id, engine.StateDownloading)
+	target := filepath.Join(st.SavePath, "remove-keep-fixture")
+
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatalf("seed target dir: %v", err)
+	}
+
+	if err := e.Remove(id, false); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	if _, err := os.Stat(target); err != nil {
+		t.Errorf("stat %s after Remove(false) = %v, want the data left in place", target, err)
+	}
+
+	if _, err := e.Files(id); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Files after Remove = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRemoveWithDeleteDataDeletesOnlyTheTorrentsOwnDirectory(t *testing.T) {
+	t.Parallel()
+
+	e := newTestEngine(t, nil)
+	path := writeTorrentFile(t, buildInfo("remove-delete-fixture", [][]string{{"a.bin"}}))
+
+	id, err := e.Add(context.Background(), engine.AddSource{FilePath: path})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	st := waitForState(t, e, id, engine.StateDownloading)
+	target := filepath.Join(st.SavePath, "remove-delete-fixture")
+	sibling := filepath.Join(st.SavePath, "sibling-should-survive")
+
+	if err := os.MkdirAll(filepath.Join(target, "sub"), 0o700); err != nil {
+		t.Fatalf("seed target dir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(target, "a.bin"), []byte("data"), 0o600); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	if err := os.MkdirAll(sibling, 0o700); err != nil {
+		t.Fatalf("seed sibling: %v", err)
+	}
+
+	if err := e.Remove(id, true); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("stat %s after Remove(true) = %v, want it gone", target, err)
+	}
+
+	if _, err := os.Stat(st.SavePath); err != nil {
+		t.Errorf("the destination root itself must survive Remove: %v", err)
+	}
+
+	if _, err := os.Stat(sibling); err != nil {
+		t.Errorf("a sibling entry under the same root must survive Remove: %v", err)
+	}
+}
+
+// TestDeleteTorrentDataRefusesATraversingName proves the delete-time
+// containment check is sound on its own terms, independent of the
+// checkComponent gate Add already applies to a torrent's declared name
+// (AGENT.md §6.11 — a check in one place is not a check in another). A name
+// containing ".." cannot reach this code path through the public Add/Remove
+// flow (checkComponent already refuses it), so this calls the unexported
+// helper directly to prove it would refuse the escape anyway.
+func TestDeleteTorrentDataRefusesATraversingName(t *testing.T) {
+	t.Parallel()
+
+	e := newTestEngine(t, nil)
+	root := t.TempDir()
+
+	err := e.deleteTorrentData("traversal-test", root, "../../escaped", []string{root})
+	if !errors.Is(err, ErrOutsideRoots) {
+		t.Fatalf("deleteTorrentData with a traversing name = %v, want ErrOutsideRoots", err)
+	}
+}
+
+// TestDeleteTorrentDataRefusesASymlinkedDirectoryComponent covers a
+// symlinked *directory* component of the delete target, not merely a
+// symlinked leaf: the recorded destination itself is a symlink pointing
+// outside every known root.
+func TestDeleteTorrentDataRefusesASymlinkedDirectoryComponent(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	link := filepath.Join(root, "linked")
+	if err := os.Symlink(outside, link); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			t.Skip("creating a symlink requires a privilege this environment does not grant")
+		}
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	e := newTestEngine(t, nil)
+
+	err := e.deleteTorrentData("symlink-test", link, "escaped-name", []string{root})
+	if !errors.Is(err, ErrOutsideRoots) {
+		t.Fatalf("deleteTorrentData through a symlinked directory component = %v, want ErrOutsideRoots", err)
+	}
+
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("the symlink target must survive a refused delete: %v", err)
+	}
+}
+
+// TestRemoveRefusesWhenTheDestinationRootWasWithdrawn covers a torrent whose
+// recorded destination has since been removed from the known-root set. T-032
+// ships no live-reconfiguration API — that belongs to whichever later task
+// wires config reloads into a running Engine — so this white-box test
+// mutates the engine's own unexported root set directly to exercise Remove's
+// delete-time re-check (AGENT.md §6.11: it must not trust the set captured
+// when the torrent was added).
+func TestRemoveRefusesWhenTheDestinationRootWasWithdrawn(t *testing.T) {
+	t.Parallel()
+
+	e := newTestEngine(t, nil)
+	path := writeTorrentFile(t, buildInfo("withdrawn-root-fixture", [][]string{{"a.bin"}}))
+
+	id, err := e.Add(context.Background(), engine.AddSource{FilePath: path})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	st := waitForState(t, e, id, engine.StateDownloading)
+	target := filepath.Join(st.SavePath, "withdrawn-root-fixture")
+
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatalf("seed target dir: %v", err)
+	}
+
+	e.mu.Lock()
+	e.roots = nil
+	e.mu.Unlock()
+
+	if err := e.Remove(id, true); !errors.Is(err, ErrOutsideRoots) {
+		t.Fatalf("Remove after the root was withdrawn = %v, want ErrOutsideRoots", err)
+	}
+
+	if _, err := os.Stat(target); err != nil {
+		t.Errorf("data must survive a refused delete: %v", err)
+	}
+}
+
+func TestCloseWithPausedAndRemovedTorrentsLeavesNoGoroutines(t *testing.T) {
+	ignore := goleak.IgnoreCurrent()
+
+	e, err := New(Options{
+		Config:             config.Config{DownloadDir: t.TempDir()},
+		Logger:             discardLogger(),
+		MetadataTimeout:    200 * time.Millisecond,
+		RateSampleInterval: 5 * time.Millisecond,
+		Offline:            true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	pausedID, err := e.Add(context.Background(), engine.AddSource{Magnet: magnetURI("goroutine-paused")})
+	if err != nil {
+		t.Fatalf("Add magnet: %v", err)
+	}
+
+	if err := e.Pause(pausedID); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+
+	path := writeTorrentFile(t, buildInfo("goroutine-removed-fixture", [][]string{{"a.bin"}}))
+
+	removedID, err := e.Add(context.Background(), engine.AddSource{FilePath: path})
+	if err != nil {
+		t.Fatalf("Add file: %v", err)
+	}
+
+	waitForState(t, e, removedID, engine.StateDownloading)
+
+	if err := e.Remove(removedID, true); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	if err := e.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 
 	goleak.VerifyNone(t, ignore)
