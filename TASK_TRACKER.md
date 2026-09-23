@@ -2329,7 +2329,7 @@ cross-compiled for `GOOS=windows/linux/darwin`, `make build-all`.
 
 ### T-031 · anacrolix engine — add and list
 ```
-status: in-progress
+status: done
 depends: T-030, T-942, T-943
 ```
 **Files:** `internal/engine/anacrolix/`
@@ -2414,7 +2414,7 @@ existing in `logging.go`. That test did not exist and was written from scratch t
 
 ### T-032 · Engine lifecycle operations
 ```
-status: todo
+status: in-progress
 depends: T-031
 ```
 **Acceptance**
