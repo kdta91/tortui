@@ -2327,6 +2327,35 @@ cross-compiled for `GOOS=windows/linux/darwin`, `make build-all`.
 
 ---
 
+### T-944 · Engine review follow-ups from T-031/T-032 QA
+
+```
+status: todo
+depends: T-033
+```
+**Files:** `internal/engine/anacrolix/engine.go`, `internal/engine/anacrolix/engine_test.go`,
+`internal/config/load_test.go`, `internal/doctor/doctor.go`
+
+**Why this exists.** Three independent reviewers (PRs #31 and #32) passed the engine with these
+NON-BLOCKING observations. None affects shipped behaviour today; each is a gap a future change
+could silently widen, so they are tracked here rather than fixed ad hoc.
+
+**Acceptance**
+- `Add` for the same infohash is idempotent under **concurrent** calls: the `findByInfoHash` →
+  `track` sequence in `addSpec` runs under one critical section (or an equivalent), and a test
+  fires N concurrent `Add`s of one magnet and asserts exactly one tracked entry.
+- The `tr.removed` guard in `attach` is exercised by a test that would fail if the guard were
+  deleted: after `Remove` during an in-flight `.torrent` URL fetch resolves, the underlying
+  `torrent.Client` holds no torrent for that infohash (assert via `client.Torrents()` count or a
+  package-internal hook), not merely that `List()`/`Files()` no longer see it.
+- `runtime.GOOS` appears nowhere outside `internal/platform` (AGENT.md §14): the pre-existing
+  uses in `internal/config/load_test.go` and `internal/doctor/doctor.go` are moved behind
+  `internal/platform` or build tags, and a lint rule or script test fails `make check` on any
+  future occurrence.
+- `make check` green; coverage floors hold.
+
+---
+
 ### T-031 · anacrolix engine — add and list
 ```
 status: done
@@ -2414,7 +2443,7 @@ existing in `logging.go`. That test did not exist and was written from scratch t
 
 ### T-032 · Engine lifecycle operations
 ```
-status: in-progress
+status: done
 depends: T-031
 ```
 **Acceptance**
