@@ -189,6 +189,11 @@ const (
 	ActionFormTest      Action = "form-test"
 	ActionFormReveal    Action = "form-reveal"
 	ActionFormImport    Action = "form-import"
+
+	// ActionFormRemove is the preferences panel's ctrl+x, on a saved-
+	// destination row (T-082, preferences.go). Bound only in
+	// ContextPreferences.
+	ActionFormRemove Action = "form-remove"
 )
 
 // Context is where a binding applies: one of the five screens (non-modal),
@@ -229,6 +234,9 @@ const (
 	// selected source's most recent connection-test outcome and, when it
 	// failed, the full underlying error (T-081).
 	ContextSourceTestDetail Context = "modal:source-test-detail"
+	// ContextPreferences is the settings screen's preferences panel
+	// (T-082, preferences.go), reached with `p` from the source list.
+	ContextPreferences Context = "modal:preferences"
 )
 
 // screenContext names the Context a given Screen's keymap lookups use.
@@ -384,6 +392,25 @@ func sourceFormBindings() []Binding {
 	}
 }
 
+// preferencesBindings documents the preferences panel's own non-typing
+// keys (T-082, preferences.go's handlePreferencesKey), the same trade
+// sourceFormBindings already makes for the add/edit source form: text
+// entry needs runes, space, and backspace too, so only the rest are
+// listed here for the `?` overlay and conflict checking;
+// handlePreferencesKey is the actual source of truth for what each key
+// does.
+func preferencesBindings() []Binding {
+	ctx := []Context{ContextPreferences}
+
+	return []Binding{
+		{Keys: []string{"tab", "down"}, Action: ActionFormNextField, Help: "next field", Contexts: ctx},
+		{Keys: []string{"shift+tab", "up"}, Action: ActionFormPrevField, Help: "previous field", Contexts: ctx},
+		{Keys: []string{"ctrl+s", "enter"}, Action: ActionFormSave, Help: "save (or, on the add row, add a destination)", Contexts: ctx},
+		{Keys: []string{"ctrl+x"}, Action: ActionFormRemove, Help: "remove the highlighted destination", Contexts: ctx},
+		{Keys: []string{"esc"}, Action: ActionCancel, Help: "back (confirms if dirty)", Contexts: ctx},
+	}
+}
+
 // sourceRemoveConfirmBindings are the bindings live while the settings
 // screen's remove confirmation (ContextSourceRemoveConfirm) is open.
 func sourceRemoveConfirmBindings() []Binding {
@@ -499,6 +526,7 @@ func AllBindings() []Binding {
 	all = append(all, sourceFormBindings()...)
 	all = append(all, sourceRemoveConfirmBindings()...)
 	all = append(all, sourceTestDetailBindings()...)
+	all = append(all, preferencesBindings()...)
 
 	return all
 }

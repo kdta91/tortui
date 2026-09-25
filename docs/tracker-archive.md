@@ -3620,6 +3620,34 @@ values that would need a wrapper type, not just a method, to carry `ParseFailed(
 
 ---
 
+### T-082 · Preferences
+```
+status: done
+depends: T-080
+tier: M
+```
+**Acceptance**
+- Edit default download dir (with existence, writability, and free-space validation), manage
+  the **saved destinations list** (add/rename/remove, most-recent-first), rate limits, max
+  active downloads, max peers, listen port, seeding policy, ratio and duration, minimum free space,
+  search timeout, theme, and ASCII mode.
+- Removing a saved destination warns if any active torrent is downloading there, and never
+  silently drops it from the known-roots set while in use (AGENT.md §6.12).
+- Changes apply live where the engine supports it; where they need a restart, say so explicitly.
+- Invalid values rejected inline with the reason, never silently clamped.
+
+**Notes:** `internal/tui/preferences.go`: `PreferencesManager` seam (like `SourceManager`; concrete
+wiring is Backlog T-950/T-975), a `p`-key panel beside the source list (fixed fields, saved-
+destination rows via `savedByRecency`, an "add" row), inline `liveIssues` validation, never clamped.
+The download dir reuses `checkDestination` in a `tea.Cmd`, keyed by path and margin so a stale result
+never satisfies ctrl+s, and must have at least `min_free_space` free; editing that margin re-runs it.
+Only `download_dir`/`saved_destinations`/`min_free_space` apply live (TUI-owned state); the rest has
+no live path against the frozen `Engine`, so it is saved and reported "restart to apply: ..."
+(DEC-122). Removing an in-use destination warns (`destinationInUse`); tracked torrents' own
+`SavePath`s keep it a known root (T-074). Escalated M→H after two review FAILs (PR #50).
+
+---
+
 ## Blocked — Resolved
 
 
