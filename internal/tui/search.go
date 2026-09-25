@@ -191,6 +191,45 @@ func newSearchModel(searcher Searcher, hist HistoryStore) searchModel {
 	return s
 }
 
+// refreshEnabledSources rebuilds sourceIDs/sourceCaps/selected from
+// searcher.Enabled() — the same construction newSearchModel does, called
+// again after the settings screen changes which sources are enabled or
+// removes one, so the search screen never keeps showing its startup
+// snapshot after a live change (T-080 review finding). An id already
+// present keeps whatever selected/deselected state the user had set; a
+// newly-enabled id starts selected, matching newSearchModel's own
+// "everything enabled starts selected" rule. The cursor is clamped to the
+// new row count so it can never point past the end.
+func (s searchModel) refreshEnabledSources(searcher Searcher) searchModel {
+	sourceIDs := []string(nil)
+	sourceCaps := make(map[string]indexer.Caps)
+	selected := make(map[string]bool)
+
+	if searcher != nil {
+		for _, ix := range searcher.Enabled() {
+			id := ix.ID()
+			sourceIDs = append(sourceIDs, id)
+			sourceCaps[id] = ix.Caps()
+
+			if sel, ok := s.selected[id]; ok {
+				selected[id] = sel
+			} else {
+				selected[id] = true
+			}
+		}
+	}
+
+	s.sourceIDs = sourceIDs
+	s.sourceCaps = sourceCaps
+	s.selected = selected
+
+	if total := s.totalRows(); s.cursor >= total {
+		s.cursor = max(total-1, 0)
+	}
+
+	return s
+}
+
 // loadRecentQueries returns up to maxRecentSuggestions non-empty query
 // texts from hist, most recent first. A Latest-mode entry (HistoryEntry.Text
 // == "") is skipped — there is no keyword to suggest re-running.
@@ -416,6 +455,20 @@ func dispatchSearchCmd(searcher Searcher, ctx context.Context, q indexer.Query, 
 			queried: len(ids), queriedIDs: ids, err: err,
 		}
 	}
+}
+
+// refreshSearchSources rebuilds m.search's enabled-source list from
+// m.searcher.Enabled() (see searchModel.refreshEnabledSources). Called by
+// settings.go after a source save actually lands, so disabling, enabling,
+// or removing a source in Settings is visible on the Search screen without
+// a restart (T-080 review finding — the settings screen's own doc comment
+// on SaveSources already promised "reloads the registry live"; this is the
+// TUI-side half of honouring that once the concrete SourceManager has done
+// its half).
+func (m Model) refreshSearchSources() Model {
+	m.search = m.search.refreshEnabledSources(m.searcher)
+
+	return m
 }
 
 // handleRefresh is R's (ActionRefresh) implementation — AGENT.md §7: "R |

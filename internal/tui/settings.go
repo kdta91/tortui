@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -332,13 +333,20 @@ func (f sourceForm) toIndexer() config.Indexer {
 
 // validate checks the form's own required fields, ahead of the duplicate-id
 // check that needs the rest of the source list (see handleSourceFormSave).
+// It is also the first entry liveIssues checks, so save/test-time gating
+// and the as-you-type hints never disagree about what "required" means.
 func (f sourceForm) validate() string {
 	if strings.TrimSpace(f.name) == "" {
 		return "name is required"
 	}
 
-	if strings.TrimSpace(f.sourceURL) == "" {
+	url := strings.TrimSpace(f.sourceURL)
+	if url == "" {
 		return "URL is required"
+	}
+
+	if reason := invalidURLReason(url); reason != "" {
+		return reason
 	}
 
 	if f.typ == "scraper" && strings.TrimSpace(f.definition) == "" {
@@ -346,6 +354,54 @@ func (f sourceForm) validate() string {
 	}
 
 	return ""
+}
+
+// invalidURLReason reports why raw is not a usable source URL, or "" when
+// it is: it must parse and use an http or https scheme with a non-empty
+// host. A definition-driven scraper source and a Torznab feed are both
+// always fetched over plain HTTP(S) (AGENT.md §2 — no other transport is
+// ever wired), so anything else is rejected before it ever reaches a
+// SourceManager.
+func invalidURLReason(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Sprintf("URL is not valid: %v", err)
+	}
+
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "URL must start with http:// or https://"
+	}
+
+	if u.Host == "" {
+		return "URL must include a host"
+	}
+
+	return ""
+}
+
+// liveIssues reports every problem with f exactly as currently typed,
+// checked against existing (the settings screen's current source
+// snapshot, sourceRows) for the duplicate-id case. renderSourceForm calls
+// this on every render, so a required-field, invalid-URL, or duplicate-id
+// hint appears — or clears — as the user types, with no need to press
+// save or test first (T-080 review finding).
+func (f sourceForm) liveIssues(existing []config.Indexer) []string {
+	var issues []string
+
+	if reason := f.validate(); reason != "" {
+		issues = append(issues, reason)
+	}
+
+	if id := f.resolvedID(); id != "" {
+		for _, s := range existing {
+			if s.ID == id && s.ID != f.editingID {
+				issues = append(issues, fmt.Sprintf("id %q is already used by another source", id))
+				break
+			}
+		}
+	}
+
+	return issues
 }
 
 // settingsModel is ScreenSettings' own state: the list cursor, an open
@@ -374,14 +430,15 @@ const (
 	sourceRemoveDialogCancel = 1
 )
 
-// sourceRows returns the sources this screen lists, from the SourceManager,
-// or nil when none is wired.
+// sourceRows returns the sources this screen lists: the model-side
+// sourcesSnapshot (root.go), never a live SourceManager.Sources() call —
+// Update() and View() must not make a synchronous call that could block on
+// whatever lock a real SourceManager's save path holds (AGENT.md §6.1/§6.8;
+// found in review). The snapshot is populated once at construction and kept
+// current purely by messages afterwards; see sourcesSaveResultMsg and
+// formSaveResultMsg.
 func (m Model) sourceRows() []config.Indexer {
-	if m.sources == nil {
-		return nil
-	}
-
-	return m.sources.Sources()
+	return append([]config.Indexer(nil), m.sourcesSnapshot...)
 }
 
 // lastOutcome reports the most recent search fan-out's outcome for
@@ -468,21 +525,30 @@ func (m Model) handleSourceEdit() (tea.Model, tea.Cmd) {
 }
 
 // handleSourceToggleEnabled flips the selected row's Enabled bit and saves
-// immediately (space).
+// immediately (space). The snapshot is updated optimistically, before the
+// save even dispatches: sourceRows() never calls the SourceManager
+// directly (see its own doc comment), so a second toggle pressed before the
+// first save's result arrives must still see the just-applied change, or
+// the two toggles cancel each other out into a lost update (found in
+// review). A failed save reverts the snapshot in handleSourcesSaveResult.
 func (m Model) handleSourceToggleEnabled() (tea.Model, tea.Cmd) {
 	src, ok := m.selectedSource()
 	if !ok || m.sources == nil {
 		return m, nil
 	}
 
-	all := append([]config.Indexer(nil), m.sourceRows()...)
+	previous := m.sourceRows()
+	all := append([]config.Indexer(nil), previous...)
+
 	for i := range all {
 		if all[i].ID == src.ID {
 			all[i].Enabled = !all[i].Enabled
 		}
 	}
 
-	return m, saveSourcesCmd(m.sources, all)
+	m.sourcesSnapshot = all
+
+	return m, saveSourcesCmd(m.sources, all, previous)
 }
 
 // handleSourceRemove opens the remove confirmation ("x").
@@ -520,14 +586,18 @@ func (m Model) handleSourceRemoveConfirmAction(action Action) (tea.Model, tea.Cm
 			return m, nil
 		}
 
+		previous := m.sourceRows()
+
 		var remaining []config.Indexer
-		for _, s := range m.sourceRows() {
+		for _, s := range previous {
 			if s.ID != id {
 				remaining = append(remaining, s)
 			}
 		}
 
-		return m, saveSourcesCmd(m.sources, remaining)
+		m.sourcesSnapshot = remaining
+
+		return m, saveSourcesCmd(m.sources, remaining, previous)
 	}
 
 	return m, nil
@@ -580,22 +650,33 @@ func (m Model) handleSourceTest() (tea.Model, tea.Cmd) {
 // sourcesSaveResultMsg reports SaveSources' outcome for the list's own
 // toggle-enabled and remove actions (the add/edit form's own save uses
 // formSaveResultMsg instead, since it needs to close the form on success).
+// previous is what sourcesSnapshot held before the optimistic update that
+// preceded this save, so a failure can put it back exactly (handleSourcesSaveResult).
 type sourcesSaveResultMsg struct {
-	err error
+	err      error
+	previous []config.Indexer
 }
 
-func saveSourcesCmd(sm SourceManager, sources []config.Indexer) tea.Cmd {
+func saveSourcesCmd(sm SourceManager, sources, previous []config.Indexer) tea.Cmd {
 	return func() tea.Msg {
-		return sourcesSaveResultMsg{err: sm.SaveSources(sources)}
+		return sourcesSaveResultMsg{err: sm.SaveSources(sources), previous: previous}
 	}
 }
 
-// formSaveResultMsg reports the add/edit form's own save attempt.
-type formSaveResultMsg struct{ err error }
+// formSaveResultMsg reports the add/edit form's own save attempt. applied is
+// the full source set the form just saved (so a successful result can
+// become the new sourcesSnapshot without a second SourceManager.Sources()
+// call); previous is what the snapshot held before, for a failed save to
+// restore.
+type formSaveResultMsg struct {
+	err      error
+	applied  []config.Indexer
+	previous []config.Indexer
+}
 
-func saveFormCmd(sm SourceManager, sources []config.Indexer) tea.Cmd {
+func saveFormCmd(sm SourceManager, sources, previous []config.Indexer) tea.Cmd {
 	return func() tea.Msg {
-		return formSaveResultMsg{err: sm.SaveSources(sources)}
+		return formSaveResultMsg{err: sm.SaveSources(sources), applied: sources, previous: previous}
 	}
 }
 
@@ -625,7 +706,7 @@ type formTestResultMsg struct {
 // sourceTestTimeout bounds one probe. The richer, distinct-outcome
 // classification (reachable / auth failed / parse failed / timeout) is
 // T-081; this is only the short-timeout pass/fail this task needs.
-const sourceTestTimeout = 15 * 1e9 // 15 seconds, spelled as nanoseconds to avoid importing time solely for this constant
+const sourceTestTimeout = 15 * time.Second
 
 func testFormCmd(sm SourceManager, src config.Indexer, gen int) tea.Cmd {
 	return func() tea.Msg {
@@ -656,25 +737,50 @@ func importDefinitionCmd(sm SourceManager, source string) tea.Cmd {
 // handleSourcesSaveResult applies a toggle-enabled or remove's outcome.
 func (m Model) handleSourcesSaveResult(msg sourcesSaveResultMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
+		// Revert the optimistic update (handleSourceToggleEnabled,
+		// handleSourceRemoveConfirmAction) — the save that would have made
+		// it real never landed.
+		m.sourcesSnapshot = msg.previous
+
 		return m.pushStatus(fmt.Sprintf("couldn't save sources: %v", msg.err))
 	}
+
+	// The save succeeded and the concrete SourceManager already re-synced
+	// the live registry to match (its own contract); refresh the search
+	// screen's source list from it now, rather than leaving it showing
+	// whatever was enabled at startup (T-080 review finding: "reloads the
+	// registry live" must be visible on the search screen too, not just
+	// on disk).
+	m = m.refreshSearchSources()
 
 	return m.handleSettingsMoveCursor(0)
 }
 
 // handleFormSaveResult applies the add/edit form's own save attempt: closes
-// the form on success, keeps it open with the error shown otherwise.
+// the form on success, keeps it open with the error shown otherwise. It
+// still applies the outcome (reverting the snapshot on failure, refreshing
+// search on success, and reporting either via the status bar) even if the
+// form was already closed by a discard confirmed while the save was still
+// in flight — dropping the result silently would leave the snapshot wrong
+// or the user unaware a save that already reached disk failed (found in
+// review).
 func (m Model) handleFormSaveResult(msg formSaveResultMsg) (tea.Model, tea.Cmd) {
-	if m.settings.form == nil {
-		return m, nil
-	}
-
 	if msg.err != nil {
-		m.settings.form.err = msg.err.Error()
-		return m, nil
+		m.sourcesSnapshot = msg.previous
+
+		if m.settings.form != nil {
+			m.settings.form.err = msg.err.Error()
+			return m, nil
+		}
+
+		return m.pushStatus(fmt.Sprintf("couldn't save source: %v", msg.err))
 	}
 
-	m.settings.form = nil
+	m = m.refreshSearchSources()
+
+	if m.settings.form != nil {
+		m.settings.form = nil
+	}
 
 	return m.pushStatus("source saved")
 }
@@ -774,14 +880,14 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 
-	case "tab":
+	case "tab", "down":
 		f = f.clampCursor()
 		f.cursor = (f.cursor + 1) % len(f.fields())
 		m.settings.form = &f
 
 		return m, nil
 
-	case "shift+tab":
+	case "shift+tab", "up":
 		f = f.clampCursor()
 		n := len(f.fields())
 		f.cursor = (f.cursor - 1 + n) % n
@@ -893,7 +999,8 @@ func (m Model) handleSourceFormSave(f sourceForm) (tea.Model, tea.Cmd) {
 
 	id := f.resolvedID()
 
-	all := append([]config.Indexer(nil), m.sourceRows()...)
+	previous := m.sourceRows()
+	all := append([]config.Indexer(nil), previous...)
 
 	var replaced bool
 
@@ -925,7 +1032,14 @@ func (m Model) handleSourceFormSave(f sourceForm) (tea.Model, tea.Cmd) {
 	f.err = ""
 	m.settings.form = &f
 
-	return m, saveFormCmd(m.sources, all)
+	// Optimistic, same reason as handleSourceToggleEnabled: sourceRows()
+	// only ever reads the model-side snapshot now, so a later read (a
+	// second save attempt, a list redraw) must see this one applied
+	// immediately rather than the pre-save state. handleFormSaveResult
+	// reverts it on failure.
+	m.sourcesSnapshot = all
+
+	return m, saveFormCmd(m.sources, all, previous)
 }
 
 // toIndexerWithID is toIndexer with id substituted for the resolved id
@@ -1079,7 +1193,20 @@ func (m Model) renderSourceForm() string {
 		b.WriteString("\n")
 	}
 
-	if f.err != "" {
+	// Live validation (T-080 review finding): recomputed every render, so
+	// a required-field, invalid-URL, or duplicate-id hint appears or
+	// clears as the user types, with no save or test needed. It takes
+	// priority over a stale save/test/import outcome (f.err/f.info) —
+	// once every live issue is fixed, whatever f.err said before is no
+	// longer the most useful thing on screen.
+	if live := f.liveIssues(m.sourceRows()); len(live) > 0 {
+		b.WriteString("\n")
+
+		for _, issue := range live {
+			b.WriteString(th.Error.Render("! " + issue))
+			b.WriteString("\n")
+		}
+	} else if f.err != "" {
 		b.WriteString("\n")
 		b.WriteString(th.Error.Render(f.err))
 		b.WriteString("\n")
@@ -1090,7 +1217,7 @@ func (m Model) renderSourceForm() string {
 	}
 
 	body := th.Border.Width(inner).Render(strings.TrimRight(b.String(), "\n"))
-	help := "tab/shift+tab move · left/right toggle type · ctrl+s/enter save · enter on import field imports · ctrl+t test · ctrl+r reveal · esc cancel"
+	help := "tab/shift+tab/↑/↓ move · left/right toggle type · ctrl+s/enter save · enter on import field imports · ctrl+t test · ctrl+r reveal · esc cancel"
 
 	return body + "\n" + th.Muted.Render(theme.Truncate(help, m.width))
 }

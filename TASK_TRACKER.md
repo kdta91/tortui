@@ -621,7 +621,9 @@ when it reaches it and does not start backlog items on its own.
   `tui.New`, and T-082 must call `engine.RootAdder.AddRoot` when a saved destination is added at
   runtime (config's saved destinations are engine roots only at construction). Found in T-074.
 - `T-971` ctrl+c does nothing while the destination picker (T-074, `ContextDestination`) is open —
-  add a quit binding to that context. Found in review of T-074 (PR #47).
+  add a quit binding to that context. Found in review of T-074 (PR #47). Also true of the settings
+  screen's add/edit source form (T-080, `ContextSourceForm`), which claims every key itself the
+  same way; found in review of T-080 (PR #48).
 - `T-972` The destination picker's write probe (`probeWritable`) runs on every keystroke in the
   path field, not debounced — a fast typist fires a filesystem write-then-remove per character.
   Found in review of T-074 (PR #47).
@@ -775,6 +777,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-116 | 2026-09-26 | T-073: containment enforced inside platform.OpenFile/RevealFile (symlink-resolved, strictly inside a root, logged refusal); roots = download dir + saved destinations + every torrent SavePath; f reveals the largest file o opens, both refuse below 100%; Windows quotes via SysProcAttr.CmdLine and ignores explorer exit 1; Linux reveals the parent dir |
 | DEC-117 | 2026-09-26 | T-074: destination picker as a modal step of the add flow; validation in a Cmd keyed by path; known roots grow only via new optional engine.RootAdder + store.TouchDestination, re-admitted by Session.Resume; / and \\ both separators, Windows drive/UNC paths accepted only where filepath gives them a volume; relative paths resolve against the default only |
 | DEC-118 | 2026-09-26 | T-080: import runs on enter (ctrl+i is literally tab's keycode); the list's own keys are handled directly in root.go rather than as Bindings to keep the `?` overlay inside the 80×24 budget, with a one-line legend instead; SourceManager mirrors Searcher/TorrentStore, concrete wiring deferred to Backlog T-975 |
+| DEC-119 | 2026-09-26 | T-080 review remediation: model-side sourcesSnapshot replaces every synchronous SourceManager.Sources() call from Update/View, updated optimistically and reverted on failure; refreshSearchSources re-reads Searcher.Enabled() after every successful save so Settings changes are visible on the Search screen live |
 
 ## Blocked
 

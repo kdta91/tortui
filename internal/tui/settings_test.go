@@ -13,6 +13,8 @@ import (
 
 	"github.com/kdta91/tortui/internal/config"
 	"github.com/kdta91/tortui/internal/engine/fake"
+	"github.com/kdta91/tortui/internal/indexer"
+	indexerfake "github.com/kdta91/tortui/internal/indexer/fake"
 )
 
 // fakeSourceManager is an in-memory SourceManager double: it never touches
@@ -35,6 +37,13 @@ type fakeSourceManager struct {
 	saveCalls  int
 	testCalls  int
 	reloadCall int
+
+	// registrySync, when set, is called by SaveSources with the newly
+	// saved set — standing in for "reloads the registry live" (the real
+	// contract's own job), so a test can wire it to update a matching
+	// Searcher double and prove the TUI's own refresh (root.go's
+	// refreshSearchSources) actually reads it back.
+	registrySync func([]config.Indexer)
 }
 
 func (f *fakeSourceManager) Sources() []config.Indexer {
@@ -46,14 +55,21 @@ func (f *fakeSourceManager) Sources() []config.Indexer {
 
 func (f *fakeSourceManager) SaveSources(sources []config.Indexer) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 
 	f.saveCalls++
 	if f.saveErr != nil {
+		f.mu.Unlock()
 		return f.saveErr
 	}
 
 	f.sources = append([]config.Indexer(nil), sources...)
+	sync := f.registrySync
+
+	f.mu.Unlock()
+
+	if sync != nil {
+		sync(append([]config.Indexer(nil), sources...))
+	}
 
 	return nil
 }
@@ -113,6 +129,48 @@ func (f *fakeSourceManager) reloadCallCount() int {
 	defer f.mu.Unlock()
 
 	return f.reloadCall
+}
+
+// dynamicSearcher is a Searcher test double whose Enabled() result can
+// change after construction — unlike search_test.go's stubSearcher, which
+// is fixed for the test's lifetime. It exists for exactly one thing: proving
+// that a settings-screen change is visible on the search screen without a
+// restart (T-080 review finding), which needs a Searcher a fakeSourceManager
+// can actually update via registrySync.
+type dynamicSearcher struct {
+	mu      sync.Mutex
+	enabled []indexer.Indexer
+}
+
+func (s *dynamicSearcher) Enabled() []indexer.Indexer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return append([]indexer.Indexer(nil), s.enabled...)
+}
+
+func (s *dynamicSearcher) Get(id string) (indexer.Indexer, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, ix := range s.enabled {
+		if ix.ID() == id {
+			return ix, true
+		}
+	}
+
+	return nil, false
+}
+
+func (s *dynamicSearcher) SearchAll(context.Context, indexer.Query, ...string) ([]indexer.Result, []indexer.SourceError, error) {
+	return nil, nil, nil
+}
+
+func (s *dynamicSearcher) setEnabled(list []indexer.Indexer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.enabled = list
 }
 
 func newSettingsTestModel(t *testing.T, sm SourceManager) *teatest.TestModel {
@@ -574,7 +632,11 @@ func TestImportDefinitionPrefillsForm(t *testing.T) {
 	tm.Send(keyRune("https://example.org/def.yml"))
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
-	waitForOutput(t, tm, "imported: imported-source")
+	// The form's own URL field is still blank in this test, so live
+	// validation (T-080 review finding) takes priority over the import's
+	// "imported: ..." info line — the import's actual effect is checked
+	// below via FinalModel instead.
+	waitForOutput(t, tm, "imported-source.yml")
 
 	if err := tm.Quit(); err != nil {
 		t.Fatal(err)
@@ -606,4 +668,133 @@ func TestSearchScreenEmptyStateJumpsToAddForm(t *testing.T) {
 	tm.Send(keyRune("a"))
 
 	waitForOutput(t, tm, "Add source")
+}
+
+// TestDisablingLastSourceUpdatesSearchScreenLive proves the search screen's
+// enabled-source list is not a permanent startup snapshot: disabling the
+// only configured source from settings must make the search screen's own
+// empty-state prompt appear without a restart (T-080 review finding —
+// "reloads the registry live" was previously only true on disk, never on
+// the search screen). fakeSourceManager.registrySync stands in for a real
+// SourceManager's own registry re-sync; dynamicSearcher is what lets this
+// test observe the TUI-side half (refreshSearchSources) actually reading
+// it back.
+func TestDisablingLastSourceUpdatesSearchScreenLive(t *testing.T) {
+	ix := indexerfake.New("my-tracker", "My Tracker", indexer.Caps{Search: true, Latest: true}, nil)
+
+	searcher := &dynamicSearcher{}
+	searcher.setEnabled([]indexer.Indexer{ix})
+
+	sm := &fakeSourceManager{sources: []config.Indexer{
+		{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+	}}
+	sm.registrySync = func(all []config.Indexer) {
+		var live []indexer.Indexer
+		for _, s := range all {
+			if s.ID == "my-tracker" && s.Enabled {
+				live = append(live, ix)
+			}
+		}
+		searcher.setEnabled(live)
+	}
+
+	m := New(fake.New(), testTheme(), WithSourceManager(sm), WithSearcher(searcher))
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	t.Cleanup(func() { _ = tm.Quit() })
+
+	waitForOutput(t, tm, "Query:") // starts on the search screen
+	tm.Send(keyRune("5"))          // -> settings
+	waitForOutput(t, tm, "My Tracker")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeySpace}) // disable the only source
+	waitForPredicate(t, func() bool { return sm.saveCallCount() > 0 })
+
+	tm.Send(keyRune("1")) // -> search
+	waitForOutput(t, tm, "No sources configured. Press 'a' to add one.")
+}
+
+// TestFormArrowKeysMoveBetweenFields proves up/down move the form's field
+// cursor exactly like tab/shift-tab (T-080 review finding: the form had no
+// arrow navigation at all). Driven directly through Model.Update, the same
+// style TestDiscardConfirmNoKeepsTheFormAndItsContent uses, since the
+// cursor position isn't otherwise observable from rendered text alone.
+func TestFormArrowKeysMoveBetweenFields(t *testing.T) {
+	sm := &fakeSourceManager{}
+	m := New(fake.New(), testTheme(), WithSourceManager(sm))
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(Model)
+	updated, _ = m.Update(keyRune("5"))
+	m = updated.(Model)
+	updated, _ = m.Update(keyRune("a"))
+	m = updated.(Model)
+
+	if m.settings.form.cursor != 0 {
+		t.Fatalf("expected a fresh form to start at field 0, got %d", m.settings.form.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	if m.settings.form.cursor != 1 {
+		t.Fatalf("down: cursor = %d, want 1", m.settings.form.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	if m.settings.form.cursor != 2 {
+		t.Fatalf("down: cursor = %d, want 2", m.settings.form.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(Model)
+	if m.settings.form.cursor != 1 {
+		t.Fatalf("up: cursor = %d, want 1", m.settings.form.cursor)
+	}
+}
+
+// TestFormLiveValidationAppearsAndClearsAsYouType proves required-field,
+// URL, and duplicate-id hints show up and disappear as the user types, with
+// no need to press save or test first (T-080 review finding).
+func TestFormLiveValidationAppearsAndClearsAsYouType(t *testing.T) {
+	sm := &fakeSourceManager{sources: []config.Indexer{
+		{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+	}}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "My Tracker")
+
+	tm.Send(keyRune("a"))
+
+	// Nothing typed yet: name and URL are both required. Checked together
+	// (waitForAllOutput, search_test.go) rather than as two separate waits
+	// — both lines land in the very same render, so a second, independent
+	// wait with nothing sent in between would look for bytes the first
+	// wait already drained (the lesson from this task's own
+	// TestCancelDirtyFormAsksToConfirm fix).
+	waitForAllOutput(t, tm, "Add source", "name is required")
+
+	tm.Send(keyRune("My Tracker")) // same name as the existing source
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	tm.Send(keyRune("not-a-url"))
+
+	waitForOutput(t, tm, "URL must start with http:// or https://")
+
+	// Fix the URL; the id (slugified from "My Tracker") still collides
+	// with the existing source, so that hint should take its place.
+	for range "not-a-url" {
+		tm.Send(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	tm.Send(keyRune("https://example.org/b"))
+
+	waitForOutput(t, tm, `id "my-tracker" is already used by another source`)
+
+	if err := tm.Quit(); err != nil {
+		t.Fatal(err)
+	}
+
+	final := tm.FinalModel(t, teatest.WithFinalTimeout(3*time.Second)).(Model)
+	if len(final.settings.form.liveIssues(final.sourceRows())) == 0 {
+		t.Fatal("expected the duplicate-id issue to still be live")
+	}
 }

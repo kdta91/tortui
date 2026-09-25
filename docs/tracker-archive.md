@@ -3541,7 +3541,15 @@ directly in `root.go`, not declarative `Binding`s, to keep the `?` overlay insid
 80×24 budget; a one-line legend keeps them discoverable. Search's empty state jumps to the add
 form via `a`. Production `SourceManager` wiring is Backlog `T-975` (no composition root exists
 yet, T-950); comment/order preservation is `config.Save`'s existing behavior (Backlog `T-976`).
-`make check`, `make race` (tui, app), `make cover` (tui 93.1%) green.
+**Review remediation:** a model-side `sourcesSnapshot` (root.go) replaces every synchronous
+`SourceManager.Sources()` call from `Update()`/`View()` (§6.1/§6.8), updated optimistically on
+toggle/remove/save and reverted on failure; a new `refreshSearchSources` re-reads
+`Searcher.Enabled()` after every successful save so the search screen's source list is never a
+permanent startup snapshot; the form gained up/down field navigation and continuously
+recomputed live validation (required fields, an `invalidURLReason` http(s) check, the duplicate-
+id check) shown as you type; `handleFormSaveResult` now reports a save's outcome via the status
+bar even if the form was closed while it was in flight; `sourceTestTimeout` uses `time.Second`.
+`make check`, `make race` (tui, app), `make cover` (tui 93.2%) green.
 
 **Acceptance**
 

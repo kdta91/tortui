@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/kdta91/tortui/internal/config"
 	"github.com/kdta91/tortui/internal/engine"
 	"github.com/kdta91/tortui/internal/indexer"
 	"github.com/kdta91/tortui/internal/platform"
@@ -222,6 +223,14 @@ type Model struct {
 	// an empty list and every action reports "no source manager
 	// configured" via the status bar rather than panicking.
 	sources SourceManager
+	// sourcesSnapshot is the settings screen's model-side cache of
+	// sources.Sources(): populated once at construction (New, below) and
+	// kept in sync afterwards purely by messages (sourcesSaveResultMsg,
+	// formSaveResultMsg) — never by a synchronous SourceManager.Sources()
+	// call from Update() or View() (AGENT.md §6.1/§6.8; found in review of
+	// this task's own first pass). sourceRows() (settings.go) is the only
+	// reader.
+	sourcesSnapshot []config.Indexer
 	// settings is the settings screen's own state: the list cursor, an
 	// open add/edit form, and the remove confirmation.
 	settings settingsModel
@@ -356,6 +365,15 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 
 	if m.destStore != nil {
 		m.usedDestinations = m.destStore.Destinations()
+	}
+
+	// One-time synchronous read, same as m.destStore.Destinations() just
+	// above and m.history.ListHistory() inside newSearchModel below — New()
+	// runs before the bubbletea program starts, never from Update() or
+	// View() (AGENT.md §6.1/§6.8). Every later change flows through
+	// messages (settings.go's sourcesSaveResultMsg/formSaveResultMsg).
+	if m.sources != nil {
+		m.sourcesSnapshot = m.sources.Sources()
 	}
 
 	m.search = newSearchModel(m.searcher, m.history)

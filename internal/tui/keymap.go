@@ -368,8 +368,8 @@ func sourceFormBindings() []Binding {
 	ctx := []Context{ContextSourceForm}
 
 	return []Binding{
-		{Keys: []string{"tab"}, Action: ActionFormNextField, Help: "next field", Contexts: ctx},
-		{Keys: []string{"shift+tab"}, Action: ActionFormPrevField, Help: "previous field", Contexts: ctx},
+		{Keys: []string{"tab", "down"}, Action: ActionFormNextField, Help: "next field", Contexts: ctx},
+		{Keys: []string{"shift+tab", "up"}, Action: ActionFormPrevField, Help: "previous field", Contexts: ctx},
 		{
 			Keys: []string{"ctrl+s", "enter"}, Action: ActionFormSave,
 			Help: "save (or, on the import field, run the import)", Contexts: ctx,
