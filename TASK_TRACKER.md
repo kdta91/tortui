@@ -719,6 +719,19 @@ when it reaches it and does not start backlog items on its own.
   page path, and building that path today would mean hand-formatting a string no response field
   actually carries, which AGENT.md §16 treats as inference rather than verification. Found while
   building T-024; see `docs/bundled-sources.md`.
+- `T-946` `awaitInfo` reads `paused`/queued under `Engine.mu`, then calls
+  `DisallowDataDownload`/`DisallowDataUpload` after unlocking, so a concurrent `promote` or `Resume`
+  in that window can leave a torrent showing `StateDownloading` with its transfers disallowed.
+  Apply the gate under the lock, or re-check after it. Found in review of T-034 (PR #36).
+- `T-947` The free-space checks (add-time and the periodic re-check) are per torrent and ignore the
+  remaining need of other active downloads on the same destination/filesystem, so several
+  downloads can together overcommit a disk each one fits alone. Sum the remaining need per
+  destination (ideally per filesystem). Found in review of T-034 (PR #36).
+- `T-948` A magnet refused in `awaitInfo` (unsafe path or not enough space) stays tracked as
+  `StateErrored`, so a re-`Add` of the same infohash returns that stale id with a nil error instead
+  of refusing again; a queued spec whose promote-time `attach` fails stays tracked via `e.fail` the
+  same way. Untrack (or re-evaluate) refused entries on re-`Add`, as `untrackFailedSpec` does for
+  `addSpec`. Found in review of T-034 (PR #36).
 
 
 

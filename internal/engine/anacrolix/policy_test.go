@@ -64,6 +64,24 @@ func completeTorrent(t *testing.T, dest, name string, size int) string {
 	})
 }
 
+// waitForStarted waits until a torrent whose data is already on disk has
+// attached and got its info dictionary: StateDownloading, or already past it.
+// The policy tick can move complete data on to StateSeeding (or, with the
+// "off" policy, StatePaused) before a poll ever sees StateDownloading, so
+// waiting for exactly that state is a race.
+func waitForStarted(t *testing.T, e *Engine, id string) {
+	t.Helper()
+
+	waitUntil(t, id+" started", func() bool {
+		switch statusOf(t, e, id).State {
+		case engine.StateDownloading, engine.StateSeeding, engine.StatePaused:
+			return true
+		default:
+			return false
+		}
+	})
+}
+
 // verify re-hashes a tracked torrent's on-disk data.
 func verify(t *testing.T, e *Engine, id string) {
 	t.Helper()
@@ -557,7 +575,7 @@ func TestCompletedTorrentSeedsUnderTheRatioPolicy(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	waitForState(t, e, id, engine.StateDownloading)
+	waitForStarted(t, e, id)
 	verify(t, e, id)
 
 	// Offline nothing is ever uploaded, so ratio 1 is never reached: it
@@ -582,7 +600,7 @@ func TestCompletedTorrentStopsUploadingUnderTheOffPolicyAndResumeOverrides(t *te
 		t.Fatalf("Add: %v", err)
 	}
 
-	waitForState(t, e, id, engine.StateDownloading)
+	waitForStarted(t, e, id)
 	verify(t, e, id)
 
 	st := waitForState(t, e, id, engine.StatePaused)
