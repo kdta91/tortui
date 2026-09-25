@@ -1,10 +1,23 @@
 name: CI
 
+# T-945: push runs only on main (every task branch has a PR, whose pull_request run is the one
+# branch protection reads), so a PR push no longer runs the whole matrix twice. Docs-only pushes to
+# main (a Blocked entry, tracker text) skip CI; pull_request runs are never path-filtered, so a
+# required check can never be left pending.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".claude/**"
   pull_request:
     branches: ["**"]
+
+# A newer push to the same PR cancels the superseded run; runs on main are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -34,16 +47,35 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # T-945: compiling the pinned tools from source took ~3 of the Windows job's 8 minutes.
+      # Cache the built binaries, keyed on OS + Go + every pinned version, and only `go install`
+      # them on a miss. Changing a version in `env` above changes the key, so a bump is never
+      # served a stale binary.
+      - name: Cache pinned tool binaries
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/bin/gofumpt*
+            ~/go/bin/golangci-lint*
+            ~/go/bin/gitleaks*
+          key: tools-${{ runner.os }}-go${{ env.GO_VERSION }}-gofumpt${{ env.GOFUMPT_VERSION }}-golangci${{ env.GOLANGCI_LINT_VERSION }}-gitleaks${{ env.GITLEAKS_VERSION }}
+
       - name: Install gofumpt
+        if: steps.tools-cache.outputs.cache-hit != 'true'
         run: go install mvdan.cc/gofumpt@${{ env.GOFUMPT_VERSION }}
 
+      # Unpinned (@latest), so deliberately not cached: it would otherwise freeze at whatever
+      # version the first cache fill saw.
       - name: Install goimports
         run: go install golang.org/x/tools/cmd/goimports@latest
 
       - name: Install golangci-lint
+        if: steps.tools-cache.outputs.cache-hit != 'true'
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
 
       - name: Install gitleaks
+        if: steps.tools-cache.outputs.cache-hit != 'true'
         run: go install github.com/zricethezav/gitleaks/v8@${{ env.GITLEAKS_VERSION }}
 
       - name: Add GOPATH/bin to PATH

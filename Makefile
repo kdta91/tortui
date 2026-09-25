@@ -106,7 +106,16 @@ ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
 ALLOWED_MPL_MODULES := github.com/anacrolix/torrent,github.com/anacrolix/dht/v2,github.com/anacrolix/generics,github.com/anacrolix/log,github.com/anacrolix/mmsg,github.com/anacrolix/multiless,github.com/anacrolix/sync,github.com/anacrolix/upnp,github.com/anacrolix/utp,github.com/go-llsqlite/adapter
 NOTICE_TMP := .notice.tmp
 
-.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames test-scripts
+.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames test-scripts race lint-cross vuln next
+
+# T-945: `go install`ed tools (go-licenses, govulncheck) land in $(go env GOPATH)/bin, which is
+# not always on an agent shell's PATH. Prepend it so every target finds them. Skipped on Windows,
+# where CI already adds it and a drive-letter path would break the ':'-separated PATH under sh.
+ifneq ($(OS),Windows_NT)
+export PATH := $(shell go env GOPATH 2>/dev/null)/bin:$(PATH)
+endif
+
+LINT_OSES := darwin linux windows
 
 build:
 	set -eu; go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/tortui
@@ -215,6 +224,32 @@ check-hostnames:
 test-scripts:
 	set -eu; scripts/check-indexer-hostnames_test.sh
 	set -eu; scripts/check-license-scope_test.sh
+	set -eu; scripts/next-task_test.sh
+
+# T-945: gates wrapped as targets so they need no env-prefixed command (which the agent
+# permission allowlist cannot match) and so every agent runs them identically.
+race:
+	set -eu; go test -race -count=1 $(PKG)
+
+# Native `make lint` only sees the host's build-tagged files; this lints every GOOS.
+lint-cross:
+	@set -eu; for goos in $(LINT_OSES); do \
+		echo "make lint-cross: GOOS=$$goos golangci-lint run"; \
+		GOOS=$$goos golangci-lint run ./...; \
+	done
+	set -eu; GOOS=windows go vet $(PKG)
+
+vuln:
+	@set -eu; command -v govulncheck >/dev/null 2>&1 || { \
+		echo "make vuln: govulncheck is not installed."; \
+		echo "install it (e.g. 'go install golang.org/x/vuln/cmd/govulncheck@latest') and re-run 'make vuln'."; \
+		exit 1; \
+	}
+	set -eu; govulncheck ./...
+
+# Next eligible task and status counts, derived from TASK_TRACKER.md (never a hand-kept table).
+next:
+	@set -eu; scripts/next-task.sh TASK_TRACKER.md
 
 cover:
 	set -eu; go test -coverprofile=$(COVERPROFILE) $(PKG)
