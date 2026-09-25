@@ -200,7 +200,7 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		if (o1 == 192 && o2 == 168) return 1
 		return 0
 	}
-	function scan(text, file, orig,    rest, m, host) {
+	function scan(text, file, orig,    rest, m, host, om, off, quoted) {
 		# Authority after the scheme: may carry userinfo (user:pass@) and a
 		# port, so match everything up to the first path/space/quote/angle
 		# separator and let check_host() pick the hostname apart from that.
@@ -211,12 +211,25 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 			check_host(m, file, orig)
 			rest = substr(rest, RSTART + RLENGTH)
 		}
+		# The key/value shape. An UNQUOTED value that has an upper-case
+		# letter in the original line is a Go identifier chain --
+		# "URL: server.URL", "rec.SourceURL = d.Origin.IndexerID" -- not a
+		# hostname: hostnames are written lower-case, and a Go string
+		# holding one is quoted, which keeps it checked. text is the
+		# lowercased copy of orig with identical offsets, so off tracks
+		# the same position in both (T-926, T-041).
 		rest = text
+		off = 0
 		while (match(rest, /(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z][A-Za-z]+/)) {
 			m = substr(rest, RSTART, RLENGTH)
-			sub(/^(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?/, "", m)
-			check_host(m, file, orig)
+			om = substr(orig, off + RSTART, RLENGTH)
+			off += RSTART + RLENGTH - 1
 			rest = substr(rest, RSTART + RLENGTH)
+			quoted = (m ~ /[:=][[:space:]]*"/)
+			sub(/^(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?/, "", m)
+			sub(/^[A-Za-z_]*[[:space:]]*[:=][[:space:]]*"?/, "", om)
+			if (!quoted && om ~ /[A-Z]/) continue
+			check_host(m, file, orig)
 		}
 	}
 	function check_host(host, file, text,   colon) {

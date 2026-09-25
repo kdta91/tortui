@@ -568,6 +568,9 @@ when it reaches it and does not start backlog items on its own.
   this tree. Requiring the matched value to look like a hostname — at least one dot-separated
   label followed by a plausible TLD, and not a known Go identifier shape — would keep the check
   meaningful without the false positives. Found while building T-020.
+  **Partly closed in T-041:** an unquoted key/value match whose original text has an upper-case
+  letter (`server.URL`, `errors.New`, `d.Origin.IndexerID`) is now skipped as a Go identifier
+  chain (cases 6-7 in the script's test). Unquoted all-lower-case identifier chains still match.
 - `T-927` `internal/logging`'s free-text masker misses `CookieHeader:` in a `%+v` struct dump. The
   regex requires the sensitive word immediately followed by `[:=]`, so `APIKey:` is caught but
   `CookieHeader:` is not — the `Header` sits between. Only bites when a caller formats a struct into
@@ -731,6 +734,25 @@ when it reaches it and does not start backlog items on its own.
   `DeleteTorrent`/`SetTorrent` pair then overwrites the first record's data (and the re-key can
   delete a record already re-keyed onto that ID; the next `Save` repairs it). Detect an ID already
   restored this pass and drop the duplicate record instead. Found in review of T-041 (PR #38).
+- `T-954` `make check (windows-latest)`, advisory: `internal/engine`
+  `TestProbeListenPortFallsBackWhenTaken` and `TestProbeListenPortPrefersTheConfiguredPort` fail
+  with "no random port was free on both TCP and UDP" (PR #38 run 36134477067). This is T-034's
+  probe; it passed on `main`'s last run, so it is intermittent on Windows runners. Make the probe
+  retry more than one random port before giving up. Found on T-041's PR.
+- `T-955` The anacrolix file storage keeps every data file memory-mapped after `Engine.Close`. The
+  library's default mmap file IO never unmaps, and `fileTorrentImpl.Close` is a no-op. On Windows
+  the file then cannot be rewritten or deleted ("user-mapped section open" / "being used by
+  another process"), so remove-with-data breaks too. Before T-041 a completed file was unmapped by
+  its `.part` rename; T-041 turned part files off, so completed files now stay mapped as well.
+  Failing on `make check (windows-latest)` (advisory, PR #38 run 36134477067):
+  `TestRestoreSurfacesMissingDataAsErroredNotDropped`,
+  `TestRestoreResumesFromExistingDataWithoutDownloading`,
+  `TestRestoreResumesAPartialDownloadFromItsVerifiedPieces`,
+  `TestCompletedTorrentSeedsUnderTheRatioPolicy` and
+  `TestCompletedTorrentStopsUploadingUnderTheOffPolicyAndResumeOverrides` (the last two regressed
+  in T-041). Options: selecting the library's classic file IO is only possible through the
+  `TORRENT_STORAGE_DEFAULT_FILE_IO` env var at process start, so use a wrapping `storage.ClientImpl`
+  whose close releases handles, or a small tortui-owned file storage. Tier H.
 
 
 

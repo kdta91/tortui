@@ -193,4 +193,63 @@ fi
 grep -q "some-message-only-host.zzz" "$tmp_repo/out5.txt" ||
 	fail "violation output did not name the commit-message-only hostname"
 
+# --- Case 6: Go identifier chains in the key/value shape are not hostnames --
+# (T-926, T-041). Unquoted, mixed-case field accesses after a url/host-style
+# key must pass, in a gated path and on a keyword line outside one.
+(
+	cd "$tmp_repo"
+	git checkout -q "$base_sha"
+	mkdir -p internal/lifecycle
+	cat >internal/indexer/fixture/case_ident.go <<'EOF'
+package fixture
+
+func f() {
+	c := Config{URL: server.URL, SourceURL: origin.SourceURL}
+	rec.IndexerID, rec.SourceURL = d.Origin.IndexerID, d.Origin.SourceURL
+}
+EOF
+	cat >internal/lifecycle/case_ident.go <<'EOF'
+package lifecycle
+
+func g() { rec.IndexerID, rec.SourceURL = d.Origin.IndexerID, d.Origin.SourceURL }
+EOF
+	# Only the fixtures: earlier cases' out*.txt files name hosts too.
+	git add internal
+	git commit -q -m "add Go identifier chains after url-style keys"
+)
+head_case6=$(cd "$tmp_repo" && git rev-parse HEAD)
+
+if ! run_check "$head_case6" "$tmp_repo/out6.txt"; then
+	cat "$tmp_repo/out6.txt" >&2
+	fail "Go identifier chains after a url/host key were flagged as hostnames"
+fi
+
+# --- Case 7: control for case 6 -- an unquoted lower-case host value, and a -
+# quoted mixed-case one, are still flagged.
+(
+	cd "$tmp_repo"
+	git checkout -q "$base_sha"
+	cat >internal/indexer/fixture/case_unquoted.yml <<'EOF'
+host: some-unquoted-source.zzz
+EOF
+	cat >internal/indexer/fixture/case_quoted_upper.go <<'EOF'
+package fixture
+
+var h = Config{Host: "Some-Quoted-Source.ZZZ"}
+EOF
+	# Only the fixtures: earlier cases' out*.txt files name hosts too.
+	git add internal
+	git commit -q -m "add unquoted and quoted mixed-case hosts"
+)
+head_case7=$(cd "$tmp_repo" && git rev-parse HEAD)
+
+if run_check "$head_case7" "$tmp_repo/out7.txt"; then
+	cat "$tmp_repo/out7.txt" >&2
+	fail "unquoted lower-case / quoted mixed-case hosts were not flagged"
+fi
+grep -q "some-unquoted-source.zzz" "$tmp_repo/out7.txt" ||
+	fail "violation output did not name the unquoted host"
+grep -q "some-quoted-source.zzz" "$tmp_repo/out7.txt" ||
+	fail "violation output did not name the quoted mixed-case host"
+
 echo "check-indexer-hostnames_test: all cases passed"
