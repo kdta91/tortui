@@ -42,7 +42,10 @@ func resultsColumns() []components.Column {
 		{Key: "title", Title: "Title", Flex: true, MinWidth: 20, Align: components.AlignLeft},
 		{Key: "size", Title: "Size", Width: 8, Align: components.AlignRight, Less: sizeLess},
 		{Key: "sl", Title: "S/L", Width: 9, Align: components.AlignRight, Less: seedersLess},
-		{Key: "trust", Title: "Trust", Width: 6, Align: components.AlignLeft, Priority: 3},
+		{
+			Key: "trust", Title: "Trust", Width: 6, Align: components.AlignLeft, Priority: 3,
+			Less: trustLess, SortMissingLast: trustSortMissing, Accent: true,
+		},
 		{Key: "age", Title: "Age", Width: 6, Align: components.AlignRight, Priority: 2, Less: ageLess},
 		{Key: "source", Title: "Source", Width: 16, Align: components.AlignLeft, Priority: 1},
 	}
@@ -53,6 +56,17 @@ func resultsColumns() []components.Column {
 // method has a value receiver and returns an updated copy.
 type resultsModel struct {
 	table components.Table
+
+	// allRows is every row the most recent setResults produced, before
+	// trustFilter is applied — the table itself only ever holds the
+	// (possibly filtered) subset, so toggling the filter off needs
+	// somewhere to recover the rows it hid rather than re-running the
+	// search.
+	allRows []components.Row
+	// trustFilter is T-062's "filter toggle restricts to TrustTrusted and
+	// above" (the 't' key, ActionToggleTrustFilter): true restricts the
+	// table to rows whose Trust is TrustTrusted or TrustVIP.
+	trustFilter bool
 }
 
 // newResultsModel returns a resultsModel with resultsColumns() and no rows.
@@ -66,16 +80,49 @@ func newResultsModel() resultsModel {
 // re-establishes the default, superseding any sort a previous set of
 // results left in place via cycleSort/reverseSort, since a brand new result
 // set is exactly the "never mistaken for a stale search result" moment the
-// header text next to it also exists for.
+// header text next to it also exists for. The trust filter (T-062), if on,
+// carries over to the new result set exactly like the sort column does.
 func (m resultsModel) setResults(results []indexer.Result, mode indexer.Mode, now time.Time) resultsModel {
 	rows := make([]components.Row, 0, len(results))
 	for _, r := range results {
 		rows = append(rows, resultRow(r, now))
 	}
 
-	m.table = m.table.SetRows(rows)
+	m.allRows = rows
+	m = m.applyTrustFilter()
 
 	return m.applyModeDefault(mode)
+}
+
+// toggleTrustFilter implements the "t" key (ActionToggleTrustFilter): T-062
+// acceptance "a filter toggle restricts to TrustTrusted and above".
+func (m resultsModel) toggleTrustFilter() resultsModel {
+	m.trustFilter = !m.trustFilter
+	return m.applyTrustFilter()
+}
+
+// applyTrustFilter re-derives the table's row set from allRows: every row
+// when trustFilter is off, or only TrustTrusted-and-above rows when it's
+// on. Table.SetRows re-applies whatever sort is already active, so this
+// never disturbs the current sort column/direction — only which rows are
+// visible under it.
+func (m resultsModel) applyTrustFilter() resultsModel {
+	if !m.trustFilter {
+		m.table = m.table.SetRows(m.allRows)
+		return m
+	}
+
+	filtered := make([]components.Row, 0, len(m.allRows))
+
+	for _, r := range m.allRows {
+		if trustOrderOf(r) >= int(indexer.TrustTrusted) {
+			filtered = append(filtered, r)
+		}
+	}
+
+	m.table = m.table.SetRows(filtered)
+
+	return m
 }
 
 // applyModeDefault sorts by seeders descending for ModeSearch, or age
@@ -168,7 +215,50 @@ func resultRow(r indexer.Result, now time.Time) components.Row {
 			formatAge(now, r.Published),
 			resultSource(r),
 		},
+		// SortKey[colTrust] carries the real indexer.Trust order behind
+		// the badge (T-062 acceptance: sortable by trust, TrustUnknown
+		// sorts last) — Badge() renders TrustUnknown and TrustNone as the
+		// identical blank text, so trustLess/trustSortMissing could never
+		// tell them apart from Cells alone. Every other index is left
+		// empty, falling back to that column's own Cells text.
+		SortKey: []string{"", "", "", strconv.Itoa(int(r.Trust)), "", ""},
 	}
+}
+
+// parseTrustOrder reads the indexer.Trust order back off a trust column
+// sort value — always Row.SortKey's entry (resultRow always sets one), so
+// this is the plain reverse of strconv.Itoa(int(r.Trust)), not a Badge()
+// parser. Unparseable input reads as TrustUnknown (0) rather than
+// panicking.
+func parseTrustOrder(cell string) int {
+	n, _ := strconv.Atoi(cell)
+	return n
+}
+
+// trustLess orders the trust column by the real indexer.Trust value (least
+// to most trusted — AGENT.md §5's documented enum ordering), not the
+// three-way-ambiguous badge text.
+func trustLess(a, b string) bool { return parseTrustOrder(a) < parseTrustOrder(b) }
+
+// trustSortMissing reports whether cell represents TrustUnknown — "the
+// source reports no trust information at all" — which components.Table's
+// SortMissingLast pins to the end of the trust column regardless of sort
+// direction (T-062 acceptance: "TrustUnknown sorts last"). TrustNone (the
+// source tracks trust and this upload has none) is a real, known value and
+// sorts normally alongside Verified/Trusted/VIP, even though it renders
+// the same blank badge as Unknown.
+func trustSortMissing(cell string) bool { return parseTrustOrder(cell) == int(indexer.TrustUnknown) }
+
+// trustOrderOf reads a table row's underlying trust order back out of its
+// SortKey, for applyTrustFilter — the same value trustLess/trustSortMissing
+// compare, so filtering and sorting always agree on what a row's trust
+// actually is.
+func trustOrderOf(r components.Row) int {
+	if colTrust >= len(r.SortKey) {
+		return int(indexer.TrustUnknown)
+	}
+
+	return parseTrustOrder(r.SortKey[colTrust])
 }
 
 // resultSource renders the Source column: every contributing indexer id
@@ -379,24 +469,39 @@ func resultsTableHeight(height int) int {
 
 // resultsHeaderText names the current mode and query (T-061 acceptance:
 // "Header states the current mode and query, so a Latest view is never
-// mistaken for a stale search result").
-func resultsHeaderText(q indexer.Query) string {
+// mistaken for a stale search result"), plus, when trustFilter is on
+// (T-062), a suffix naming it — so a filtered-down table is never mistaken
+// for "these are all the results that came back".
+func resultsHeaderText(q indexer.Query, trustFilter bool) string {
+	text := fmt.Sprintf("Search: %q", q.Text)
 	if q.Mode == indexer.ModeLatest {
-		return "Latest — recent additions"
+		text = "Latest — recent additions"
 	}
 
-	return fmt.Sprintf("Search: %q", q.Text)
+	if trustFilter {
+		text += " · trust filter: Trusted and above"
+	}
+
+	return text
 }
 
 // renderResultsScreen draws ScreenResults' real body: the mode/query
-// header, then either the responsive table or the empty state. Pure: reads
+// header, then either the responsive table or an empty state. Pure: reads
 // m and returns a string, no I/O, no mutation (AGENT.md §6.8).
 func (m Model) renderResultsScreen() string {
 	th := m.theme
-	header := th.Accent.Render(theme.Truncate(resultsHeaderText(m.lastQuery), m.width))
+	header := th.Accent.Render(theme.Truncate(resultsHeaderText(m.lastQuery, m.results.trustFilter), m.width))
 
 	if len(m.lastResults) == 0 {
 		return truncateLines(header+"\n\n"+m.renderEmptyResults(), m.width)
+	}
+
+	if len(m.results.table.Rows()) == 0 {
+		// The search returned rows, but the trust filter (T-062) excluded
+		// every one of them — a distinct message from "no results" so
+		// pressing 't' is the obvious next step rather than a dead end.
+		msg := th.Muted.Render("No results at Trusted trust or above. Press t to clear the filter.")
+		return truncateLines(header+"\n\n"+msg, m.width)
 	}
 
 	var b strings.Builder

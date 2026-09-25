@@ -3316,6 +3316,33 @@ review-remediation account. `make check`, `make race` (`internal/tui`, `internal
 
 ---
 
+### T-062 · Trust badges and filtering
+```
+status: done
+depends: T-061
+tier: L
+```
+**Notes:** `components.Table` gains three generic fields (no Trust-specific logic): `Row.SortKey`
+(positional sort-value override), `Column.SortMissingLast` (pins a value last regardless of
+direction), `Column.Accent` (always-accent cell colour). Trust's sort key is
+`strconv.Itoa(int(r.Trust))` since `Badge()` renders `TrustUnknown`/`TrustNone` identically and a
+parser over `Cells` text alone could never separate them; `TrustUnknown` pins last in both sort
+directions (DEC-111). `t` (`ActionToggleTrustFilter`) restricts the table to
+`TrustTrusted`/`TrustVIP` by re-deriving rows from `resultsModel.allRows`, persisting across a new
+search like the sort column does; header names the active filter; a distinct empty state fires
+when the filter (not the search) excludes everything. README's Trust badges section/Keys table
+updated. `make check`, `make race` (`internal/tui/...`), `make cover` (tui 93.3%) green.
+
+**Acceptance**
+- `Trust` rendered as a compact badge (`VIP` / `TR` / `✓` / blank), accent-coloured, and
+  legible with `NO_COLOR`.
+- Sortable by trust; a filter toggle restricts to `TrustTrusted` and above.
+- `TrustUnknown` sorts last and never displays as a false negative.
+- Badge semantics documented in `README.md`: this is uploader reputation metadata reported by
+  the source, it is not a quality guarantee and it does not affect download behaviour.
+
+---
+
 ## Blocked — Resolved
 
 

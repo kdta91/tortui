@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"io"
 	"strconv"
 	"strings"
 	"testing"
@@ -145,12 +146,22 @@ func TestCacheSummaryAggregatesResults(t *testing.T) {
 // TestResultsHeaderTextNamesModeAndQuery pins T-061's "Header states the
 // current mode and query" acceptance directly.
 func TestResultsHeaderTextNamesModeAndQuery(t *testing.T) {
-	if got := resultsHeaderText(indexer.Query{Mode: indexer.ModeSearch, Text: "ubuntu"}); !strings.Contains(got, "ubuntu") {
+	if got := resultsHeaderText(indexer.Query{Mode: indexer.ModeSearch, Text: "ubuntu"}, false); !strings.Contains(got, "ubuntu") {
 		t.Errorf("resultsHeaderText(Search, %q) = %q, want it to name the query text", "ubuntu", got)
 	}
 
-	if got := resultsHeaderText(indexer.Query{Mode: indexer.ModeLatest}); !strings.Contains(strings.ToLower(got), "latest") {
+	if got := resultsHeaderText(indexer.Query{Mode: indexer.ModeLatest}, false); !strings.Contains(strings.ToLower(got), "latest") {
 		t.Errorf("resultsHeaderText(Latest) = %q, want it to name Latest mode", got)
+	}
+}
+
+// TestResultsHeaderTextNamesTrustFilter pins T-062's acceptance that a
+// filtered results table is never mistaken for the full result set — the
+// header names the active trust filter.
+func TestResultsHeaderTextNamesTrustFilter(t *testing.T) {
+	got := resultsHeaderText(indexer.Query{Mode: indexer.ModeSearch, Text: "ubuntu"}, true)
+	if !strings.Contains(strings.ToLower(got), "trust") {
+		t.Errorf("resultsHeaderText(..., trustFilter=true) = %q, want it to name the active trust filter", got)
 	}
 }
 
@@ -248,6 +259,122 @@ func TestReverseSortNoopWhenUnsorted(t *testing.T) {
 	}
 }
 
+// --- T-062: trust sort and filter ----------------------------------------
+
+func sampleResultsForTrust(now time.Time) []indexer.Result {
+	return []indexer.Result{
+		{IndexerID: "alpha", ID: "vip", Title: "vip upload", Seeders: 1, Trust: indexer.TrustVIP, Published: now},
+		{IndexerID: "alpha", ID: "trusted", Title: "trusted upload", Seeders: 1, Trust: indexer.TrustTrusted, Published: now},
+		{IndexerID: "alpha", ID: "verified", Title: "verified upload", Seeders: 1, Trust: indexer.TrustVerified, Published: now},
+		{IndexerID: "alpha", ID: "none", Title: "none upload", Seeders: 1, Trust: indexer.TrustNone, Published: now},
+		{IndexerID: "alpha", ID: "unknown", Title: "unknown upload", Seeders: 1, Trust: indexer.TrustUnknown, Published: now},
+	}
+}
+
+// TestTrustSortOrdersByRealTrustAndPinsUnknownLast is T-062's acceptance:
+// "Sortable by trust" (in real indexer.Trust order, not badge text — VIP,
+// Trusted, and Verified all render distinct badges but None and Unknown
+// both render blank) and "TrustUnknown sorts last", checked in both
+// directions since a user pressing "S" must never see Unknown jump to the
+// top.
+func TestTrustSortOrdersByRealTrustAndPinsUnknownLast(t *testing.T) {
+	now := time.Now()
+
+	m2 := newResultsModel().setResults(sampleResultsForTrust(now), indexer.ModeSearch, now)
+	m2.table = m2.table.SortBy(colTrust) // ascending
+
+	rows := m2.table.Rows()
+	if rows[len(rows)-1].ID != "alpha|unknown" {
+		t.Fatalf("ascending: last row = %+v, want TrustUnknown last", rows[len(rows)-1])
+	}
+
+	if rows[0].ID != "alpha|none" {
+		t.Fatalf("ascending: first row = %+v, want the lowest known trust (None) first", rows[0])
+	}
+
+	m2.table = m2.table.SortBy(colTrust) // toggle to descending
+	rows = m2.table.Rows()
+
+	if rows[len(rows)-1].ID != "alpha|unknown" {
+		t.Fatalf("descending: last row = %+v, want TrustUnknown still last", rows[len(rows)-1])
+	}
+
+	if rows[0].ID != "alpha|vip" {
+		t.Fatalf("descending: first row = %+v, want the highest known trust (VIP) first", rows[0])
+	}
+}
+
+// TestApplyTrustFilterRestrictsToTrustedAndAbove is T-062's acceptance: "a
+// filter toggle restricts to TrustTrusted and above".
+func TestApplyTrustFilterRestrictsToTrustedAndAbove(t *testing.T) {
+	now := time.Now()
+	m := newResultsModel().setResults(sampleResultsForTrust(now), indexer.ModeSearch, now)
+
+	m = m.toggleTrustFilter()
+
+	got := make(map[string]bool)
+	for _, r := range m.table.Rows() {
+		got[r.ID] = true
+	}
+
+	for _, want := range []string{"alpha|vip", "alpha|trusted"} {
+		if !got[want] {
+			t.Errorf("trust filter on: row %q missing, want it kept (Trusted or above)", want)
+		}
+	}
+
+	for _, unwanted := range []string{"alpha|verified", "alpha|none", "alpha|unknown"} {
+		if got[unwanted] {
+			t.Errorf("trust filter on: row %q present, want it excluded (below Trusted)", unwanted)
+		}
+	}
+
+	if len(m.table.Rows()) != 2 {
+		t.Fatalf("trust filter on: %d rows, want 2", len(m.table.Rows()))
+	}
+}
+
+// TestToggleTrustFilterRestoresAllRows confirms pressing the toggle a
+// second time brings back every row the filter had hidden.
+func TestToggleTrustFilterRestoresAllRows(t *testing.T) {
+	now := time.Now()
+	m := newResultsModel().setResults(sampleResultsForTrust(now), indexer.ModeSearch, now)
+
+	before := len(m.table.Rows())
+
+	m = m.toggleTrustFilter()
+	if len(m.table.Rows()) == before {
+		t.Fatalf("filter on: row count unchanged at %d, want fewer than %d", len(m.table.Rows()), before)
+	}
+
+	m = m.toggleTrustFilter()
+	if len(m.table.Rows()) != before {
+		t.Fatalf("filter off again: row count = %d, want back to %d", len(m.table.Rows()), before)
+	}
+}
+
+// TestTrustFilterPersistsAcrossNewResults confirms a filter left on
+// carries over to the next completed search, the same way the sort column
+// does, rather than silently resetting.
+func TestTrustFilterPersistsAcrossNewResults(t *testing.T) {
+	now := time.Now()
+	m := newResultsModel().setResults(sampleResultsForTrust(now), indexer.ModeSearch, now)
+	m = m.toggleTrustFilter()
+
+	if len(m.table.Rows()) != 2 {
+		t.Fatalf("setup: expected 2 rows after filtering, got %d", len(m.table.Rows()))
+	}
+
+	m = m.setResults(sampleResultsForTrust(now), indexer.ModeSearch, now)
+	if !m.trustFilter {
+		t.Fatal("trustFilter should still be on after a new result set")
+	}
+
+	if len(m.table.Rows()) != 2 {
+		t.Fatalf("filter did not re-apply to the new result set: %d rows, want 2", len(m.table.Rows()))
+	}
+}
+
 // --- teatest integration ------------------------------------------------
 
 // dispatchNonEmptySearch types text into the query field and submits it —
@@ -323,6 +450,91 @@ func TestResultsScreenSortCyclingChangesSortIndicator(t *testing.T) {
 
 	tm.Send(keyRune("S")) // reverse the current column (Age)
 	waitForOutput(t, tm, "Age v")
+}
+
+// TestResultsScreenTrustFilterTogglesVisibleRows is T-062's teatest
+// coverage: "t" restricts the table to TrustTrusted and above, the header
+// names the active filter, and a second "t" restores every row — driven
+// through the real running program (keymap -> root.go's handleKey ->
+// resultsModel), not resultsModel directly.
+func TestResultsScreenTrustFilterTogglesVisibleRows(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	searcher.outcome = stubOutcome{results: []indexer.Result{
+		{IndexerID: "alpha", ID: "1", Title: "vip-upload.iso", Seeders: 5, Trust: indexer.TrustVIP},
+		{IndexerID: "alpha", ID: "2", Title: "plain-upload.iso", Seeders: 50},
+	}}
+
+	tm, _ := newSearchTestModel(t, searcher, nil)
+	waitForOutput(t, tm, "Query:")
+
+	dispatchNonEmptySearch(tm, "x")
+	waitForAllOutput(t, tm, "vip-upload", "plain-upload")
+
+	// Flush the backlog so the post-toggle read below reports only what
+	// the filtered render actually contains, not a stale frame from
+	// before "t" was pressed still sitting in the pipe — the same pattern
+	// search_test.go's TestInFlightSpinnerAndEscCancels uses to check a
+	// disappearance.
+	if _, err := io.ReadAll(tm.Output()); err != nil {
+		t.Fatalf("io.ReadAll (pre-toggle flush): %v", err)
+	}
+
+	tm.Send(keyRune("t"))
+	waitForAllOutput(t, tm, "vip-upload", "trust filter")
+
+	time.Sleep(150 * time.Millisecond)
+
+	after, err := io.ReadAll(tm.Output())
+	if err != nil {
+		t.Fatalf("io.ReadAll (post-toggle): %v", err)
+	}
+
+	if strings.Contains(string(after), "plain-upload") {
+		t.Fatalf("filtered render still shows plain-upload.iso, want it excluded (below Trusted):\n%s", after)
+	}
+
+	tm.Send(keyRune("t"))
+	waitForAllOutput(t, tm, "vip-upload", "plain-upload")
+}
+
+// TestResultsScreenTrustFilterEmptyStateNamesTheFilter confirms that when
+// the trust filter excludes every result, the screen shows a distinct
+// message naming the filter — never the "no results, sources queried"
+// empty state T-061 already owns, which would wrongly suggest the search
+// itself returned nothing.
+func TestResultsScreenTrustFilterEmptyStateNamesTheFilter(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	searcher.outcome = stubOutcome{results: []indexer.Result{
+		{IndexerID: "alpha", ID: "1", Title: "plain-upload.iso", Seeders: 5},
+	}}
+
+	tm, _ := newSearchTestModel(t, searcher, nil)
+	waitForOutput(t, tm, "Query:")
+
+	dispatchNonEmptySearch(tm, "x")
+	waitForOutput(t, tm, "plain-upload")
+
+	if _, err := io.ReadAll(tm.Output()); err != nil {
+		t.Fatalf("io.ReadAll (pre-toggle flush): %v", err)
+	}
+
+	tm.Send(keyRune("t"))
+	waitForOutput(t, tm, "Press t to clear the filter")
+
+	time.Sleep(150 * time.Millisecond)
+
+	after, err := io.ReadAll(tm.Output())
+	if err != nil {
+		t.Fatalf("io.ReadAll (post-toggle): %v", err)
+	}
+
+	if strings.Contains(string(after), "plain-upload") {
+		t.Fatalf("filtered-empty render still shows plain-upload.iso:\n%s", after)
+	}
+
+	if strings.Contains(string(after), "Sources queried") {
+		t.Fatalf("filtered-empty render used the T-061 zero-results empty state instead of naming the filter:\n%s", after)
+	}
 }
 
 // TestResultsScreenPartialFailureShowsResultsAndStatusBar is T-061's

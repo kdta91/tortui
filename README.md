@@ -283,6 +283,7 @@ commit it anywhere.
 | `enter` | Add torrent (results) · open details (downloads) |
 | `d` | Details |
 | `s` / `S` | Cycle sort column / reverse |
+| `t` | Toggle trust filter — restrict results to Trusted and above |
 | `o` | Open downloaded file |
 | `f` | Open containing folder |
 | `u` | Open source page in browser |

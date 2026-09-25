@@ -449,6 +449,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ActionSortReverse:
 		m.results = m.results.reverseSort()
 		return m, nil
+	case ActionToggleTrustFilter:
+		m.results = m.results.toggleTrustFilter()
+		return m, nil
 	case ActionFocusSearch:
 		m.screen = ScreenSearch
 		m.search.cursor = 0

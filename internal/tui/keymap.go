@@ -138,14 +138,18 @@ const (
 	ActionDetails       Action = "details"
 	ActionSortCycle     Action = "sort-cycle"
 	ActionSortReverse   Action = "sort-reverse"
-	ActionOpenFile      Action = "open-file"
-	ActionOpenFolder    Action = "open-folder"
-	ActionOpenSource    Action = "open-source"
-	ActionPauseResume   Action = "pause-resume"
-	ActionRemove        Action = "remove"
-	ActionConfirmYes    Action = "confirm-yes"
-	ActionConfirmNo     Action = "confirm-no"
-	ActionCancel        Action = "cancel"
+	// ActionToggleTrustFilter is the results screen's "t" key (T-062):
+	// restricts the results table to TrustTrusted and above, toggling off
+	// again on a second press.
+	ActionToggleTrustFilter Action = "toggle-trust-filter"
+	ActionOpenFile          Action = "open-file"
+	ActionOpenFolder        Action = "open-folder"
+	ActionOpenSource        Action = "open-source"
+	ActionPauseResume       Action = "pause-resume"
+	ActionRemove            Action = "remove"
+	ActionConfirmYes        Action = "confirm-yes"
+	ActionConfirmNo         Action = "confirm-no"
+	ActionCancel            Action = "cancel"
 
 	// ActionToggleErrorDetail opens the status bar's source-error detail
 	// panel (T-052) when at least one source has failed, and — bound to a
@@ -260,6 +264,10 @@ func GlobalBindings() []Binding {
 		},
 		{
 			Keys: []string{"S"}, Action: ActionSortReverse, Help: "reverse sort",
+			Contexts: []Context{screenContext(ScreenResults)},
+		},
+		{
+			Keys: []string{"t"}, Action: ActionToggleTrustFilter, Help: "toggle trust filter (Trusted and above)",
 			Contexts: []Context{screenContext(ScreenResults)},
 		},
 		{

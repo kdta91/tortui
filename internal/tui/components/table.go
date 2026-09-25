@@ -65,6 +65,27 @@ type Column struct {
 	// seeders, age) — a caller with that need supplies its own Less over
 	// whatever the cell text encodes.
 	Less func(a, b string) bool
+	// SortMissingLast reports, given the value applySort is about to
+	// compare (Row.SortKey when the row sets one for this column,
+	// otherwise the cell's own display text — see sortValueAt), whether
+	// it represents "no information available" and must sort after every
+	// other value in this column regardless of whether the column is
+	// currently sorted ascending or descending. A nil SortMissingLast
+	// treats every value as ordinary, deferring entirely to Less and the
+	// sort direction. This exists for a column like Trust, whose compact
+	// badge renders identically for "no information" and "the lowest
+	// known value" — pinning the former to the end keeps it from ever
+	// masquerading as the best or the worst known value just because the
+	// direction happened to flip.
+	SortMissingLast func(cell string) bool
+	// Accent, when true, always renders this column's cells in the
+	// theme's accent colour, independent of whether the row is selected
+	// — for a column that needs to stand out even on an unselected row,
+	// where the rest of the line renders in the plain foreground style.
+	// It is a no-op under NO_COLOR: Theme.Accent attaches no colour at
+	// ColorNone, so the cell still renders, just uncoloured like every
+	// other cell.
+	Accent bool
 }
 
 // Row is one line of a Table. ID is a stable identity independent of
@@ -74,6 +95,19 @@ type Column struct {
 type Row struct {
 	ID    string
 	Cells []string
+	// SortKey optionally overrides, per column position, what applySort
+	// compares instead of that column's own Cells text — positionally
+	// aligned with Cells, indexed the same way (by the row's original
+	// column order, before layout ever drops or reorders anything). A
+	// caller sets an index here when what's on screen can't be parsed
+	// back into a sort order by itself, the way sizeLess/ageLess parse
+	// their own formatted text: Trust's compact badge collapses two
+	// distinct values (TrustUnknown and TrustNone) to the same blank
+	// text, so nothing could recover which one a blank cell actually
+	// was. An empty string at an index, a nil SortKey, or an index past
+	// its end all fall back to that position's Cells value — SortKey
+	// never needs to be as long as Cells, and most callers never set it.
+	SortKey []string
 }
 
 // minFlexWidth is the floor a Flex column is allowed to shrink to before
@@ -140,9 +174,21 @@ func (t *Table) applySort() {
 	}
 
 	idx := t.sortCol
+	missingLast := col.SortMissingLast
 
 	sort.SliceStable(t.rows, func(i, j int) bool {
-		a, b := cellAt(t.rows[i], idx), cellAt(t.rows[j], idx)
+		a, b := sortValueAt(t.rows[i], idx), sortValueAt(t.rows[j], idx)
+
+		if missingLast != nil {
+			aMissing, bMissing := missingLast(a), missingLast(b)
+			if aMissing != bMissing {
+				// Exactly one side is "missing": it goes last regardless
+				// of t.sortAsc (T-062 acceptance — TrustUnknown sorts
+				// last whichever way the column is currently sorted).
+				return bMissing
+			}
+		}
+
 		if t.sortAsc {
 			return less(a, b)
 		}
@@ -157,6 +203,18 @@ func cellAt(r Row, idx int) string {
 	}
 
 	return r.Cells[idx]
+}
+
+// sortValueAt returns what applySort actually compares at idx: r.SortKey's
+// entry when the row set a non-empty one there, otherwise r.Cells' — see
+// Row.SortKey's doc comment for why a caller would ever need the two to
+// differ.
+func sortValueAt(r Row, idx int) string {
+	if idx >= 0 && idx < len(r.SortKey) && r.SortKey[idx] != "" {
+		return r.SortKey[idx]
+	}
+
+	return cellAt(r, idx)
 }
 
 // ensureSelection keeps the current selection if its row still exists
@@ -442,18 +500,26 @@ func headerLine(cols []Column, widths []int, sortKey string, sortAsc bool) strin
 }
 
 func rowLine(r Row, cols []Column, widths []int, keyIndex map[string]int, selected bool, th theme.Theme) string {
+	rowStyle := th.Foreground
+	if selected {
+		rowStyle = th.Accent
+	}
+
 	cells := make([]string, len(cols))
 
 	for i, c := range cols {
-		cells[i] = alignCell(cellAt(r, keyIndex[c.Key]), widths[i], c.Align)
+		cell := alignCell(cellAt(r, keyIndex[c.Key]), widths[i], c.Align)
+		if c.Accent {
+			// Always accent-coloured, selected or not — see Column.Accent.
+			// When the row is already selected this renders identically
+			// to rowStyle, since rowStyle is th.Accent in that case too.
+			cells[i] = th.Accent.Render(cell)
+		} else {
+			cells[i] = rowStyle.Render(cell)
+		}
 	}
 
-	line := strings.Join(cells, " ")
-	if selected {
-		return th.Accent.Render(line)
-	}
-
-	return th.Foreground.Render(line)
+	return strings.Join(cells, rowStyle.Render(" "))
 }
 
 func alignCell(text string, width int, align Align) string {
