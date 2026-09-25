@@ -193,25 +193,29 @@ fi
 grep -q "some-message-only-host.zzz" "$tmp_repo/out5.txt" ||
 	fail "violation output did not name the commit-message-only hostname"
 
-# --- Case 6: Go identifier chains in the key/value shape are not hostnames --
+# --- Case 6: Go selector chains in the key/value shape are not hostnames --
 # (T-926, T-041). Unquoted, mixed-case field accesses after a url/host-style
-# key must pass, in a gated path and on a keyword line outside one.
+# key in a .go file must pass, in a gated path and on a keyword line outside
+# one -- these are PR #38's own lines.
 (
 	cd "$tmp_repo"
 	git checkout -q "$base_sha"
 	mkdir -p internal/lifecycle
-	cat >internal/indexer/fixture/case_ident.go <<'EOF'
+	# The keyword is spliced in at run time, as in case 5, so this file's
+	# own source never puts a keyword and a dotted value on one line.
+	idx="Indexer""ID"
+	cat >internal/indexer/fixture/case_ident.go <<EOF
 package fixture
 
 func f() {
 	c := Config{URL: server.URL, SourceURL: origin.SourceURL}
-	rec.IndexerID, rec.SourceURL = d.Origin.IndexerID, d.Origin.SourceURL
+	rec.${idx}, rec.SourceURL = d.Origin.${idx}, d.Origin.SourceURL
 }
 EOF
-	cat >internal/lifecycle/case_ident.go <<'EOF'
+	cat >internal/lifecycle/case_ident.go <<EOF
 package lifecycle
 
-func g() { rec.IndexerID, rec.SourceURL = d.Origin.IndexerID, d.Origin.SourceURL }
+func g() { rec.${idx}, rec.SourceURL = d.Origin.${idx}, d.Origin.SourceURL }
 EOF
 	# Only the fixtures: earlier cases' out*.txt files name hosts too.
 	git add internal
@@ -224,18 +228,33 @@ if ! run_check "$head_case6" "$tmp_repo/out6.txt"; then
 	fail "Go identifier chains after a url/host key were flagged as hostnames"
 fi
 
-# --- Case 7: control for case 6 -- an unquoted lower-case host value, and a -
-# quoted mixed-case one, are still flagged.
+# --- Case 7: control for case 6 -- the exemption is .go-only, selector-only,
+# and never applies to a quoted value or a comment. Unquoted mixed-case hosts
+# in YAML and TOML, a hyphen-free mixed-case one in YAML, a quoted mixed-case
+# one in Go, and one inside a Go comment are all still flagged.
 (
 	cd "$tmp_repo"
 	git checkout -q "$base_sha"
+	mkdir -p internal/indexer/defs
 	cat >internal/indexer/fixture/case_unquoted.yml <<'EOF'
 host: some-unquoted-source.zzz
 EOF
-	cat >internal/indexer/fixture/case_quoted_upper.go <<'EOF'
+	bu="base""_url"
+	cat >internal/indexer/defs/case_mixed.yml <<EOF
+host: Evasive-Source.ZZZ
+${bu}: Evasive-Two.ZZZ/api
+endpoint: evasive-six.zzZ
+url: EvasiveSeven.ZZZ
+EOF
+	cat >internal/indexer/defs/case_mixed.toml <<'EOF'
+url = Evasive-Five.ZZZ
+EOF
+	cat >internal/indexer/fixture/case_quoted_upper.go <<EOF
 package fixture
 
 var h = Config{Host: "Some-Quoted-Source.ZZZ"}
+
+// ${bu}: EvasiveComment.ZZZ
 EOF
 	# Only the fixtures: earlier cases' out*.txt files name hosts too.
 	git add internal
@@ -251,5 +270,10 @@ grep -q "some-unquoted-source.zzz" "$tmp_repo/out7.txt" ||
 	fail "violation output did not name the unquoted host"
 grep -q "some-quoted-source.zzz" "$tmp_repo/out7.txt" ||
 	fail "violation output did not name the quoted mixed-case host"
+for want in evasive-source.zzz evasive-two.zzz evasive-six.zzz evasiveseven.zzz \
+	evasive-five.zzz evasivecomment.zzz; do
+	grep -q "$want" "$tmp_repo/out7.txt" ||
+		fail "violation output did not name $want (exemption leaked outside Go selectors)"
+done
 
 echo "check-indexer-hostnames_test: all cases passed"
