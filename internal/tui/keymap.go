@@ -4,16 +4,19 @@
 // §4) — never a concrete implementation — so it can be developed and tested
 // end-to-end against internal/engine/fake with no network and no swarm.
 //
-// Four of the five screens (results, details, downloads, settings) are
-// still placeholders here: this package only routes between them. Their
-// real content belongs to later tasks (T-061 results, T-063 details, T-071
-// downloads, T-080 settings), as does the shared modal/confirm component's
-// use on those screens. Search (T-060) is real: its query input, mode
-// selector, source multi-select, and category/min-seeders filters live in
-// search.go. The responsive table (T-053) is implemented in
-// internal/tui/components. The status bar (T-052) is also implemented in
-// internal/tui/components and wired in here as root.go's bottom line and
-// ContextErrorDetail modal.
+// Two of the five screens (downloads, settings) are still placeholders
+// here: this package only routes to them. Their real content belongs to
+// later tasks (T-071 downloads, T-080 settings), as does the shared
+// modal/confirm component's use on those screens. Search (T-060), results
+// (T-061), and details (T-063) are real: search.go owns the query input,
+// mode selector, source multi-select, and category/min-seeders filters;
+// results.go owns the sortable results table; details.go owns a single
+// result's full information, the `u` open-source-in-browser action, and the
+// basic add-to-engine path enter drives from there (T-070 builds resolve,
+// dedup, and destination selection on top of it). The responsive table
+// (T-053) is implemented in internal/tui/components. The status bar (T-052)
+// is also implemented in internal/tui/components and wired in here as
+// root.go's bottom line and ContextErrorDetail modal.
 package tui
 
 import (

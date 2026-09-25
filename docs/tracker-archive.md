@@ -3343,6 +3343,32 @@ updated. `make check`, `make race` (`internal/tui/...`), `make cover` (tui 93.3%
 
 ---
 
+### T-063 · Details screen
+```
+status: done
+depends: T-061
+tier: M
+```
+**Notes:** `details.go` owns `detailsModel` plus `d`/`enter`/`u`'s handlers; `root.go` wires them
+into the real keymap. File list reads a new well-known `indexer.ExtraKeyFiles` Extra convention
+(DEC-112) — no adapter sets it yet, so production always shows "not available from this source";
+both branches are unit-tested directly. `u` calls new `internal/platform.OpenURL`
+(`open`/`xdg-open`/`rundll32`, http(s)-only, swappable seam for tests). `enter` calls `engine.Add`
+with just Magnet/TorrentURL, switching to downloads on success — Resolve/dedup/Origin/destination
+are T-070's job. Results' `j`/`k` now move the table's own cursor instead of the unused generic
+`m.selection` (DEC-112) — needed so `d` has a real row to act on; two nav tests and one
+quit-confirm test updated for it. `make check`, `make race` (tui, platform, indexer),
+`make cover` (tui 93.4%), `make lint-cross` green.
+
+**Acceptance**
+- Full title, size, category, uploader, trust, published date, source URL, infohash.
+- File list when the indexer provides one, otherwise an explicit "not available from this
+  source" state.
+- `u` opens the source page in the system browser via `internal/platform`.
+- `enter` adds the torrent and switches to the downloads screen.
+
+---
+
 ## Blocked — Resolved
 
 
