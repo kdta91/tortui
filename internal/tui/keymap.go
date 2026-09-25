@@ -22,8 +22,9 @@
 // ContextErrorDetail modal.
 //
 // details.go also owns the add flow (T-070): Resolve, duplicate-infohash
-// detection, Origin persistence, and destination resolution, reachable from
-// either the details screen's or the results screen's own enter key.
+// detection, and Origin persistence, reachable from either the details
+// screen's or the results screen's own enter key; destination.go owns its
+// destination picker (T-074).
 package tui
 
 import (
@@ -194,6 +195,9 @@ const (
 	// ContextRemoveConfirm is the downloads screen's `x` dialog (T-072):
 	// remove keeping data, remove deleting data, or cancel.
 	ContextRemoveConfirm Context = "modal:remove-confirm"
+	// ContextDestination is the add flow's destination picker (T-074,
+	// destination.go).
+	ContextDestination Context = "modal:destination"
 )
 
 // screenContext names the Context a given Screen's keymap lookups use.
@@ -371,6 +375,20 @@ func removeConfirmBindings() []Binding {
 	}
 }
 
+// destinationBindings are the bindings live while the destination picker
+// (ContextDestination) is open. j/k only move while the cursor is on a
+// fixed row; on the path field they type (destination.go).
+func destinationBindings() []Binding {
+	ctx := []Context{ContextDestination}
+
+	return []Binding{
+		{Keys: []string{"up", "k"}, Action: ActionMoveUp, Help: "previous", Contexts: ctx},
+		{Keys: []string{"down", "j"}, Action: ActionMoveDown, Help: "next", Contexts: ctx},
+		{Keys: []string{"enter"}, Action: ActionConfirmYes, Help: "add here", Contexts: ctx},
+		{Keys: []string{"esc"}, Action: ActionCancel, Help: "cancel", Contexts: ctx},
+	}
+}
+
 // AllBindings returns every binding tortui defines, across every context:
 // the global/screen keymap plus both modal overlays. This is what
 // TestKeymapNoConflicts checks and what the help overlay for a modal
@@ -381,6 +399,7 @@ func AllBindings() []Binding {
 	all = append(all, quitConfirmBindings()...)
 	all = append(all, errorDetailBindings()...)
 	all = append(all, removeConfirmBindings()...)
+	all = append(all, destinationBindings()...)
 
 	return all
 }

@@ -3484,6 +3484,46 @@ Linux reveals the parent dir. Demo placeholder moved to `SavePath/<name>`. See D
 
 ---
 
+### T-074 · Download destination selection
+```
+status: done
+depends: T-070, T-034, T-054
+tier: H
+```
+**Notes:** `destination.go`: `finishAdd` opens a modal picker (Default · Saved by recency · up to
+3 Recent · Path field); each candidate is validated in a `tea.Cmd` (exists/will-be-created,
+writable via a temp-file probe, free space ≥ size + `min_free_space`) and a failure blocks enter
+with the reason shown. A new folder is `MkdirAll`ed inside the add Cmd only after the create
+prompt is confirmed. Chosen dirs join the known roots: engine via new optional `engine.RootAdder`
+(anacrolix roots now read under `e.mu`), TUI roots via `usedDestinations`, persisted in
+`store.Destinations`/`TouchDestination` (own key, SetPrefs can't drop it); `lifecycle.Session.Resume`
+re-admits them before restoring. See DEC-117. Closes T-968. Wiring the new options in production
+is T-970.
+
+**Acceptance**
+- The add flow shows the destination and lets the user change it **before** the torrent starts.
+  Default is the configured download dir; the choice is per-torrent.
+- Destination picker offers: the default, a list of saved destinations, the most recently used,
+  and a free-text path field. Directory browsing is a plus, not a requirement — a validated
+  path field plus saved entries covers the real use case.
+- Path input expands `~`, expands environment variables, accepts Windows drive letters and UNC
+  paths, and normalises separators. Relative paths resolve against the default download dir,
+  never against the process working directory.
+- Live validation shows: exists or will-be-created, writable, and free space against the
+  torrent's size (T-034). A destination failing any check blocks the add with the reason
+  visible, rather than failing after the user walks away.
+- Directories are created on demand, with parents, only after the user confirms.
+- The chosen path is recorded in the store so the downloads screen, open-file, open-folder, and
+  remove-with-data all operate on the right root after a restart (T-041).
+- Saved destinations are managed in Settings (T-082) and offered in most-recent-first order.
+- **Every destination the user has used or saved joins the known-roots set** that path
+  containment is checked against (AGENT.md §6.12). Adding a destination is the only way that
+  set grows — it is never widened implicitly by a torrent's contents.
+- `teatest`: accept default, pick a saved destination, type a new path, type an invalid path,
+  type a path with no space, cancel out of the picker.
+
+---
+
 ## Blocked — Resolved
 
 

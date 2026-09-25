@@ -317,3 +317,98 @@ func TestOriginSurvivesRestart(t *testing.T) {
 		t.Fatalf("after restart List = %+v, want %s with origin %+v", list, id, origin)
 	}
 }
+
+// TestPerTorrentDestinationSurvivesRestart is T-074's restart criterion: a
+// torrent added to a destination outside the configured roots comes back in
+// the next session at that same destination, not errored as outside every
+// known root, because Resume re-registers the store's used destinations with
+// the engine before restoring (AGENT.md §6.12). A destination that was never
+// recorded stays refused.
+func TestPerTorrentDestinationSurvivesRestart(t *testing.T) {
+	dir, dbPath := t.TempDir(), filepath.Join(t.TempDir(), "tortui.db")
+	chosen, unrecorded := filepath.Join(t.TempDir(), "chosen"), filepath.Join(t.TempDir(), "unrecorded")
+	magnet := "magnet:?xt=urn:btih:1123456789abcdef0123456789abcdef01234567&dn=example-fixture"
+	stray := "magnet:?xt=urn:btih:2123456789abcdef0123456789abcdef01234567&dn=example-fixture"
+
+	newEngine := func() *anacrolix.Engine {
+		e, err := anacrolix.New(anacrolix.Options{
+			Config:  config.Config{DownloadDir: dir},
+			Logger:  quietLogger(),
+			Offline: true,
+		})
+		if err != nil {
+			t.Fatalf("anacrolix.New: %v", err)
+		}
+
+		t.Cleanup(func() { _ = e.Close() })
+
+		return e
+	}
+
+	st1, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+
+	e1 := newEngine()
+	s1 := NewSession(e1, st1, quietLogger())
+
+	if _, err := s1.Resume(context.Background()); err != nil {
+		t.Fatalf("Resume (empty): %v", err)
+	}
+
+	// The add flow: admit the chosen root, add, record the destination.
+	if err := e1.AddRoot(chosen); err != nil {
+		t.Fatalf("AddRoot: %v", err)
+	}
+
+	id, err := e1.Add(context.Background(), engine.AddSource{Magnet: magnet, SavePath: chosen})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	if err := st1.TouchDestination(chosen); err != nil {
+		t.Fatalf("TouchDestination: %v", err)
+	}
+
+	if err := s1.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if errs := Shutdown(ShutdownOptions{Engine: e1, Store: st1, Session: s1, Logger: quietLogger()}); len(errs) != 0 {
+		t.Fatalf("Shutdown: %v", errs)
+	}
+
+	st2 := openStore(t, dbPath)
+	e2 := newEngine()
+
+	// A record whose destination was never chosen through the add flow.
+	setRecords(t, st2, store.TorrentRecord{ID: "an-stray", Magnet: stray, SavePath: unrecorded, AddedAt: time.Now()})
+
+	if _, err := NewSession(e2, st2, quietLogger()).Resume(context.Background()); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	var found, strayFound bool
+
+	for _, s := range e2.List() {
+		switch s.SavePath {
+		case filepath.Clean(chosen):
+			found = true
+
+			if s.ID != id || s.State == engine.StateErrored {
+				t.Fatalf("restored torrent = %+v, want %s resumed at %s", s, id, chosen)
+			}
+		case filepath.Clean(unrecorded):
+			strayFound = true
+
+			if !errors.Is(s.Err, anacrolix.ErrOutsideRoots) {
+				t.Errorf("unrecorded destination restored with err %v, want ErrOutsideRoots", s.Err)
+			}
+		}
+	}
+
+	if !found || !strayFound {
+		t.Fatalf("after restart List = %+v, want torrents at %s and %s", e2.List(), chosen, unrecorded)
+	}
+}

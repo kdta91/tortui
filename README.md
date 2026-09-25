@@ -26,7 +26,9 @@ straight away. Runs on **macOS, Linux, and Windows**.
   and which source it came from. Sort on any column.
 - **Built-in torrent engine.** Add a magnet or `.torrent` and it downloads in-process.
 - **Pick where it goes.** Choose a destination per torrent when you add it — the default, a
-  saved location, or any path you type. Validated for space and writability before it starts.
+  saved or recently used location, or any path you type (`~` and environment variables expand;
+  a relative path lands under the default). Validated for space and writability before it
+  starts, and a new folder is created only once you confirm.
 - **Download management.** Progress, rates, peers, ETA, queue position. Open the file, reveal
   the folder, open the source page, pause, resume, or remove with or without the data.
 - **Resumes where it left off.** Downloads come back after a restart without re-fetching pieces

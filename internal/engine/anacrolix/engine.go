@@ -550,6 +550,45 @@ func destinationRoots(downloadDir string, saved []string) []string {
 	return roots
 }
 
+// Compile-time proof that Engine can grow its known destination roots.
+var _ engine.RootAdder = (*Engine)(nil)
+
+// AddRoot implements engine.RootAdder: dir joins the destination roots Add,
+// Restore, and Remove's delete check resolve against (AGENT.md §6.12). The
+// TUI calls it only for a destination the user chose (T-074).
+func (e *Engine) AddRoot(dir string) error {
+	abs, err := engine.CheckDestinationRoot(dir)
+	if err != nil {
+		return fmt.Errorf("anacrolix: add root: %w", err)
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.closed {
+		return ErrClosed
+	}
+
+	for _, r := range e.roots {
+		if r == abs {
+			return nil
+		}
+	}
+
+	e.roots = append(e.roots, abs)
+
+	return nil
+}
+
+// knownRoots returns a copy of the current destination roots, taken under
+// e.mu because AddRoot may grow the set concurrently.
+func (e *Engine) knownRoots() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return append([]string(nil), e.roots...)
+}
+
 // Add accepts src and starts tracking it, returning the new torrent's ID.
 //
 // It returns as soon as the source is accepted. Metadata fetch is always
@@ -568,7 +607,7 @@ func (e *Engine) Add(ctx context.Context, src engine.AddSource) (string, error) 
 		return "", err
 	}
 
-	dest, err := resolveDestination(src.SavePath, e.downloadDir, e.roots)
+	dest, err := resolveDestination(src.SavePath, e.downloadDir, e.knownRoots())
 	if err != nil {
 		return "", err
 	}

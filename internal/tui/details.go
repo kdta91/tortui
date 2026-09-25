@@ -11,7 +11,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -99,9 +98,15 @@ type addResultMsg struct {
 // promptly" per its own doc contract (metadata fetch and the download
 // happen asynchronously), so this resolves quickly even though it still
 // goes through the same async-Cmd path as every other engine call in this
-// package.
-func addTorrentCmd(eng engine.Engine, src engine.AddSource, name, indexerID, sourceURL string) tea.Cmd {
+// package. Before the add it prepares src.SavePath (prepareDestination,
+// destination.go): creating it when create is true — only ever after the
+// user confirmed — and admitting it to the engine's known roots.
+func addTorrentCmd(eng engine.Engine, src engine.AddSource, create bool, name, indexerID, sourceURL string) tea.Cmd {
 	return func() tea.Msg {
+		if err := prepareDestination(eng, src.SavePath, create); err != nil {
+			return addResultMsg{name: name, err: err}
+		}
+
 		id, err := eng.Add(context.Background(), src)
 		return addResultMsg{
 			id: id, name: name, err: err,
@@ -219,10 +224,9 @@ func (m Model) handleResolveResult(msg resolveResultMsg) (tea.Model, tea.Cmd) {
 
 // finishAdd validates r (Resolve may have left it without a usable link),
 // re-checks for a duplicate infohash (Resolve is exactly the step that most
-// often discovers one), and dispatches the actual engine.Add with the
-// resolved destination (T-070: "the resolved absolute path goes into
-// AddSource.SavePath" — T-074 replaces resolveSavePath's default-only
-// answer with an interactive picker on top of this same flow).
+// often discovers one), and opens the destination picker (T-074,
+// destination.go), whose confirm dispatches the actual engine.Add with the
+// chosen absolute path in AddSource.SavePath.
 func (m Model) finishAdd(r indexer.Result) (tea.Model, tea.Cmd) {
 	if id, ok := m.duplicateTorrentID(r.InfoHash); ok {
 		return m.selectExistingDownload(id, r.Title)
@@ -235,27 +239,7 @@ func (m Model) finishAdd(r indexer.Result) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	src := engine.AddSource{
-		Magnet:     r.Magnet,
-		TorrentURL: r.TorrentURL,
-		SavePath:   m.resolveSavePath(),
-	}
-
-	return m, addTorrentCmd(m.eng, src, r.Title, r.IndexerID, r.SourceURL)
-}
-
-// resolveSavePath is T-070's own answer to "where does this torrent's data
-// go": the configured default download directory, cleaned, or "" (the
-// engine's own configured-default fallback, per AddSource.SavePath's doc)
-// when none was wired in via WithDownloadDir. T-074 replaces this with a
-// per-torrent destination the user actually chose, without this flow's
-// callers (startAdd/finishAdd) needing to change.
-func (m Model) resolveSavePath() string {
-	if strings.TrimSpace(m.downloadDir) == "" {
-		return ""
-	}
-
-	return filepath.Clean(m.downloadDir)
+	return m.openDestinationPicker(r)
 }
 
 // lookupIndexer finds the indexer.Indexer that produced a Result, by the
@@ -363,12 +347,21 @@ func (m Model) handleAddResult(msg addResultMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	var destErrCmd tea.Cmd
+
+	updated, err := m.recordDestination(msg.savePath)
+	m = updated
+
+	if err != nil {
+		m.statusBar, destErrCmd = m.statusBar.Push(fmt.Sprintf("couldn't save destination: %v", err))
+	}
+
 	m.screen = ScreenDownloads
 
 	var cmd tea.Cmd
 	m.statusBar, cmd = m.statusBar.Push("added " + msg.name)
 
-	return m, tea.Batch(persistErrCmd, cmd)
+	return m, tea.Batch(persistErrCmd, destErrCmd, cmd)
 }
 
 // openSourceCmd returns the tea.Cmd that calls open(rawURL) and reports any

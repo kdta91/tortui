@@ -436,7 +436,7 @@ func TestActionSelectOnDetailsScreenAddsTorrentAndSwitchesToDownloads(t *testing
 	})
 
 	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m, cmd = acceptDestination(t, updated, cmd)
 
 	if cmd == nil {
 		t.Fatal("expected a cmd dispatching the add")
@@ -485,7 +485,7 @@ func TestHandleAddResultReportsEngineFailureWithoutSwitchingScreen(t *testing.T)
 	m.details = m.details.withResult(indexer.Result{Title: "closed.iso", Magnet: "magnet:?xt=urn:btih:aaaa"})
 
 	updated, cmd := m.handleAddFromDetails()
-	m = updated.(Model)
+	m, cmd = acceptDestination(t, updated, cmd)
 
 	if cmd == nil {
 		t.Fatal("expected a dispatch cmd")
@@ -677,7 +677,7 @@ func TestStartAddResolvesWhenMagnetIsEmpty(t *testing.T) {
 	}
 
 	updated, addCmd := m.Update(resolveMsg)
-	m = updated.(Model)
+	m, addCmd = acceptDestination(t, updated, addCmd)
 
 	if addCmd == nil {
 		t.Fatal("expected a cmd dispatching the add after a successful resolve")
@@ -804,7 +804,7 @@ func TestStartAddEmptyInfoHashNeverMatchesADuplicate(t *testing.T) {
 	m.details = m.details.withResult(indexer.Result{Title: "fresh.iso", Magnet: "magnet:?xt=urn:btih:ffff0000"})
 
 	updated, cmd := m.handleAddFromDetails()
-	m = updated.(Model)
+	_, cmd = acceptDestination(t, updated, cmd)
 
 	addMsg, ok := cmd().(addResultMsg)
 	if !ok {
@@ -897,7 +897,7 @@ func TestHandleAddResultPersistsOriginViaTheStore(t *testing.T) {
 	})
 
 	updated, cmd := m.handleAddFromDetails()
-	m = updated.(Model)
+	m, cmd = acceptDestination(t, updated, cmd)
 
 	addMsg, ok := cmd().(addResultMsg)
 	if !ok {
@@ -939,7 +939,7 @@ func TestHandleAddResultReportsAPersistFailureWithoutUndoingTheAdd(t *testing.T)
 	m.details = m.details.withResult(indexer.Result{Title: "still-added.iso", Magnet: "magnet:?xt=urn:btih:bbbb2222"})
 
 	updated, cmd := m.handleAddFromDetails()
-	m = updated.(Model)
+	m, cmd = acceptDestination(t, updated, cmd)
 
 	addMsg, ok := cmd().(addResultMsg)
 	if !ok {
@@ -975,7 +975,7 @@ func TestFinishAddResolvesTheConfiguredDownloadDirIntoSavePath(t *testing.T) {
 	m.details = m.details.withResult(indexer.Result{Title: "dest.iso", Magnet: "magnet:?xt=urn:btih:cccc3333"})
 
 	updated, cmd := m.handleAddFromDetails()
-	m = updated.(Model)
+	_, cmd = acceptDestination(t, updated, cmd)
 
 	addMsg, ok := cmd().(addResultMsg)
 	if !ok {
@@ -994,29 +994,39 @@ func TestFinishAddResolvesTheConfiguredDownloadDirIntoSavePath(t *testing.T) {
 	}
 }
 
-// TestFinishAddLeavesSavePathEmptyWithNoDownloadDirConfigured confirms the
-// no-WithDownloadDir case falls back to engine.AddSource.SavePath's own
-// documented "empty means use the configured default" rather than this
-// flow inventing a path of its own.
-func TestFinishAddLeavesSavePathEmptyWithNoDownloadDirConfigured(t *testing.T) {
+// TestFinishAddWithNoDownloadDirOffersOnlyTheTypedPath confirms that with
+// no configured default the picker has no Default row and a relative typed
+// path is refused (it would otherwise resolve against the process working
+// directory), rather than the add silently landing somewhere unchosen.
+func TestFinishAddWithNoDownloadDirOffersOnlyTheTypedPath(t *testing.T) {
 	eng := fake.New()
 	t.Cleanup(func() { _ = eng.Close() })
 
 	m := New(eng, testTheme())
 	m.details = m.details.withResult(indexer.Result{Title: "no-dir.iso", Magnet: "magnet:?xt=urn:btih:dddd4444"})
 
-	_, cmd := m.handleAddFromDetails()
+	updated, _ := m.handleAddFromDetails()
+	m = updated.(Model)
 
-	addMsg, ok := cmd().(addResultMsg)
-	if !ok {
-		t.Fatalf("cmd() did not produce addResultMsg")
-	}
-	if addMsg.err != nil {
-		t.Fatalf("addResultMsg.err = %v, want nil", addMsg.err)
+	if !m.dest.open || len(m.dest.entries) != 0 || !m.dest.onField() {
+		t.Fatalf("picker = %+v, want open on the path field with no fixed rows", m.dest)
 	}
 
-	if got := eng.List()[0].SavePath; got != "" {
-		t.Errorf("SavePath = %q, want empty (engine's own default)", got)
+	m = typeDestination(t, m, "relative/dir")
+
+	if _, err := m.destCandidate(); err == nil {
+		t.Fatal("relative path with no default download dir accepted, want refused")
+	}
+
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	if !m.dest.open || len(eng.List()) != 0 {
+		t.Fatalf("enter on a refused path closed the picker or added (%d torrents)", len(eng.List()))
+	}
+
+	if cmd == nil || !strings.Contains(m.statusBar.Message(), "can't use this destination") {
+		t.Errorf("statusBar.Message() = %q, want the refusal", m.statusBar.Message())
 	}
 }
 
@@ -1059,7 +1069,7 @@ func TestActionSelectOnResultsScreenAddsTheSelectedResult(t *testing.T) {
 	}
 
 	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
+	m, cmd = acceptDestination(t, updated, cmd)
 
 	if cmd == nil {
 		t.Fatal("expected a cmd dispatching the add")
@@ -1227,7 +1237,7 @@ func TestDetailsScreenEndToEndSelectAndAdd(t *testing.T) {
 	eng := fake.New()
 	t.Cleanup(func() { _ = eng.Close() })
 
-	m := New(eng, testTheme(), WithSearcher(reg))
+	m := New(eng, testTheme(), WithSearcher(reg), WithDownloadDir(t.TempDir()))
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	t.Cleanup(func() { _ = tm.Quit() })
 
@@ -1239,7 +1249,10 @@ func TestDetailsScreenEndToEndSelectAndAdd(t *testing.T) {
 	tm.Send(keyRune("d"))
 	waitForAllOutput(t, tm, "details-flow.iso", "not yet resolved")
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // opens the destination picker
+	waitForOutput(t, tm, "writable")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // accept the default
 	waitForOutput(t, tm, "added details-flow.iso")
 
 	deadline := time.Now().Add(2 * time.Second)

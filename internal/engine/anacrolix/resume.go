@@ -154,7 +154,7 @@ func (e *Engine) Restore(ctx context.Context, d engine.ResumeData) (string, erro
 		metainfo:   bytes.Clone(d.Metainfo),
 	}
 
-	dest, err := resolveDestination(d.SavePath, e.downloadDir, e.roots)
+	dest, err := resolveDestination(d.SavePath, e.downloadDir, e.knownRoots())
 	if err != nil {
 		return e.trackFailed(prov, d.SavePath, d.Name, err)
 	}
