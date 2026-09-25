@@ -67,20 +67,18 @@
       "Bash(git push * +*)",
       "Bash(git push +*)",
       "Bash(git push * --tags*)",
-      "Bash(git push * refs/tags/*)",
-      "Bash(git push * v[0-9]*)",
       "Bash(git push * --delete main*)",
       "Bash(git push * :main*)",
       "Bash(git push * --mirror*)",
-      "Bash(gh api -X *)",
-      "Bash(gh api * -X *)",
-      "Bash(gh api --method *)",
-      "Bash(gh api * --method *)",
-      "Bash(gh api * -f *)",
-      "Bash(gh api * -F *)",
-      "Bash(gh api * --field *)",
-      "Bash(gh api * --raw-field *)",
-      "Bash(gh api * --input *)"
+      "Bash(git push * v*)",
+      "Bash(git push *refs/tags/*)",
+      "Bash(gh api *-X*)",
+      "Bash(gh api *--method*)",
+      "Bash(gh api *-f*)",
+      "Bash(gh api *-F*)",
+      "Bash(gh api *--field*)",
+      "Bash(gh api *--raw-field*)",
+      "Bash(gh api *--input*)"
     ]
   }
 }
