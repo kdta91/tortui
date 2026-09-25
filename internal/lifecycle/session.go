@@ -215,7 +215,10 @@ func resumeDataFrom(rec store.TorrentRecord) engine.ResumeData {
 		TorrentURL: rec.TorrentURL,
 		Metainfo:   rec.Metainfo,
 		SavePath:   rec.SavePath,
-		Origin:     engine.Origin{IndexerID: rec.IndexerID, SourceURL: rec.SourceURL},
+		Origin: engine.Origin{
+			IndexerID: rec.IndexerID,
+			SourceURL: rec.SourceURL,
+		},
 	}
 }
 
@@ -229,7 +232,8 @@ func mergeRecord(rec store.TorrentRecord, d engine.ResumeData, now time.Time) st
 	}
 
 	if d.Origin != (engine.Origin{}) {
-		rec.IndexerID, rec.SourceURL = d.Origin.IndexerID, d.Origin.SourceURL
+		rec.IndexerID = d.Origin.IndexerID
+		rec.SourceURL = d.Origin.SourceURL
 	}
 
 	rec.ID = d.ID

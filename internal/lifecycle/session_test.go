@@ -290,7 +290,11 @@ func TestOriginSurvivesRestart(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	setRecords(t, st1, store.TorrentRecord{ID: id, IndexerID: origin.IndexerID, SourceURL: origin.SourceURL})
+	setRecords(t, st1, store.TorrentRecord{
+		ID:        id,
+		IndexerID: origin.IndexerID,
+		SourceURL: origin.SourceURL,
+	})
 
 	if err := s1.Save(); err != nil {
 		t.Fatalf("Save: %v", err)

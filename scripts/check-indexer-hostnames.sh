@@ -200,7 +200,7 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		if (o1 == 192 && o2 == 168) return 1
 		return 0
 	}
-	function scan(text, file, orig,    rest, m, host, om, off, quoted, start, after) {
+	function scan(text, file, orig,    rest, m, host) {
 		# Authority after the scheme: may carry userinfo (user:pass@) and a
 		# port, so match everything up to the first path/space/quote/angle
 		# separator and let check_host() pick the hostname apart from that.
@@ -211,33 +211,12 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 			check_host(m, file, orig)
 			rest = substr(rest, RSTART + RLENGTH)
 		}
-		# The key/value shape. One narrow exemption: in a .go file, outside
-		# a // comment, an UNQUOTED value that is a mixed-case Go selector
-		# chain -- "URL: server.URL", "rec.SourceURL = d.Origin.SourceURL"
-		# -- is code, not a hostname. A Go string holding a hostname is
-		# quoted and stays checked; a selector admits no hyphen, and the
-		# next character must end it, so no hostname can pass as one. YAML,
-		# TOML, Markdown and every other file get no exemption at all.
-		# text is the lowercased copy of orig with identical offsets, so
-		# off tracks the same position in both (T-926, T-041).
 		rest = text
-		off = 0
 		while (match(rest, /(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z][A-Za-z]+/)) {
 			m = substr(rest, RSTART, RLENGTH)
-			start = off + RSTART
-			om = substr(orig, start, RLENGTH)
-			after = substr(orig, start + RLENGTH, 1)
-			off += RSTART + RLENGTH - 1
-			rest = substr(rest, RSTART + RLENGTH)
-			quoted = (m ~ /[:=][[:space:]]*"/)
 			sub(/^(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?/, "", m)
-			sub(/^[A-Za-z_]*[[:space:]]*[:=][[:space:]]*"?/, "", om)
-			if (file ~ /\.go$/ && !quoted \
-				&& om ~ /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$/ \
-				&& om ~ /[A-Z]/ \
-				&& after !~ /[A-Za-z0-9_.-]/ \
-				&& index(substr(orig, 1, start), "//") == 0) continue
 			check_host(m, file, orig)
+			rest = substr(rest, RSTART + RLENGTH)
 		}
 	}
 	function check_host(host, file, text,   colon) {

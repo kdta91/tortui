@@ -568,11 +568,7 @@ when it reaches it and does not start backlog items on its own.
   this tree. Requiring the matched value to look like a hostname — at least one dot-separated
   label followed by a plausible TLD, and not a known Go identifier shape — would keep the check
   meaningful without the false positives. Found while building T-020.
-  **Partly closed in T-041:** in a `.go` file only, outside a `//` comment, an unquoted value that
-  is a mixed-case Go selector chain (`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$`, no
-  hyphen, e.g. `server.URL`, `d.Origin.IndexerID`) is skipped (cases 6-7 in the script's test).
-  Still flagged: all-lower-case selectors, Go prose comments, and every non-Go file (YAML, TOML,
-  Markdown), where no exemption applies.
+  T-041 hit it on `internal/lifecycle` field copies and worked around it in code (split lines).
 - `T-927` `internal/logging`'s free-text masker misses `CookieHeader:` in a `%+v` struct dump. The
   regex requires the sensitive word immediately followed by `[:=]`, so `APIKey:` is caught but
   `CookieHeader:` is not — the `Header` sits between. Only bites when a caller formats a struct into
