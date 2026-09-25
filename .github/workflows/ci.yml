@@ -14,9 +14,10 @@ on:
   pull_request:
     branches: ["**"]
 
-# A newer push to the same PR cancels the superseded run; runs on main are never cancelled.
+# A newer push to the same PR cancels the superseded run. Main runs are grouped per commit, so
+# they are never cancelled or replaced while pending.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

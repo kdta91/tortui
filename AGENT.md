@@ -434,8 +434,8 @@ A task is done only when **all** hold:
 - [ ] `config.example.toml` and `README.md` updated if user-facing behaviour changed.
 - [ ] The task's own PR carries the tracker update, exactly as the `TASK_TRACKER.md` Protocol
       lists it: block flipped to `done` with notes (≤ 10 lines), block moved verbatim to
-      `docs/tracker-archive.md`, any `DEC-` entry (≤ 8 lines) in `docs/decisions.md` plus its
-      index row, one `docs/session-log.md` line. Long evidence belongs in the PR body.
+      `docs/tracker-archive.md`, a `DEC-` entry (≤ 8 lines) in `docs/decisions.md` plus its
+      index row for any choice a future reader would question, one `docs/session-log.md` line. Long evidence belongs in the PR body.
 
 ---
 
@@ -474,6 +474,11 @@ changing their labels; squash-merging a PR once a separate reviewer returned PAS
 current head SHA and every CI check passed; deleting merged task branches; pulling `main`;
 pushing a Blocked entry to `main`; adding `T-9NN` backlog entries in a task's PR. Anything on
 the owner-only list in §12 is **not** covered.
+
+`.claude/settings.json` is the matching allowlist. It deliberately excludes tools that are a shell
+in disguise (`awk`, `find`, `sed`, `xargs`, `env`) and denies tag pushes, force-pushes, releases,
+`gh auth`, repo settings, and any `gh api` write. `go`, `make`, and `git` necessarily run repository
+code and hooks; that is accepted, and the written rules above are the control for it.
 
 ---
 
@@ -556,7 +561,8 @@ another task:
 - Total work on one task exceeds ~2 hours of wall clock without a green checkpoint.
 
 When blocked: leave the branch pushed, mark the task `blocked`, state precisely what input would
-unblock it, and move to the next **independent** task only if one exists. Otherwise stop cleanly.
+unblock it, push that Blocked entry to `main`, and **stop the run** (§11 step 8). The owner decides
+whether to resume with another task.
 
 ### Owner-only actions — never taken autonomously
 

@@ -51,11 +51,21 @@ out=$("$NEXT" "$tmp_dir/two.md")
 printf '%s\n' "$out" | grep -qx 'next: none eligible' || fail "case 2 next, got: $out"
 printf '%s\n' "$out" | grep -qx 'blocked: T-010 · Store' || fail "case 2 blocked listing, got: $out"
 
-# Case 3: a missing file exits 2.
+# Case 3: two eligible todos -> the first in file order wins, even with the higher id.
+{
+	printf '## Phase 0\n\n'
+	block 'T-944 · Follow-up' todo '—' M
+	block 'T-041 · Resume' todo '—' H
+} >"$tmp_dir/three.md"
+
+out=$("$NEXT" "$tmp_dir/three.md")
+printf '%s\n' "$out" | grep -qx 'next: T-944 · Follow-up (tier M)' || fail "case 3 file order, got: $out"
+
+# Case 4: a missing file exits 2.
 set +e
 "$NEXT" "$tmp_dir/absent.md" >/dev/null 2>&1
 rc=$?
 set -e
-[ "$rc" -eq 2 ] || fail "case 3 expected exit 2, got $rc"
+[ "$rc" -eq 2 ] || fail "case 4 expected exit 2, got $rc"
 
 echo "next-task_test: all cases passed"

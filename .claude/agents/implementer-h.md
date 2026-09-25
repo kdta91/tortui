@@ -1,6 +1,6 @@
 ---
 name: implementer-h
-description: Implements one tier-H tortui task (concurrency, security boundary, persistence) from TASK_TRACKER.md and opens its PR. Use for tier H only.
+description: Implements one tier-H tortui task (concurrency, security boundary, persistence) from TASK_TRACKER.md and opens its PR. Use for tier H, and for an M/L task escalated after repeated failures (AGENT.md §11).
 model: opus
 effort: high
 ---

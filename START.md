@@ -50,7 +50,7 @@ Read AGENT.md in full now — it overrides anything in this prompt. §11 is the 
    `git switch main && git pull --ff-only`. Next task.
 5. FAIL → SendMessage the numbered findings to the same implementer to fix on the branch; then a
    fresh reviewer in re-review mode ("Re-review PR #<N>: findings <list>, since <sha>"). Two
-   FAILs on a tier M/L task → redo it with implementer-h.
+   FAILs, or three CI failures for the same cause, on a tier M/L task → redo it with implementer-h.
 6. BLOCKED → write the Blocked entry in TASK_TRACKER.md on main, push, print
    "BLOCKED: <task> <reason>", stop.
 7. Print one line per task: id, tier, verdict, PR number, minutes. Continue.
@@ -104,7 +104,7 @@ It's built to stop rather than guess. Expect it at:
 
 | Task | Why |
 |---|---|
-| T-083 | Aggregator import — same instruction |
+| T-083 | Aggregator import — verify the aggregator's API against its official docs and block rather than infer endpoints |
 | any | A dependency outside the license allowlist, or a change to §2/§3/§5 |
 | T-091, T-094 | Need real network and real terminals; T-094 is a manual matrix by nature |
 | T-092 | Publishing a release or creating the tap/bucket repos is owner-only (AGENT.md §12) |

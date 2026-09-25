@@ -23,6 +23,9 @@ the PR archives it, `git show origin/main:TASK_TRACKER.md` for the pre-PR block 
    validated before create/open/delete; no `runtime.GOOS` outside `internal/platform`; no edit to
    frozen contracts, `NOTICE` by hand, or license scope files; no work belonging to a later task;
    the Protocol's tracker update is present and within its line caps.
+   **Tier H additionally:** data races (`make race` on touched packages), goroutine leaks and
+   unreaped per-object goroutines (`goleak`, including after `Remove`/`Close`), and path
+   containment on every create/open/delete.
 4. **Mutation-test the load-bearing assertion** (required for tier H and M): break the code the
    key test protects, run that test, quote the failing output, restore with `git restore .` and
    confirm `git status` is clean. A test that still passes against broken code is a FAIL.
