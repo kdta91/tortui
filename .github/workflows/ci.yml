@@ -29,6 +29,9 @@ env:
   GOFUMPT_VERSION: "v0.12.0"
   GITLEAKS_VERSION: "v8.30.1"
   GO_LICENSES_VERSION: "v2.0.1"
+  # T-949: pinned so the Windows leg no longer depends on Chocolatey's community feed.
+  SHELLCHECK_VERSION: "0.11.0"
+  SHELLCHECK_WINDOWS_SHA256: "8a4e35ab0b331c85d73567b12f2a444df187f483e5079ceffa6bda1faa2e740e"
 
 jobs:
   check:
@@ -100,10 +103,40 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install shellcheck
 
+      # T-949: Chocolatey's community feed was a recurring source of stalled/red PRs (T-932),
+      # unrelated to any code change here. Installed instead from a pinned official GitHub release
+      # asset with a checksum computed and pinned in this file, cached the same way the Go-toolchain
+      # tools above are -- only downloaded on a cache miss.
+      - name: Cache shellcheck (Windows)
+        id: shellcheck-cache
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: C:\shellcheck
+          key: shellcheck-${{ runner.os }}-${{ env.SHELLCHECK_VERSION }}
+
       - name: Install shellcheck (Windows)
+        if: runner.os == 'Windows' && steps.shellcheck-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ env.SHELLCHECK_VERSION }}"
+          $expected = "${{ env.SHELLCHECK_WINDOWS_SHA256 }}"
+          $url = "https://github.com/koalaman/shellcheck/releases/download/v$version/shellcheck-v$version.zip"
+          $zip = Join-Path $env:RUNNER_TEMP "shellcheck.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $expected.ToLower()) {
+            Write-Error "shellcheck checksum mismatch: expected $expected, got $actual"
+            exit 1
+          }
+          New-Item -ItemType Directory -Force -Path C:\shellcheck | Out-Null
+          Expand-Archive -Path $zip -DestinationPath C:\shellcheck -Force
+
+      - name: Add shellcheck to PATH (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: choco install shellcheck -y --no-progress
+        run: echo "C:\shellcheck" >> $env:GITHUB_PATH
 
       - name: make check
         shell: bash

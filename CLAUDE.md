@@ -21,7 +21,8 @@ reviewer definitions that carry the standing rules.
 
 The owner started an autonomous run (the `START.md` prompt, or an instruction to run the build):
 follow AGENT.md §11 without asking for per-step confirmation. The standing authorisation in
-AGENT.md §10 covers branches, pushes, PRs, labels, merging a reviewed and green PR, and Blocked
+AGENT.md §10 covers branches, pushes, PRs, labels, merging a PR that passed review with its
+required checks green (§11's macOS-first gate — a red advisory check does not block), and Blocked
 entries on `main`. Stop only for AGENT.md §12 — its stop conditions and its owner-only list.
 
 ## If you are here interactively without a run

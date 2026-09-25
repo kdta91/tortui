@@ -25,7 +25,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Process
 
-**Done (archived in `docs/tracker-archive.md`):** `T-945` Fast task loop.
+**Done (archived in `docs/tracker-archive.md`):** `T-945` Fast task loop · `T-949` macOS-first, lower-latency task loop.
 
 ---
 
@@ -851,6 +851,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-104 | 2026-09-25 | T-033: Updates sends on the sample tick only when the snapshot changed; ETA from a 10-sample rolling average; test-only injectable ticker |
 | DEC-105 | 2026-09-25 | T-944: findOrTrack (one critical section) fixes concurrent Add; a beforeAttach test hook and untrackFailedSpec fix two pre-merge review findings in the fix itself; check-goos-scope gates runtime.GOOS |
 | DEC-106 | 2026-09-25 | T-034: queue via optional engine.Queuer; space shortfall pauses as StateErrored; seed-policy stop shows StatePaused, Resume overrides; listen port 6881 with random fallback; Windows path limit is MAX_PATH |
+| DEC-107 | 2026-09-25 | T-949: merge gate is macOS-first (macOS make check + build-all + licenses + hostname check required, Linux/Windows make check advisory); reviewers stop checking CI; re-review resumes the same reviewer; stalled agents get one auto-resume then a fresh agent; tests wait on a predicate/terminal state, not one exact intermediate state; Windows shellcheck installs from a pinned, checksum-verified GitHub release |
 
 ## Blocked
 

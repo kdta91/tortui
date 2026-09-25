@@ -85,3 +85,18 @@ GNU screen, Windows Terminal, the VS Code integrated terminal, and over SSH.
 
 **Invariant:** every OS-specific line lives in `internal/platform` behind `_darwin.go`,
 `_linux.go`, `_windows.go` build tags. A `runtime.GOOS` switch anywhere else fails review.
+
+### CI merge gate is macOS-first (T-949, DEC-107)
+
+`make check (macos-latest)`, `make build-all`, `make licenses`, and the indexer hostname allowlist
+check are **required** to merge a PR. `make check (ubuntu-latest)` and `make check
+(windows-latest)` still run on every PR but are **advisory**: a red one does not block the merge —
+the orchestrator adds a `T-9NN` Backlog entry naming the failing test and job and proceeds, rather
+than sending the task back. CI job names are unchanged; this is enforced entirely by which contexts
+branch protection lists as required, not by a change to `.github/workflows/ci.yml`'s job structure.
+
+This does not touch anything else on this page: all three OSes are still tier 1, the Windows path
+for a feature is still implemented and tested in the same task that adds it, and `make lint-cross`
+still runs whenever a build-tagged file changes. **All three OSes must be green before any release
+tag** — the macOS-first gate only lowers the bar for an ordinary PR merge, never for a release
+(AGENT.md §12).

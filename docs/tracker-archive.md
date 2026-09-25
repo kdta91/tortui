@@ -29,6 +29,49 @@ in the session log so tier budgets can be recalibrated.
 
 ---
 
+### T-949 · macOS-first, lower-latency task loop
+```
+status: done
+depends: —
+tier: M
+```
+**Files:** `AGENT.md`, `START.md`, `docs/platforms.md`, `.claude/agents/*.md`,
+`.github/workflows/ci.yml`, `TASK_TRACKER.md`, `docs/`
+
+**Acceptance**
+- Merge gate is macOS-first (DEC-107): required checks are `make check (macos-latest)`,
+  `make build-all`, `make licenses`, and the indexer hostname allowlist check; `make check` on
+  `ubuntu-latest`/`windows-latest` stays advisory per PR — a red one gets a `T-9NN` Backlog entry
+  naming the failing test and job instead of sending the task back. All three OSes must be green
+  before any release tag. §14's portability contract, `internal/platform` confinement, and
+  `make lint-cross` are unchanged; CI job names are unchanged.
+- Reviewers verdict on the diff and mutation tests alone; they no longer wait on or check CI — only
+  the orchestrator checks CI (against the required set above) before merging.
+- A re-review after a FAIL resumes the same reviewer (context intact); a fresh reviewer starts only
+  if the original is unavailable. The implementer still never reviews its own work.
+- Stall recovery needs no owner input: the orchestrator resumes a stalled/errored agent once, then
+  starts a fresh agent of the same type with a note on what the failed one found.
+- Tests wait for a predicate or terminal state, never one exact intermediate state a background loop
+  can skip — codified in the implementer files and checked by both reviewer files, citing the T-034
+  Windows flake (`waitForState(..., StateDownloading)` skipped past by the policy tick) as the
+  worked example.
+- Windows shellcheck installs from a pinned official GitHub release with checksum verification,
+  cached like the other pinned CI tools — no more Chocolatey dependency on that leg.
+- START.md's orchestrator prompt (steps 3–5) mirrors the new loop; §12's owner-only list and §2/§3/§5
+  are unchanged.
+
+**Notes:** Owner-requested 2026-09-25 (DEC-107). AGENT.md §11 (tiers/escalation, verification table,
+loop, stall recovery), §12 (release needs all three OSes green) and §14's summary updated;
+`docs/platforms.md` mirrors §14. `.claude/agents/{implementer,implementer-h}.md` gained the
+wait-for-a-predicate rule; `.claude/agents/{reviewer,reviewer-h}.md` dropped the CI-wait step, added
+the same-state-wait check, and note re-review normally resumes the same reviewer. `ci.yml`'s Windows
+shellcheck step now downloads `v0.11.0` from `koalaman/shellcheck`'s GitHub release, verifies its
+SHA-256 against a pinned value computed for this task, and caches the extracted binary — CI job
+names untouched, `actionlint` clean. Owner-only follow-up, not done here (§12): remove the
+`ubuntu-latest`/`windows-latest` `make check` contexts from branch protection's required checks.
+
+---
+
 ## Phase 0 — Foundation
 
 ### T-001 · Repository bootstrap
