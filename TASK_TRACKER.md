@@ -85,10 +85,18 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ### T-083 · Bulk import from a Torznab aggregator
 ```
-status: todo
+status: blocked
 depends: T-080, T-081
 tier: M
 ```
+**Notes:** Blocked before implementation — see Blocked section below. Prowlarr has a verifiable,
+officially self-documented `GET /api/v1/indexer` (Swagger, confirmed against
+`Prowlarr.Api.V1.Indexers.IndexerResource` source). Jackett has no API-key-authenticated
+endpoint to list configured indexers — `/api/v2.0/indexers` requires a browser session/cookie,
+and Jackett issue #16324 (closed as duplicate, unresolved) confirms this is a known gap, not an
+oversight in my search. NZBHydra2's `/api/stats/indexers` is a stats endpoint with a different
+shape (state/level/lastError), not a documented indexer-listing endpoint, and its config API
+needs a live instance's own Swagger UI to confirm — unreachable without one running.
 **Acceptance**
 - From the add form, an "import from aggregator" path takes a base URL and API key for a
   self-hosted Torznab aggregator (Prowlarr, Jackett, NZBHydra), lists the indexers that
@@ -244,6 +252,13 @@ when it reaches it and does not start backlog items on its own.
 
 ## Backlog (not scheduled)
 
+- `T-983` `handlePrefsDownloadDirCheck` (internal/tui/preferences.go, ~line 762) compares
+  `path`/`margin` against the current form to drop stale results, but no test pins this: if an
+  older probe result arrives after a newer one (e.g. the user edits again before the first probe
+  returns), the guard as written can't tell old-but-matching from new, so a stale result can
+  overwrite the fresher one and the row sticks on "checking…" until the next edit. Add a test
+  that delivers the old `prefsDownloadDirCheckMsg` after the new one and asserts the newer result
+  wins. Non-blocking finding from the T-082 review (PR #50).
 - `T-982` Apply theme and ASCII-mode changes live from the preferences panel
   instead of requiring a restart. Both are TUI-owned rendering state (not a
   property of the frozen engine.Engine contract), so — unlike the other
@@ -787,6 +802,37 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 
 ## Blocked
 
-*(empty — append `T-0NN` blocks here with the exact input needed to unblock)*
+### T-083 · Bulk import from a Torznab aggregator
+```
+status: blocked
+tier: M
+```
+Acceptance requires verifying the API shape of Prowlarr, Jackett, and NZBHydra2 against official
+documentation before implementing, and blocking rather than guessing if it can't be verified.
+Research (web search + GitHub source, no live instance available in this environment):
+
+- **Prowlarr** — verifiable. Self-documented via its own Swagger UI; the route and
+  `IndexerResource` fields (`Id`/`Name` from the base provider resource, plus `Enable`,
+  `Description`, `Protocol`, `Capabilities`, etc.) are confirmed from
+  `src/Prowlarr.Api.V1/Indexers/{IndexerController,IndexerResource}.cs` on `develop`.
+- **Jackett** — not verifiable as a documented, API-key-only path. `/api/v2.0/indexers` requires
+  a browser session/cookie, not just the API key tortui would hold. The community-known
+  `t=indexers` Torznab parameter is not in Jackett's own docs. Jackett issue
+  jackett/jackett#16324 ("expose list of indexers via API-key-authenticated endpoint") is closed
+  as a duplicate with no shipped resolution — i.e., this is a known, currently-unmet gap in
+  Jackett itself, not a gap in my research.
+- **NZBHydra2** — not verifiable offline. `/api/stats/indexers` is a stats endpoint with an
+  unrelated shape (state/level/lastError, no stable indexer id/name for re-adding). Its actual
+  config/indexer-list surface is behind `/internalapi` and its own live Swagger UI
+  (`<host>/swagger-ui/index`), which needs a running instance to read — unavailable here.
+
+**Unblock with:** either (a) run a Jackett instance and a NZBHydra2 instance and paste their
+`/swagger-ui` (or equivalent) indexer-list endpoint definitions so the adapter can be written
+against a confirmed shape instead of an inferred one, or (b) descope the acceptance criterion to
+Prowlarr only for this task and move Jackett/NZBHydra2 support to a follow-on task once their
+APIs can be verified the same way.
+
+---
+
 
 Resolved blockers are archived verbatim under **Blocked — Resolved** in `docs/tracker-archive.md`.
