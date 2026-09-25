@@ -403,7 +403,17 @@ make lint      # golangci-lint run
 make fmt       # gofumpt -w . && goimports -w .
 make check     # fmt-check + lint + test + go vet  ← the gate
 make cover     # coverage report, fails under threshold
+make race      # go test -race -count=1 $(PKG) — e.g. make race PKG=./internal/engine/...
+make lint-cross # golangci-lint for GOOS=darwin|linux|windows + GOOS=windows go vet
+make vuln      # govulncheck ./...
+make licenses  # go-licenses on all LICENSE_OSES, regenerates NOTICE, scope check
+make build-all # CGO_ENABLED=0 cross-build of every release target
+make next      # next eligible task + done/todo/blocked counts, derived from TASK_TRACKER.md
 ```
+
+Always call the make target rather than the raw command with an env prefix
+(`GOOS=windows go vet …`): the targets are what the permission allowlist covers, so an
+unattended run never stalls on a prompt.
 
 `make check` must pass before any commit. No exceptions, no `--no-verify`.
 
@@ -422,8 +432,10 @@ A task is done only when **all** hold:
 - [ ] Exported identifiers have doc comments.
 - [ ] No new `TODO` without a matching tracker task ID: `// TODO(T-042): ...`.
 - [ ] `config.example.toml` and `README.md` updated if user-facing behaviour changed.
-- [ ] Tracker row updated: status → `done`, notes filled, decision log appended if a choice
-      was made that a future reader would question.
+- [ ] The task's own PR carries the tracker update, exactly as the `TASK_TRACKER.md` Protocol
+      lists it: block flipped to `done` with notes (≤ 10 lines), block moved verbatim to
+      `docs/tracker-archive.md`, a `DEC-` entry (≤ 8 lines) in `docs/decisions.md` plus its
+      index row for any choice a future reader would question, one `docs/session-log.md` line. Long evidence belongs in the PR body.
 
 ---
 
@@ -444,36 +456,94 @@ A task is done only when **all** hold:
   Types: `feat` `fix` `refactor` `test` `docs` `chore` `perf`.
 - Commit at each green checkpoint, not once at the end. A commit that doesn't pass
   `make check` doesn't get made.
-- PR body: task ID, what changed, how it was verified, anything deferred. Link the issue with
-  `Closes #N` so it closes on merge.
+- PR body: task ID, tier, what changed, how it was verified, anything deferred.
 - Open the PR with `gh pr create`; apply label `qa::pending`.
-- **Never merge your own PR.** Auto-merge is gated on `qa::passed` applied by the QA stage.
-  If QA fails, remediate on the same branch — do not open a second PR.
+- **Never merge your own PR.** The orchestrator merges only after a separate reviewer passed it
+  (§11). If review fails, remediate on the same branch — do not open a second PR.
 - Never force-push a branch that has an open PR with review comments on it.
-- Push tracker status flips (§11 step 2) straight to `main`. Everything else goes through a PR.
-  Do not enable "require a pull request before merging" on `main` — it would block those flips
-  and stall the loop on the first task.
+- Only a **Blocked** entry (§12) is pushed straight to `main`. Everything else, including the
+  tracker update that finishes a task, goes through the task's PR. Do not enable "require a pull
+  request before merging" on `main` — it would block the Blocked-entry push.
+
+### Standing authorisation (owner-granted, DEC-103)
+
+When the owner starts an autonomous run (the `START.md` prompt, or any instruction to run the
+build), the following are pre-authorised and need no per-step confirmation, **within this
+repository only**: creating `task/*` branches, committing and pushing them; opening PRs and
+changing their labels; squash-merging a PR once a separate reviewer returned PASS at the PR's
+current head SHA and every CI check passed; deleting merged task branches; pulling `main`;
+pushing a Blocked entry to `main`; adding `T-9NN` backlog entries in a task's PR. Anything on
+the owner-only list in §12 is **not** covered.
+
+`.claude/settings.json` is the matching allowlist. It deliberately excludes tools that are a shell
+in disguise (`awk`, `find`, `sed`, `xargs`, `env`) and denies tag pushes, force-pushes, releases,
+`gh auth`, repo settings, and any `gh api` write. `go`, `make`, and `git` necessarily run repository
+code and hooks; that is accepted, and the written rules above are the control for it.
 
 ---
 
 ## 11. Execution loop
 
-Repeat until no eligible tasks remain:
+One orchestrator session delegates each task to a fresh **implementer** subagent and each PR to a
+separate, fresh **reviewer** subagent. The orchestrator never writes code; the implementer never
+reviews its own work. All agents share one worktree, so **exactly one agent touches it at a time**
+and nobody runs `git switch` while another agent is working.
 
-1. Read `TASK_TRACKER.md`. Pick the lowest-numbered task where `status: todo` and every
-   dependency is `done`. Never work two tasks at once.
-2. Set `status: in-progress`, commit the tracker change to `main` before branching.
-3. Create the branch with `git switch -c` (§10 — never `git worktree add`).
-4. Write the test first where the task has observable behaviour.
-5. Implement the smallest change that satisfies the acceptance criteria. Do not build ahead —
-   if you find yourself implementing something that belongs to a later task, stop and leave it.
-6. `make check`. Iterate until green.
-7. Update the tracker row, decision log, docs.
-8. Commit, push, open the PR with `gh pr create --label qa::pending`. Do not merge it.
-9. Return to step 1.
+### Tiers
 
-Keep a running `docs/session-log.md` — one line per task with the timestamp, task ID, and
-outcome. This is what a human reads to catch up.
+Every open task carries `tier:` in its block. The tier sets the agent, the budget, and how much
+verification is enough to stop.
+
+| Tier | Meaning | Implementer | Reviewer | Target budget |
+|---|---|---|---|---|
+| **H** | concurrency, security boundary, persistence, anything deleting or opening paths | `implementer-h` (Opus, high) | `reviewer-h` (Opus, high) | 30 min |
+| **M** | features against `engine/fake`, adapters, settings, release plumbing | `implementer` (Sonnet, medium) | `reviewer` (Opus, medium) | 20 min |
+| **L** | display-only or documentation | `implementer` (Sonnet, medium) | `reviewer` (Opus, medium) | 10 min |
+
+Agent definitions live in `.claude/agents/`. **Escalation:** a tier M/L task that fails review twice,
+or fails CI three times for the same cause, is re-run with `implementer-h`. Budgets are targets
+for pacing, not stop conditions — the hard stop is §12's two hours.
+
+### Verification — who proves what
+
+Each gate is run by exactly one party. Re-running someone else's gate is waste, not rigour.
+
+| Party | Runs | Enough to stop when |
+|---|---|---|
+| Implementer | `make check`; `make race PKG=<touched pkgs>`; `make cover` if it touched `internal/{indexer,engine,tui}`; `make lint-cross` **only** if it touched a build-tagged file; `make licenses` + `make vuln` **only** if `go.mod`/`go.sum` changed | every acceptance criterion has a test or quoted evidence, and those commands are green |
+| CI | all three OSes' `make check`, `build-all`, `licenses` | every required check is `pass` (pending or skipped ≠ pass) |
+| Reviewer | reads the diff against each acceptance criterion and §2/§6; **mutation-tests the load-bearing assertion** and quotes the failing output (required for H and M, optional for L); `gh pr checks <N> --watch` | a verdict per criterion, the mutation result, green CI, and the reviewed head SHA |
+| Orchestrator | `gh pr view` / `gh pr checks` only | reviewer PASS at the current head SHA + all checks pass |
+
+Tier H reviewers additionally look for data races, goroutine leaks (`goleak`), unreaped
+per-object goroutines, and path containment on every create/open/delete.
+
+### The loop
+
+1. **Orchestrator:** `make next`, plus `gh pr list --state open`. An open task PR means a task is
+   in flight — finish it first. Otherwise take the task `make next` names. None eligible → stop
+   and say why.
+2. **Orchestrator → implementer** for the task's tier. Brief: task id, tier, branch name
+   `task/T-0NN-slug`. The standing rules are in the agent definition; do not repeat them.
+3. **Implementer:** `git switch -c`; test first where behaviour is observable; smallest change that
+   satisfies the criteria (no building ahead); its verification row above; the tracker update per
+   the Protocol; commit, push, `gh pr create --label qa::pending`; report the PR URL, head SHA,
+   elapsed minutes, and quoted command output. It does **not** wait for CI.
+4. **Orchestrator → reviewer** (fresh agent) as soon as the PR exists — review overlaps CI.
+5. **Reviewer:** checks out the branch, reviews, mutation-tests, restores the tree (`git status`
+   clean), then waits on CI. Returns `PASS` or `FAIL` with numbered findings and the head SHA.
+6. **PASS** → orchestrator confirms the SHA is still the PR head and checks pass, then
+   `gh pr edit <N> --add-label qa::passed --remove-label qa::pending`,
+   `gh pr merge <N> --squash --delete-branch`, `git switch main && git pull --ff-only`. Next task.
+7. **FAIL** (including red CI) → orchestrator sends the findings to the **same implementer**
+   (context intact) to fix on the same branch; then a **fresh** reviewer checks only the findings
+   and the new commits. Back to step 6.
+8. **BLOCKED** from any agent → orchestrator writes the Blocked entry (§12) on `main`, pushes,
+   prints `BLOCKED: <task> <reason>`, and stops the run.
+
+Progress updates are informational: no agent stops merely to report status. The session log
+(`docs/session-log.md`, written in each task's PR) is what a human reads to catch up, and
+records actual minutes per task so the tier budgets can be recalibrated.
 
 ---
 
@@ -491,7 +561,18 @@ another task:
 - Total work on one task exceeds ~2 hours of wall clock without a green checkpoint.
 
 When blocked: leave the branch pushed, mark the task `blocked`, state precisely what input would
-unblock it, and move to the next **independent** task only if one exists. Otherwise stop cleanly.
+unblock it, push that Blocked entry to `main`, and **stop the run** (§11 step 8). The owner decides
+whether to resume with another task.
+
+### Owner-only actions — never taken autonomously
+
+Stop and ask, even mid-run, for: pushing a tag or publishing a release (`git push --tags`,
+`gh release`, a `goreleaser` publish); creating or changing any repository other than this one
+(including the Homebrew tap and Scoop bucket); changing repository settings, branch protection, or
+`gh` authentication; running `//go:build integration` tests or anything else against the live
+network; manual steps needing a human at a real terminal (the T-094 matrix); anything that changes
+§2, §3, the frozen §5 contracts, or the MPL-2.0 module set. Build everything up to that point,
+merge it, and leave the owner-only step as a checklist in the task's notes.
 
 ---
 
@@ -538,304 +619,65 @@ unblock it, and move to the next **independent** task only if one exists. Otherw
 
 ## 14. Cross-platform targets and terminal compatibility
 
-### Support matrix
+**Full text: [`docs/platforms.md`](docs/platforms.md)** — read it for any task with OS-, shell-, or
+terminal-visible behaviour. The binding summary:
 
-| OS | Arch | Tier | Meaning |
-|---|---|---|---|
-| macOS 13+ | arm64, amd64 | 1 | Primary development target. Verified by hand before release. |
-| Linux | amd64, arm64 | 1 | Main CI target. Full test suite runs here. |
-| Windows 10+ | amd64, arm64 | 1 | CI target. Verified by hand in Windows Terminal before release. |
+| OS | Arch | Tier |
+|---|---|---|
+| macOS 13+ | arm64, amd64 | 1 |
+| Linux | amd64, arm64 | 1 |
+| Windows 10+ | amd64, arm64 | 1 |
 
-All three are first-class. A feature that works on two of them is not done. Every task with
-OS-visible behaviour needs its Windows path implemented and tested in the same task — not
-deferred, not stubbed.
-
-### Shell versus terminal — do not conflate these
-
-The binary is **shell-agnostic**. `zsh`, `bash`, `fish`, `sh`, and `nushell` all launch it the
-same way: it reads `argv` and the environment, takes over the TTY, and hands it back on exit.
-Nothing in the application may depend on shell features, aliases, functions, or rc files.
-There is no per-shell code path and no task should create one.
-
-What actually varies between environments is the **terminal emulator**, and that is where all
-compatibility effort goes.
-
-Shell choice *does* matter in exactly four places:
-
-1. **Makefile recipes.** Set `SHELL := /bin/sh` and `.SHELLFLAGS := -eu -c`. macOS ships GNU
-   make 3.81, so no `.ONESHELL` (3.82+) and no `$(file ...)` (4.0+).
-2. **Scripts and git hooks.** `#!/usr/bin/env sh`, POSIX only. macOS ships **bash 3.2** from
-   2007 — no `declare -A`, no `mapfile`, no `${var^^}`, no `&>>`.
-3. **Shell completions.** Generate for zsh, bash, and fish from the flag definitions so they
-   cannot drift.
-4. **Install instructions.** Cover zsh and bash `PATH` setup separately in the README.
-
-### Terminal compatibility requirements
-
-Must render correctly in: Terminal.app, iTerm2, Ghostty, WezTerm, Alacritty, kitty, tmux,
-GNU screen, Windows Terminal, the VS Code integrated terminal, and over SSH.
-
-- **Terminal.app is the floor.** `xterm-256color`, no truecolor, limited glyph coverage. If it
-  looks wrong there it is wrong, regardless of how it looks in Ghostty.
-- Colour comes from the lipgloss/termenv profile. Never emit a hardcoded escape sequence.
-  Honour `NO_COLOR` and `CLICOLOR_FORCE`.
-- `TERM=dumb` or a non-TTY stdout → do not start the TUI. Print a one-line explanation and
-  exit 1. Piping the binary must not produce escape-sequence garbage.
-- **Glyph fallback.** Block characters `█░` and the badge `✓` need an ASCII fallback set
-  (`#`, `-`, `+`) chosen by capability detection, forceable with `--ascii` and
-  `ascii = true` in config.
-- **Width measurement uses `rivo/uniseg`.** Torrent titles contain CJK, emoji, and combining
-  marks. `len()` and `utf8.RuneCountInString` both produce misaligned tables.
-- Under tmux, `TERM=screen-256color` masks truecolor unless the user enables `Tc`. Detect,
-  degrade silently, do not nag.
-- Enter the alternate screen and enable bracketed paste on start; restore terminal state on
-  **every** exit path including `SIGINT`, `SIGTERM`, and panic.
-
-### Per-OS behaviour
-
-**macOS**
-- Config at `~/.config/tortui/` (honouring `XDG_CONFIG_HOME` when set), *not*
-  `~/Library/Application Support` — see DEC-005.
-- Default download dir `~/Downloads/tortui`.
-- Open file: `open <path>`. Reveal in Finder: `open -R <path>`.
-- Raise the soft file-descriptor limit to the hard limit at startup.
-- First bind triggers the macOS firewall prompt — document this in the README so it does not
-  read as a hang.
-- Downloaded release binaries are quarantined by Gatekeeper; README documents
-  `xattr -d com.apple.quarantine ./tortui` until notarisation is in place.
-
-**Linux**
-- Native XDG paths. Open file and folder: `xdg-open`.
-- Default download dir `~/Downloads/tortui`, falling back to `$XDG_DOWNLOAD_DIR`.
-
-**Windows**
-- Config under `%AppData%\tortui\`. Open file: `explorer <path>`. Reveal:
-  `explorer /select,<path>`.
-- Enable virtual terminal processing at startup. Detect legacy conhost and print a message
-  recommending Windows Terminal rather than rendering badly.
-- All paths via `path/filepath`. Never concatenate with `/`.
-
-**Invariant:** every OS-specific line lives in `internal/platform` behind `_darwin.go`,
-`_linux.go`, `_windows.go` build tags. A `runtime.GOOS` switch anywhere else fails review.
+- All three are first-class. A feature that works on two of them is not done; the Windows path is
+  implemented and tested in the same task, never deferred or stubbed.
+- The binary is shell-agnostic: no per-shell code path, ever. Shell matters only in Makefile
+  recipes (`SHELL := /bin/sh`, GNU make 3.81 — no `.ONESHELL`, no `$(file ...)`), scripts and hooks
+  (`#!/usr/bin/env sh`, POSIX only — macOS ships bash 3.2), completions (generated for
+  zsh/bash/fish), and README install steps.
+- Terminal.app is the floor. Colour only through the lipgloss/termenv profile; honour `NO_COLOR`
+  and `CLICOLOR_FORCE`; `TERM=dumb` or non-TTY stdout → one-line refusal, exit 1; ASCII glyph
+  fallback (`--ascii`, `ascii = true`); widths via `rivo/uniseg`; restore the terminal on every exit
+  path including `SIGINT`, `SIGTERM`, and panic.
+- **Invariant:** every OS-specific line lives in `internal/platform` behind `_darwin.go`,
+  `_linux.go`, `_windows.go` build tags. A `runtime.GOOS` switch anywhere else fails review.
+- **Windows CI is the one that bites** (volume prefixes in `filepath.Abs`, symlink privilege
+  `ERROR_PRIVILEGE_NOT_HELD`, CRLF). Native darwin `make check` does not lint other platforms'
+  build-tagged files — run `make lint-cross` when you touch any.
 
 ---
 
 ## 15. Running and verifying a build
 
-### The four ways to launch
+**Full text: [`docs/running.md`](docs/running.md)** — launch modes, manual smoke test, terminal
+matrix. The binding summary:
 
-```sh
-make build                      # → bin/tortui
-
-./bin/tortui --version          # 1. does it link and run at all
-./bin/tortui doctor             # 2. environment report, no TUI, safe to pipe
-./bin/tortui --demo             # 3. full UI, fake engine + fake indexer, zero network
-make run                        # 4. real engine against ./dev-config.toml sandbox
-```
-
-**`doctor`** prints and exits: OS/arch, `TERM`, `COLORTERM`, detected colour profile, Unicode
-capability, terminal size, resolved config/state/download paths, file-descriptor limit, and
-each configured indexer with a reachability verdict. This is the first thing to run when
-something looks wrong, and the first thing to ask a user for in a bug report.
-
-**`--demo`** wires `engine/fake` and a fixture-backed indexer into the real TUI. Search returns
-canned results, downloads progress on a simulated clock and include a stall, an error, and a
-completion. Every screen, keybind, and dialog is reachable. No network, no disk writes outside
-a temp dir, nothing to clean up. **This is the primary way to eyeball the UI after a build** and
-the only way an agent can meaningfully self-verify rendering.
-
-**`TORTUI_HOME`** redirects config, state, and downloads under one directory. Use it for any
-manual testing so real config is never touched:
-
-```sh
-TORTUI_HOME=$(mktemp -d) ./bin/tortui
-```
-
-### Manual smoke test after a real build
-
-```sh
-make build
-./bin/tortui doctor                                   # sanity
-./bin/tortui --demo                                   # walk every screen
-TORTUI_HOME=./tmp/smoke ./bin/tortui                  # first-run flow, add a source
-```
-
-Then one real download against a freely and officially distributed torrent — a current Debian
-netinst ISO is the canonical target: small, always well-seeded, and unambiguously legal. Verify
-progress advances, `o` opens the file, `f` reveals the folder, `p` pauses and resumes, restart
-resumes from existing data, and `x` removes with and without data.
-
-### Terminal matrix pass (before any release)
-
-Run `--demo` in each and confirm alignment, colour, and clean exit:
-
-```sh
-./bin/tortui --demo                     # Terminal.app  ← the floor
-./bin/tortui --demo                     # iTerm2 or Ghostty
-tmux new-session ./bin/tortui --demo    # inside tmux
-NO_COLOR=1 ./bin/tortui --demo          # monochrome
-TERM=xterm ./bin/tortui --demo          # 16-colour
-./bin/tortui --ascii --demo             # glyph fallback
-printf '' | ./bin/tortui                # non-TTY → clean refusal, exit 1
-```
-
-Resize each to 80×24 and to ~60 columns while running; columns must drop in the documented
-order without garbling.
-
-Shell-agnosticism is confirmed once, not per feature:
-
-```sh
-zsh  -lc './bin/tortui --version'
-bash -lc './bin/tortui --version'
-sh   -c  './bin/tortui --version'
-```
-
-### Automated
-
-```sh
-make check                # fmt + lint + vet + unit tests — the commit gate
-go test -race ./...       # concurrency
-make cover                # thresholds from §9
-make test-integration     # build-tagged, real network, manual
-```
-
-TUI rendering is covered by `teatest` golden files driven by `engine/fake`, at 80×24, 120×40,
-and 60×20. A golden-file diff is a real failure — inspect the diff, do not regenerate blindly.
+- `./bin/tortui --version` · `./bin/tortui doctor` (environment report, safe to pipe) ·
+  `./bin/tortui --demo` (full UI on `engine/fake` + fixture indexer, zero network — the primary way
+  to eyeball rendering) · `make run` (real engine, `./dev-config.toml` sandbox).
+- Use `TORTUI_HOME=$(mktemp -d)` for any manual run so real config is never touched.
+- TUI rendering is covered by `teatest` golden files at 80×24, 120×40, and 60×20. A golden diff is a
+  real failure — inspect it, never regenerate blindly.
+- Anything needing a real swarm, real network, or a human at a real terminal is tagged
+  `//go:build integration` or listed as a manual step — never run unattended (§12).
 
 ---
 
 ## 16. Licensing, legal posture, and distribution
 
-*Not legal advice. This section exists so the agent understands why the §2 rules are hard
-constraints rather than style preferences, and does not "helpfully" relax one.*
+**Full text: [`docs/licensing.md`](docs/licensing.md)** — the MPL-2.0 mechanism, the admitted
+module table with reasons, the legal rationale for §2, and distribution channels. Read it for any
+task that adds or bumps a dependency, touches `NOTICE`, the `Makefile` license variables, or
+`scripts/check-license-scope*.sh`. The binding summary:
 
-### Project license
-
-MIT, in `LICENSE` at the repo root, and unchanged by anything below. Dependencies are
-restricted to MIT / Apache-2.0 / BSD / ISC, plus one named exception, MPL-2.0, admitted for an
-enumerated set of module paths (§3, DEC-098, DEC-100) so a `NOTICE` file can enumerate them
-accurately. `go-licenses` runs in CI and still fails the build on any other copyleft dependency —
-the allowlist gained one entry, not a category.
-
-**The admitted set**, authoritative copy in the `Makefile`'s `ALLOWED_MPL_MODULES`:
-
-| Module | Why it is in the set |
-|---|---|
-| `github.com/anacrolix/torrent` | The locked torrent engine itself (§3, DEC-001, DEC-098). |
-| `github.com/anacrolix/dht/v2` | Compile-time import of the engine — peer discovery. |
-| `github.com/anacrolix/generics` | Compile-time import of the engine — generic containers. |
-| `github.com/anacrolix/log` | Compile-time import of the engine — its logging façade. |
-| `github.com/anacrolix/mmsg` | Reached on any **cgo-enabled** build via `anacrolix/go-libutp` (itself MIT). |
-| `github.com/anacrolix/multiless` | Compile-time import of the engine — multi-key comparison. |
-| `github.com/anacrolix/sync` | Compile-time import of the engine — instrumented sync primitives. |
-| `github.com/anacrolix/upnp` | Compile-time import of the engine — port mapping. |
-| `github.com/anacrolix/utp` | The pure-Go uTP transport, used whenever `CGO_ENABLED=0`, on every `GOOS`. |
-| `github.com/go-llsqlite/adapter` | Reached through `anacrolix/torrent/storage`; MPL-2.0 from `v0.2.0` on — `v0.1.0` and the earlier pseudo-version ship no LICENSE, so **T-031 must pin `v0.2.0` or later**. |
-
-All ten are MPL-2.0, unmodified, and unavoidable: the set was derived from
-`go-licenses report ./...` run over all three `LICENSE_OSES` with the engine in `go.mod`, not from
-a guess. No single report contains all ten — `utp` and `mmsg` are alternative uTP transports, and
-which one is in the graph is decided by **`CGO_ENABLED`, not by `GOOS`**: measured over all six
-combinations, cgo-enabled builds pull `mmsg` (via `anacrolix/go-libutp`) on darwin, linux *and*
-windows alike, and cgo-disabled builds pull `utp` on all three. Darwin only looks special because
-on a Mac `GOOS=darwin` is the native target, where cgo defaults on, while the other two are
-cross-compiled with it off; on the Linux CI runner it is `GOOS=linux` that is native. Neither
-`make licenses` nor `ci.yml` pins `CGO_ENABLED` (only `build-all` does, at `CGO_ENABLED=0`), so
-both modules must be listed or the gate fails on one host or the other. The set is therefore the
-union across build configurations, not across operating systems. It is a **set of module names,
-not a license family and not a path prefix**: `github.com/anacrolix/*` would be shorter and would
-silently admit any future module published under that path, which is precisely the
-reviewed-decision property this gate exists to preserve.
-
-**The named scope is a two-part mechanism, and only one part is a true allowlist.**
-`go-licenses check --allowed_licenses=...` (`Makefile`'s `ALLOWED_LICENSES`) has no per-module
-targeting flag — confirmed against `go-licenses check --help` (v2.0.1): `--allowed_licenses` is a
-flat list of license names, full stop. Once MPL-2.0 is in that list, the check by itself would
-pass **any** MPL-2.0 module, present or future, not only the ones named here. The narrowness is
-enforced by a second, independent check on the same data: `scripts/check-license-scope.sh` reads
-the CSV `go-licenses report` already produces (the same data `make licenses` merges into `NOTICE`
-— no second scan) and fails the build, naming the offender, if any MPL-2.0 row belongs to a
-module outside `ALLOWED_MPL_MODULES`. It runs on all three `LICENSE_OSES`, and its own test
-(`scripts/check-license-scope_test.sh`, wired into `make check`/`test-scripts`) proves every
-listed module passes, an unlisted MPL-2.0 module still fails and is named — including one sharing
-the `github.com/anacrolix/` prefix — and a partially-listed set fails on exactly its unlisted
-members. **The residual gap, unchanged by widening the set:** `ALLOWED_LICENSES` itself remains a
-global list — a future MIT/Apache-2.0/BSD/ISC dependency is still checked only against that flat
-list, which is correct, since the per-module check exists solely to narrow MPL-2.0, the one
-license family admitted by name rather than by permissiveness. Nothing wider than that is scoped
-or needs to be. See DEC-099 for the full accounting and DEC-100 for the widening.
-
-**Why MPL-2.0 and not GPL/AGPL.** MPL-2.0 is *file-level* ("weak") copyleft: its obligations
-attach to the individual source files that carry the MPL notice, not to every file that is
-merely compiled or linked alongside them. Modifying one of those files and distributing the
-result requires releasing that file's source under MPL-2.0 (§3.1); distributing tortui as a
-compiled binary that includes unmodified code from the admitted modules requires only that
-recipients be told where that Covered Software's source is available (§3.2) — which `NOTICE`'s
-`license_url` column already does for every dependency, MPL-2.0 or not. Critically, MPL-2.0
-explicitly permits combining Covered Software with code under other licenses into a "Larger
-Work" (§3.3) without pulling that other code under MPL. It does **not** reach tortui's own
-MIT-licensed source, and tortui accepts no obligation to publish source it would not publish
-anyway. GPL and AGPL are *strong* copyleft: they extend to the whole combined work (GPL) or to
-network use of the whole combined work (AGPL), which would force tortui's own source under
-GPL/AGPL terms and is exactly what §3's "no GPL/AGPL" line exists to keep out. That distinction
-— not a general softening on copyleft — is why this exception names a fixed set of modules and
-one license family rather than widening the gate. **LGPL is barred for the same reason as GPL**
-and is not a borderline case here: it was proven empirically to fail `go-licenses check` under
-the current `ALLOWED_LICENSES` (DEC-100), including against the real `github.com/juju/ratelimit`,
-the LGPL-3.0 module that surfaced while evaluating a replacement engine. **Not legal advice**;
-see DEC-098 for the original authorisation and DEC-100 for the widened set.
-
-### Why the §2 rules exist
-
-A BitTorrent client is lawful software. Transmission, qBittorrent, Deluge, libtorrent, and
-aria2 all ship in Debian, Homebrew, and the Mac App Store. Building one is not the risk.
-
-The risk is **inducement**. Under *MGM v. Grokster* (US Supreme Court, 2005), distributing a
-tool with the object of promoting infringing use creates liability even where the tool has
-lawful uses — and that object is proven with the developer's own words and design choices, not
-with the code's capabilities. The evidence prosecutors and plaintiffs reach for is exactly the
-kind of thing an agent might add without thinking: a bundled list of piracy sites, a test
-fixture naming a real one, a README example pointing at one, a category preset for pirated
-media, marketing that leans on infringing use.
-
-This is not hypothetical. When the RIAA moved against **youtube-dl** on GitHub in 2020, one of
-its strongest factual hooks was that the project's unit tests referenced specific copyrighted
-tracks by name. GitHub restored the project after the EFF pushed back, on the reasoning that
-code able to reach copyrighted works can also reach non-infringing ones and that the tool had
-many legitimate purposes — but the maintainers stripped those test references as part of the
-resolution. A handful of strings in a test file nearly cost the project its home.
-
-So: the no-named-sites rule, the no-bundled-endpoints rule, the no-content-specific-logic rule,
-and the no-auth-circumvention rule are the substantive legal posture of this project. They are
-what makes tortui indistinguishable in kind from Prowlarr or Jackett — plumbing the user points
-wherever they choose — rather than a curated piracy front-end. An agent that adds a convenient
-default source has not added a feature; it has removed the defense.
-
-**DMCA §1201** is a separate hazard from infringement. Circumventing an access control is
-independently unlawful in the US even when no infringement follows, and it is the provision
-under which takedowns against developer tools are usually filed. This is why §2 bars captcha
-solving, paywall bypass, and credential workarounds absolutely, with no research or
-convenience exception.
-
-### Distribution
-
-All channels are free and automated from `goreleaser` on tag:
-
-| Channel | Cost | Mechanism |
-|---|---|---|
-| GitHub Releases | Free | Primary. Unlimited bandwidth on public repos. |
-| `go install` | Free | Works from the module proxy with zero setup. |
-| Homebrew tap | Free | A second public repo, `kdta91/homebrew-tap`. `goreleaser` commits the formula. |
-| Scoop bucket | Free | A third public repo, `kdta91/scoop-bucket`, for Windows. |
-| WinGet | Free | PR to `microsoft/winget-pkgs`; `goreleaser` can open it. Moderated, so expect delay. |
-| GitHub Actions | Free | Unlimited minutes on public repos, including macOS and Windows runners. |
-
-Homebrew *core* is a different thing from a tap and is not a target — it has notability
-requirements and a maintenance burden a tap does not. `brew install kdta91/tap/tortui` works
-from day one with no approval from anyone.
-
-Release artifacts are unsigned. Code signing is the one thing here that costs money (Apple
-Developer Program for notarisation; a certificate or signing service for Windows), and the
-README documents the resulting OS warnings and their workarounds instead. Use Sigstore keyless
-signing and GitHub build attestations, both free, for provenance — they do not suppress OS
-warnings but they let anyone verify an artifact came from this repo's CI.
+- Project license MIT. Dependencies MIT / Apache-2.0 / BSD / ISC, plus MPL-2.0 **only** for the
+  enumerated `ALLOWED_MPL_MODULES` in the `Makefile` (DEC-098, DEC-099, DEC-100). GPL, AGPL, and
+  LGPL are barred without exception. Widening the set needs a `DEC-` entry and an owner decision.
+- `NOTICE` is generated by `make licenses`, never edited by hand. `go-llsqlite/adapter` stays at
+  `v0.2.0`+; `anacrolix/utp` and `anacrolix/mmsg` are both required (selected by `CGO_ENABLED`).
+- **Why §2 is hard law, not style:** liability for a tool turns on *inducement* (*MGM v. Grokster*)
+  proven from the developer's own words and design choices — a bundled piracy source, a test
+  fixture naming a real site, a category preset for pirated media. The youtube-dl takedown hinged
+  on test strings naming copyrighted tracks. DMCA §1201 separately makes circumventing access
+  controls unlawful even without infringement. An agent that adds a convenient default source has
+  not added a feature; it has removed the defense.
+- Releases are unsigned, built by `goreleaser` on tag. Publishing a release is owner-only (§12).

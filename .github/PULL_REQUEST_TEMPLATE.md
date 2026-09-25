@@ -9,7 +9,7 @@ generically instead.
 
 ## Task
 
-<!-- Task ID from TASK_TRACKER.md, e.g. T-042. -->
+<!-- Task ID and tier from TASK_TRACKER.md, e.g. T-042 (tier M). -->
 
 ## What changed
 
@@ -29,6 +29,8 @@ generically instead.
 - [ ] `make check` is green
 - [ ] Tests added or updated for the new behavior
 - [ ] Docs updated if user-facing behavior changed (`README.md`, `config.example.toml`, `docs/`)
-- [ ] `TASK_TRACKER.md` row updated (status, notes, decision log entry if a judgement call was made)
+- [ ] Tracker update per the `TASK_TRACKER.md` Protocol: block `done` with notes (≤ 10 lines) and
+      moved to `docs/tracker-archive.md`, any `DEC-` in `docs/decisions.md` + index row,
+      one `docs/session-log.md` line
 - [ ] No site names anywhere in this diff, this description, or the commit messages — indexer
       definitions/endpoints/default sources are user-supplied only (AGENT.md §2)
