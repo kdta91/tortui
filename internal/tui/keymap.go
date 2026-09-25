@@ -4,12 +4,14 @@
 // §4) — never a concrete implementation — so it can be developed and tested
 // end-to-end against internal/engine/fake with no network and no swarm.
 //
-// The five screens (search, results, details, downloads, settings) are
-// placeholders here: this package only routes between them. Their real
-// content belongs to later tasks (T-060 search, T-061 results, T-063
-// details, T-071 downloads, T-080 settings), as do the responsive table
-// (T-053) and the shared modal/confirm component (T-054) — none of that is
-// implemented in this package. The status bar (T-052) is implemented in
+// Four of the five screens (results, details, downloads, settings) are
+// still placeholders here: this package only routes between them. Their
+// real content belongs to later tasks (T-061 results, T-063 details, T-071
+// downloads, T-080 settings), as does the shared modal/confirm component's
+// use on those screens. Search (T-060) is real: its query input, mode
+// selector, source multi-select, and category/min-seeders filters live in
+// search.go. The responsive table (T-053) is implemented in
+// internal/tui/components. The status bar (T-052) is also implemented in
 // internal/tui/components and wired in here as root.go's bottom line and
 // ContextErrorDetail modal.
 package tui
@@ -285,6 +287,17 @@ func GlobalBindings() []Binding {
 		},
 	}
 }
+
+// Two search-screen-only key behaviours — esc cancels an in-flight query,
+// space toggles/cycles whichever field the cursor is on — are deliberately
+// *not* Bindings here. Registering them would add two lines to the "?"
+// overlay for every context that includes them, and screenContext(
+// ScreenSearch)'s help text already renders at exactly 24 lines: the
+// budget every other screen's help text fits inside at the 80×24 floor
+// AGENT.md §7 requires. Model.handleKey (root.go) handles both directly,
+// ahead of the declarative Lookup this file drives, the same way it
+// already has to for raw text entry (search.go's handleSearchTyping) — see
+// the T-060 tracker notes for the measurement.
 
 // errorDetailBindings are the bindings live while the status bar's
 // source-error detail panel (ContextErrorDetail) is open. tab collapses it

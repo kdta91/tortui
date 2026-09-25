@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kdta91/tortui/internal/engine"
+	"github.com/kdta91/tortui/internal/indexer"
 	"github.com/kdta91/tortui/internal/tui/components"
 	"github.com/kdta91/tortui/internal/tui/theme"
 )
@@ -66,17 +67,73 @@ type Model struct {
 
 	// statusBar is the AGENT.md §7 footer: active-download count and
 	// aggregate rate (kept in sync from engineUpdateMsg), the most recent
-	// search fan-out's source-error state (sourceStatusMsg — no screen
-	// sends one yet; T-060/T-061 will), and the transient-message queue
-	// (transientMessageMsg / components.TickMsg).
+	// search fan-out's source-error state (sourceStatusMsg, now sent by
+	// the search screen's own dispatch — see search.go), and the
+	// transient-message queue (transientMessageMsg / components.TickMsg).
 	statusBar components.StatusBar
+
+	// search is the T-060 search screen's own state: query text, mode,
+	// source multi-select, category/min-seeders filters, the in-flight
+	// spinner, and recent-query suggestions. See search.go.
+	search searchModel
+
+	// searcher is the source-agnostic fan-out the search screen dispatches
+	// against — typically *indexer.Registry in production, a test double
+	// in tests. It satisfies the local Searcher interface (search.go)
+	// rather than a concrete indexer type, per AGENT.md §4: internal/tui
+	// may import indexer's frozen domain types (Query, Result, Caps, ...)
+	// but never a concrete implementation. nil is valid — dispatching a
+	// search with no searcher wired is reported as a status-bar message
+	// rather than a panic, which is what a Model built with no WithSearcher
+	// option (every existing test, and any future screen-routing-only
+	// test) gets.
+	searcher Searcher
+
+	// history is the optional recent-queries source (search.go's
+	// HistoryStore, typically *store.Store). nil is valid: the search
+	// screen simply offers no suggestions and records nothing.
+	history HistoryStore
+
+	// lastResults, lastSourceErrs, and lastQuery are the most recent
+	// completed search's outcome, set by search.go's Update handling of
+	// searchResultMsg. Nothing in this package renders them yet — T-061's
+	// results screen is what will — but they are captured here, the same
+	// hand-off pattern engineUpdateMsg already established for the
+	// status bar, so T-061 has real data to read rather than needing to
+	// re-plumb the dispatch itself.
+	lastResults    []indexer.Result
+	lastSourceErrs []indexer.SourceError
+	lastQuery      indexer.Query
+}
+
+// Option configures optional Model wiring not every caller needs. Adding
+// one never breaks an existing New(eng, th) call site — that is the whole
+// reason this is a variadic option rather than New growing new required
+// parameters every time a later task wires in another optional dependency.
+type Option func(*Model)
+
+// WithSearcher wires s as the search screen's fan-out (search.go). Without
+// it, the search screen still renders (with no sources listed) and
+// dispatching a query reports "no sources configured" via the status bar
+// rather than panicking.
+func WithSearcher(s Searcher) Option {
+	return func(m *Model) { m.searcher = s }
+}
+
+// WithHistory wires h as the search screen's recent-queries source
+// (search.go). Without it, the search screen offers no suggestions and
+// records nothing.
+func WithHistory(h HistoryStore) Option {
+	return func(m *Model) { m.history = h }
 }
 
 // New builds a Model wired to eng (typically a real engine in production,
 // internal/engine/fake in tests) and th, starting on ScreenSearch with no
-// modal open.
-func New(eng engine.Engine, th theme.Theme) Model {
-	return Model{
+// modal open. opts wires the optional dependencies later screens need
+// (search's Searcher and HistoryStore today); every existing call site
+// that predates them keeps working unchanged.
+func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
+	m := Model{
 		eng:         eng,
 		theme:       th,
 		keys:        NewKeyMap(),
@@ -84,6 +141,14 @@ func New(eng engine.Engine, th theme.Theme) Model {
 		statusBar:   components.New(),
 		quitConfirm: newQuitDialog(),
 	}
+
+	for _, opt := range opts {
+		opt(&m)
+	}
+
+	m.search = newSearchModel(m.searcher, m.history)
+
+	return m
 }
 
 // quitDialogCancel and quitDialogQuit index newQuitDialog's Options.
@@ -236,6 +301,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, cmd
 
+	case searchResultMsg:
+		return m.handleSearchResult(msg)
+
+	case searchTickMsg:
+		return m.handleSearchTick(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -264,6 +335,38 @@ func (m Model) context() Context {
 // implement and is a deliberate no-op — a later task gives it behaviour by
 // handling it in that screen's own Update, not by changing this switch.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// While the search screen has a field in text-edit mode, most keys —
+	// including letters that are otherwise global one-key hotkeys like
+	// "s", "o", "p", "q" — must type into that field instead of triggering
+	// their usual action; a query for "software" could never be typed
+	// otherwise. handleSearchTyping claims exactly the key types text
+	// entry needs (runes, space, backspace, enter, esc) and reports false
+	// for everything else, so ctrl+c and the rest still fall through to
+	// the normal lookup below.
+	if m.screen == ScreenSearch && m.search.editing != editNone {
+		if handled, updated, cmd := m.handleSearchTyping(msg); handled {
+			return updated, cmd
+		}
+	}
+
+	// esc-cancels-in-flight-query and space-toggles-the-focused-field are
+	// real search-screen behaviour, handled directly rather than through
+	// the declarative Binding/Lookup system below — see keymap.go's note
+	// by GlobalBindings for why (the "?" help overlay's 24-line budget at
+	// 80×24). Gated on no modal being open, since m.screen can still read
+	// ScreenSearch while the quit-confirm dialog (or help, or the error
+	// detail panel) is open over it, and those must keep their own esc
+	// meaning.
+	if m.screen == ScreenSearch && !m.quitConfirm.IsOpen() && !m.showHelp && !m.errorDetail {
+		switch msg.String() {
+		case "esc":
+			return m.handleSearchCancel()
+		case " ":
+			m.search = m.search.toggleAtCursor()
+			return m, nil
+		}
+	}
+
 	key := msg.String()
 
 	action, ok := m.keys.Lookup(m.context(), key)
@@ -298,14 +401,45 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ActionToggleErrorDetail:
 		return m.handleToggleErrorDetail()
 	case ActionMoveDown:
+		if m.screen == ScreenSearch {
+			m.search = m.search.moveCursor(1)
+			return m, nil
+		}
+
 		m.selection++
 		return m, nil
 	case ActionMoveUp:
+		if m.screen == ScreenSearch {
+			m.search = m.search.moveCursor(-1)
+			return m, nil
+		}
+
 		if m.selection > 0 {
 			m.selection--
 		}
 
 		return m, nil
+	case ActionSelect:
+		if m.screen == ScreenSearch {
+			return m.dispatchSearch(false)
+		}
+		// Every other screen's meaning of enter (add torrent on results,
+		// open details on downloads) belongs to a task this one does not
+		// implement (T-061, T-071). No-op here.
+		return m, nil
+	case ActionFocusSearch:
+		m.screen = ScreenSearch
+		m.search.cursor = 0
+		m.search.editing = editQuery
+
+		return m, nil
+	case ActionLatest:
+		// Global: AGENT.md §7 — "L | Latest — recent additions across
+		// sources, no keyword needed" runs against whatever sources the
+		// search screen currently has selected, from any screen, and T-060's
+		// own acceptance text calls out that it "jumps to results" once the
+		// fetch completes (handleSearchResult).
+		return m.dispatchSearch(true)
 	case ActionNextScreen:
 		m.screen = m.screen.next()
 		return m, nil
@@ -328,10 +462,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = ScreenSettings
 		return m, nil
 	default:
-		// ActionFocusSearch, ActionLatest, ActionRefresh, ActionMoveUp/Down,
-		// ActionSelect, ActionDetails, sort, open-file/folder/source,
+		// ActionRefresh, ActionDetails, sort, open-file/folder/source,
 		// pause/resume, and remove all belong to screens/components this
-		// task does not implement (T-053, T-054, T-060-T-080). No-op here.
+		// task does not implement (T-061, T-063, T-071, T-080). No-op here.
 		return m, nil
 	}
 }
@@ -441,7 +574,7 @@ func (m Model) renderScreen() string {
 
 	b.WriteString(m.renderTabs())
 	b.WriteString("\n\n")
-	b.WriteString(m.renderPlaceholderBody())
+	b.WriteString(m.renderScreenBody())
 
 	return b.String()
 }
@@ -480,9 +613,14 @@ func itoa(n int) string {
 	return string(rune('0' + n))
 }
 
-// renderPlaceholderBody draws the current screen's placeholder content —
-// real content is a later task's job (see keymap.go's Screen.placeholderTask).
-func (m Model) renderPlaceholderBody() string {
+// renderScreenBody draws the current screen's real content, where a task has
+// built one (ScreenSearch, T-060 — see search.go), or its placeholder
+// otherwise (see keymap.go's Screen.placeholderTask for which task owns it).
+func (m Model) renderScreenBody() string {
+	if m.screen == ScreenSearch {
+		return m.renderSearchScreen()
+	}
+
 	body := m.screen.String() + " screen — placeholder, see " + m.screen.placeholderTask()
 	return theme.Truncate(body, m.width)
 }

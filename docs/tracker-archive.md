@@ -3250,6 +3250,40 @@ caught by CI rather than a reviewer's eye — proposed, not implemented here.
 
 ---
 
+## Phase 6 — Search and results
+
+### T-060 · Search screen
+```
+status: done
+depends: T-051, T-012
+tier: M
+```
+**Notes:** `tui.Searcher`/`tui.HistoryStore` interfaces (`search.go`) — never a concrete
+`*indexer.Registry`/`*store.Store` (AGENT.md §4, DEC-109); both are satisfied without an adapter.
+`tui.New` gained a variadic `Option` (`WithSearcher`, `WithHistory`) rather than new required
+params, so every existing call site (tests, `internal/app/demo.go`) keeps compiling; `demo.go`
+now wires `WithSearcher(reg)`, making `--demo`'s indexer half reachable. Flat keyboard cursor over
+query/mode/sources/category/min-seeders; `/` focuses the query field, space toggles/cycles the
+focused row, enter submits (empty query → Latest), esc cancels an in-flight fetch — esc/space are
+raw `handleKey` checks, not declarative `Binding`s, because the `?` overlay for `ScreenSearch` was
+already exactly 24 lines (the 80×24 floor) and two more broke `teatest`'s redraw there (DEC-109).
+`make check`, `make race` (`internal/tui`, `internal/app`), `make cover` (93.2% on `internal/tui`)
+all green.
+
+**Acceptance**
+- Text input, mode selector (Search / Latest), multi-select of enabled sources, optional
+  category and min-seeders filter.
+- `enter` dispatches a `tea.Cmd` — `Update` never blocks (AGENT.md §6.1).
+- In-flight query shows a spinner and is cancellable with `esc`.
+- Recent queries from the store offered as suggestions.
+- **`enter` on an empty query runs Latest** rather than doing nothing — an empty box is a
+  request to see what's there, not a mistake to scold.
+- `L` from anywhere runs Latest against the currently selected sources and jumps to results.
+- Sources that cannot serve the selected mode are shown greyed in the multi-select with the
+  reason, so the user understands why a source is missing from the results.
+
+---
+
 ## Blocked — Resolved
 
 

@@ -67,25 +67,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 6 — Search and results
 
-### T-060 · Search screen
-```
-status: todo
-depends: T-051, T-012
-tier: M
-```
-**Acceptance**
-- Text input, mode selector (Search / Latest), multi-select of enabled sources, optional
-  category and min-seeders filter.
-- `enter` dispatches a `tea.Cmd` — `Update` never blocks (AGENT.md §6.1).
-- In-flight query shows a spinner and is cancellable with `esc`.
-- Recent queries from the store offered as suggestions.
-- **`enter` on an empty query runs Latest** rather than doing nothing — an empty box is a
-  request to see what's there, not a mistake to scold.
-- `L` from anywhere runs Latest against the currently selected sources and jumps to results.
-- Sources that cannot serve the selected mode are shown greyed in the multi-select with the
-  reason, so the user understands why a source is missing from the results.
-
----
+**Done (archived in `docs/tracker-archive.md`):** `T-060` Search screen.
 
 ### T-061 · Results screen
 ```
@@ -720,7 +702,11 @@ when it reaches it and does not start backlog items on its own.
 - `T-950` Wire `lifecycle.Session` into the composition root when one exists: `NewSession` after
   `OpenStore` and the engine, `Resume` before the TUI starts (show `ResumeReport.Missing` on
   first render), `Save` after every add/remove, and `ShutdownOptions.Session`. The add flow
-  (T-070) records `Origin` with `SetTorrent` before `Save`; `Save` keeps it. From T-041.
+  (T-070) records `Origin` with `SetTorrent` before `Save`; `Save` keeps it. From T-041. Also pass
+  `tui.WithHistory(store)` when wiring `tui.New` there — T-060 built the search screen against a
+  `HistoryStore` interface `*store.Store` already satisfies, but no production call site (only
+  `internal/app/demo.go`'s `WithSearcher`) passes one yet, so recent-query suggestions are inert
+  outside tests until this wiring exists. From T-060 QA.
 - `T-951` Downloads screen: a row whose `Err` wraps `engine.ErrDataMissing` offers removal (the
   `x` dialog, keep-data default) as its primary action, not just the truncated reason (T-071,
   T-072). From T-041.
@@ -751,6 +737,12 @@ when it reaches it and does not start backlog items on its own.
   in T-041). Options: selecting the library's classic file IO is only possible through the
   `TORRENT_STORAGE_DEFAULT_FILE_IO` env var at process start, so use a wrapping `storage.ClientImpl`
   whose close releases handles, or a small tortui-owned file storage. Tier H.
+- `T-956` The search screen's recent-query suggestions (T-060) are display-only: `Recent: ...` is
+  rendered from `HistoryStore.ListHistory`, but nothing lets the user click/select one back into
+  the query field — the acceptance text says "offered as suggestions," which this reads narrowly
+  as "shown," not "recallable." Needs a keybind (the flat cursor would need a row for the
+  suggestion list, or a dedicated key) that sets `search.query` to the chosen entry. Found by QA
+  on T-060 (PR #39).
 
 
 
@@ -872,6 +864,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-106 | 2026-09-25 | T-034: queue via optional engine.Queuer; space shortfall pauses as StateErrored; seed-policy stop shows StatePaused, Resume overrides; listen port 6881 with random fallback; Windows path limit is MAX_PATH |
 | DEC-107 | 2026-09-25 | T-949: merge gate is macOS-first (macOS make check + build-all + licenses + hostname check required, Linux/Windows make check advisory); reviewers stop checking CI; re-review resumes the same reviewer; stalled agents get one auto-resume then a fresh agent; tests wait on a predicate/terminal state, not one exact intermediate state; Windows shellcheck installs from a pinned, checksum-verified GitHub release |
 | DEC-108 | 2026-09-25 | T-041: session resume via optional engine.Resumer; persistent per-destination piece completion; unresumable torrents tracked as StateErrored (ErrDataMissing); lifecycle.Session saves only after Resume |
+| DEC-109 | 2026-09-25 | T-060: internal/tui defines its own Searcher/HistoryStore interfaces, never a concrete Registry/Store; New() gains a variadic Option instead of new required params; esc-cancel/space-toggle handled as raw key checks, not declarative Bindings, to stay inside the search screen's help overlay's 24-line budget at the 80×24 floor; empty query dispatches Latest; L jumps to Results once the fetch resolves |
 
 ## Blocked
 
