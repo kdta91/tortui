@@ -67,23 +67,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 6 — Search and results
 
-**Done (archived in `docs/tracker-archive.md`):** `T-060` Search screen · `T-061` Results screen ·
-`T-062` Trust badges and filtering.
-
----
-
-### T-063 · Details screen
-```
-status: todo
-depends: T-061
-tier: M
-```
-**Acceptance**
-- Full title, size, category, uploader, trust, published date, source URL, infohash.
-- File list when the indexer provides one, otherwise an explicit "not available from this
-  source" state.
-- `u` opens the source page in the system browser via `internal/platform`.
-- `enter` adds the torrent and switches to the downloads screen.
+**Done (archived in `docs/tracker-archive.md`):** `T-060` Search screen · `T-061` Results screen · `T-062` Trust badges and filtering · `T-063` Details screen.
 
 ---
 
@@ -722,6 +706,29 @@ when it reaches it and does not start backlog items on its own.
   `"1023.9 GB"`, etc. — one decimal digit plus a 4-character unit above 1000) while the Size
   column is only 8 wide, so `components.Table`'s `theme.Truncate` ellipsises it. Either widen the
   column, or round/format so the string never exceeds 8. Found by QA on T-061 (PR #40).
+- `T-959` The results-screen `?` help overlay is 27 lines at 80×24, over the 24-line floor
+  (DEC-109, AGENT.md §7). Bring it to 24 or fewer, for example by merging the s/S lines or the
+  1–4 screen-jump lines. Found by QA on T-062 (PR #41).
+- `T-960` No test checks that the trust column in `results.go` sets `Accent: true`. Found by QA
+  on T-062 (PR #41).
+- `T-961` The absence checks in the teatest trust-filter tests are weak: a 150ms sleep followed
+  by `io.ReadAll` can see no new frame at all. Found by QA on T-062 (PR #41).
+- `T-962` The first `s` onto the Trust column sorts ascending, so the most trusted rows need `S`
+  to reach the top. Consider descending as the first direction. Found by QA on T-062 (PR #41).
+- `T-963` `resultsModel.setResults`'s initial row selection anchors to the raw pre-sort result
+  order — `components.Table.SetRows`'s `ensureSelection` runs before `applyModeDefault`'s sort,
+  and the subsequent `SortBy` calls preserve selection by identity — rather than the row visually
+  at the top after the default sort. A fresh result set's highlighted row is not necessarily the
+  one shown at the top of the table. Found while building T-063, whose `d` key needed "the
+  highlighted row" to mean something predictable.
+- `T-964` `TestDetailsScreenEndToEndSelectAndAdd` (`internal/tui/details_test.go`) never checks
+  that the rendered output actually shows the downloads screen after `enter` — it only waits for
+  the "added ..." status-bar message, which appears regardless of which screen is current.
+  Strengthen it to also assert on the downloads screen's own body. Found by QA on T-063 (PR #42).
+- `T-965` `details.go`'s file list (`writeWrappedField`'s sibling rendering under "Files") has no
+  scrolling or cap: a long `indexer.ExtraKeyFiles` list can overflow the 80×24 floor with no way
+  to see the rest. Needs the same kind of viewport `components.Table` already has, or a hard cap
+  with a "+N more" line. Found by QA on T-063 (PR #42).
 
 
 
@@ -845,6 +852,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-108 | 2026-09-25 | T-041: session resume via optional engine.Resumer; persistent per-destination piece completion; unresumable torrents tracked as StateErrored (ErrDataMissing); lifecycle.Session saves only after Resume |
 | DEC-109 | 2026-09-25 | T-060: internal/tui defines its own Searcher/HistoryStore interfaces, never a concrete Registry/Store; New() gains a variadic Option instead of new required params; esc-cancel/space-toggle handled as raw key checks, not declarative Bindings, to stay inside the search screen's help overlay's 24-line budget at the 80×24 floor; empty query dispatches Latest; L jumps to Results once the fetch resolves |
 | DEC-111 | 2026-09-25 | T-062: components.Table gains Row.SortKey, Column.SortMissingLast, and Column.Accent (all generic, no Trust-specific logic); Trust's sort key comes from the real Trust value since Badge() renders Unknown/None identically; Unknown pins last in both sort directions; the "t" filter toggle re-derives rows from resultsModel.allRows |
+| DEC-112 | 2026-09-25 | T-063: indexer.ExtraKeyFiles is a new well-known, optional Extra convention for the details screen's file list; internal/platform.OpenURL (open/xdg-open/rundll32, http(s)-only) backs `u`; results-screen j/k now move the table's own cursor instead of the unused generic m.selection |
 
 ## Blocked
 

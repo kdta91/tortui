@@ -48,12 +48,13 @@ func TestNavigationAllScreensViaNumberKeys(t *testing.T) {
 		key  string
 		want string
 	}{
-		// ScreenSearch (T-060) and ScreenResults (T-061) are real now:
-		// "Query:" and "No search yet" are their own stable markers, not
-		// the generic placeholder text the remaining screens still render.
+		// ScreenSearch (T-060), ScreenResults (T-061), and ScreenDetails
+		// (T-063) are real now: "Query:", "No search yet", and "No result
+		// selected" are their own stable markers, not the generic
+		// placeholder text the remaining screens still render.
 		{"1", "Query:"},
 		{"2", "No search yet"},
-		{"3", ScreenDetails.String() + " screen"},
+		{"3", "No result selected"},
 		{"4", ScreenDownloads.String() + " screen"},
 		{"5", ScreenSettings.String() + " screen"},
 	}
@@ -73,13 +74,14 @@ func TestNavigationTabCyclesForwardAndBack(t *testing.T) {
 	t.Cleanup(func() { _ = tm.Quit() })
 
 	// Starts on ScreenSearch. tab -> results -> details -> downloads ->
-	// settings -> (wrap) search. ScreenSearch and ScreenResults have real
-	// content now (T-060, T-061), so they are checked by their own
-	// "Query:"/"No search yet" markers rather than the generic placeholder
-	// text the remaining screens still render.
+	// settings -> (wrap) search. ScreenSearch, ScreenResults, and
+	// ScreenDetails have real content now (T-060, T-061, T-063), so they are
+	// checked by their own "Query:"/"No search yet"/"No result selected"
+	// markers rather than the generic placeholder text the remaining
+	// screens still render.
 	forward := []string{
 		"No search yet",
-		ScreenDetails.String() + " screen",
+		"No result selected",
 		ScreenDownloads.String() + " screen",
 		ScreenSettings.String() + " screen",
 		"Query:",
@@ -266,7 +268,14 @@ func TestQuitConfirmEscRestoresScreenAndSelection(t *testing.T) {
 
 	// Move off the starting screen and away from selection 0, so
 	// "restored" is a meaningful assertion rather than trivially true of
-	// the zero value.
+	// the zero value. Two tabs lands on ScreenDetails rather than the
+	// first tab's ScreenResults: T-063 gave results its own real per-row
+	// selection (the results table's cursor), so j/k there now moves that
+	// instead of the generic m.selection this test means to exercise —
+	// ScreenDetails (and downloads/settings, still placeholders) are what's
+	// left driving the generic fallback.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = updated.(Model)
 	updated, _ = m.Update(keyRune("j"))

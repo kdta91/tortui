@@ -8,6 +8,7 @@ import (
 
 	"github.com/kdta91/tortui/internal/engine"
 	"github.com/kdta91/tortui/internal/indexer"
+	"github.com/kdta91/tortui/internal/platform"
 	"github.com/kdta91/tortui/internal/tui/components"
 	"github.com/kdta91/tortui/internal/tui/theme"
 )
@@ -83,6 +84,19 @@ type Model struct {
 	// handleSearchResult. See results.go.
 	results resultsModel
 
+	// details is the T-063 details screen's own state: whichever
+	// indexer.Result the `d` key (ActionDetails) most recently selected off
+	// the results table, resolved back to the real Result via
+	// m.lastResults. See details.go.
+	details detailsModel
+
+	// openURL opens a URL in the system's default browser — `u`
+	// (ActionOpenSource) on the details screen. It defaults to
+	// platform.OpenURL (see New) and is overridable via WithOpenURL, the
+	// seam a test uses so driving `u` through a teatest program never
+	// actually shells out to a real browser.
+	openURL openURLFunc
+
 	// searcher is the source-agnostic fan-out the search screen dispatches
 	// against — typically *indexer.Registry in production, a test double
 	// in tests. It satisfies the local Searcher interface (search.go)
@@ -137,6 +151,22 @@ func WithHistory(h HistoryStore) Option {
 	return func(m *Model) { m.history = h }
 }
 
+// openURLFunc opens rawURL in the system's default browser: platform.OpenURL's
+// own signature. It exists as a named type so Model.openURL and WithOpenURL
+// don't have to keep repeating `func(string) error`, the same reason
+// Searcher/HistoryStore are named interfaces rather than inlined ones.
+type openURLFunc func(rawURL string) error
+
+// WithOpenURL overrides the details screen's `u` action (ActionOpenSource)
+// from its default, platform.OpenURL, with f. Without this option, New
+// wires the real platform call; a test supplies a double here so a teatest
+// program driving `u` never actually shells out to a real browser
+// (AGENT.md §6.7's "unit tests make zero network calls" extends to this
+// external process the same way).
+func WithOpenURL(f openURLFunc) Option {
+	return func(m *Model) { m.openURL = f }
+}
+
 // New builds a Model wired to eng (typically a real engine in production,
 // internal/engine/fake in tests) and th, starting on ScreenSearch with no
 // modal open. opts wires the optional dependencies later screens need
@@ -156,8 +186,13 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 		opt(&m)
 	}
 
+	if m.openURL == nil {
+		m.openURL = platform.OpenURL
+	}
+
 	m.search = newSearchModel(m.searcher, m.history)
 	m.results = newResultsModel()
+	m.details = newDetailsModel()
 
 	return m
 }
@@ -318,6 +353,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case searchTickMsg:
 		return m.handleSearchTick(msg)
 
+	case addResultMsg:
+		return m.handleAddResult(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -417,11 +455,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.screen == ScreenResults {
+			m.results.table = m.results.table.MoveDown()
+			return m, nil
+		}
+
 		m.selection++
 		return m, nil
 	case ActionMoveUp:
 		if m.screen == ScreenSearch {
 			m.search = m.search.moveCursor(-1)
+			return m, nil
+		}
+
+		if m.screen == ScreenResults {
+			m.results.table = m.results.table.MoveUp()
 			return m, nil
 		}
 
@@ -434,8 +482,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == ScreenSearch {
 			return m.dispatchSearch(false)
 		}
+		if m.screen == ScreenDetails {
+			return m.handleAddFromDetails()
+		}
 		// Results' own meaning of enter (add torrent) belongs to T-070;
 		// downloads' (open details) to T-071. No-op here.
+		return m, nil
+	case ActionDetails:
+		if m.screen == ScreenResults {
+			return m.handleOpenDetails()
+		}
+		return m, nil
+	case ActionOpenSource:
+		if m.screen == ScreenDetails {
+			return m.handleOpenSource()
+		}
 		return m, nil
 	case ActionRefresh:
 		// AGENT.md §7: "R | Refresh current results" — re-runs the exact
@@ -487,9 +548,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = ScreenSettings
 		return m, nil
 	default:
-		// ActionDetails, open-file/folder/source, pause/resume, and remove
-		// all belong to screens/components this task does not implement
-		// (T-063, T-071, T-080). No-op here.
+		// open-file/folder, pause/resume, and remove all belong to the
+		// downloads screen this task does not implement (T-071). No-op
+		// here.
 		return m, nil
 	}
 }
@@ -648,6 +709,8 @@ func (m Model) renderScreenBody() string {
 		return m.renderSearchScreen()
 	case ScreenResults:
 		return m.renderResultsScreen()
+	case ScreenDetails:
+		return m.renderDetailsScreen()
 	}
 
 	body := m.screen.String() + " screen — placeholder, see " + m.screen.placeholderTask()

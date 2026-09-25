@@ -232,6 +232,21 @@ type Result struct {
 // Validate wraps it with the indexer and result ids.
 var ErrNoLink = errors.New("result has neither a magnet nor a torrent URL")
 
+// ExtraKeyFiles is a well-known, optional Result.Extra key an adapter may
+// set to the item's file list, one path per line, when the source publishes
+// one — the details screen's file listing (T-063; AGENT.md §7). Setting it
+// is entirely optional: no adapter is required to populate it, and it
+// exists in every adapter's package the same way, so a caller checking for
+// it is checking a documented, source-agnostic convention — not
+// special-casing one source's own field, which is what the Extra field's
+// doc comment above actually warns against. It mirrors registry.go's
+// ExtraKeySources/ExtraKeyCacheHit in that sense, except an adapter (not
+// the registry) sets it. The listed names are for display only: they
+// describe a search result no download yet exists to validate them
+// against, and must never be resolved against a filesystem path
+// (AGENT.md §6.11).
+const ExtraKeyFiles = "tortui.files"
+
 // Validate reports whether a Result is usable, which means exactly one thing:
 // it has a link the engine could act on. A Result with neither Magnet nor
 // TorrentURL is rejected with an error wrapping ErrNoLink; a value that is only
