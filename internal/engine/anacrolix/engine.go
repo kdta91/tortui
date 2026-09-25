@@ -108,6 +108,19 @@ type Options struct {
 	// sleeping on a wall clock.
 	newTicker func(time.Duration) (<-chan time.Time, func())
 
+	// beforeAttach, when set, is called by fetchAndAttach immediately after
+	// a fetched .torrent's metainfo has been parsed successfully and
+	// immediately before attach is called. It exists so a package test can
+	// land a Remove exactly between those two points, deterministically:
+	// closing tr.done (which Remove does) also cancels fetchAndAttach's own
+	// HTTP request context, so a Remove during the network wait itself
+	// makes the fetch fail before attach is ever reached — it cannot
+	// exercise the tr.removed guard inside attach. Pausing here, after the
+	// network part has already succeeded, is the only way to land a Remove
+	// in the narrow window that guard actually protects (T-944 QA
+	// remediation).
+	beforeAttach func()
+
 	// HTTPClient fetches a .torrent named by AddSource.TorrentURL. A nil
 	// HTTPClient builds one with tortui's shared defaults.
 	HTTPClient *httpx.Client
@@ -205,6 +218,7 @@ type Engine struct {
 	downloadDir     string
 	roots           []string
 	http            *httpx.Client
+	beforeAttach    func()
 
 	done      chan struct{}
 	wg        sync.WaitGroup
@@ -277,6 +291,7 @@ func New(opts Options) (*Engine, error) {
 		downloadDir:     downloadDir,
 		roots:           destinationRoots(downloadDir, opts.Config.SavedDestinations),
 		http:            httpClient,
+		beforeAttach:    opts.beforeAttach,
 		done:            make(chan struct{}),
 		torrents:        make(map[string]*tracked),
 		storages:        make(map[string]storage.ClientImplCloser),
@@ -536,10 +551,52 @@ func (e *Engine) addSpec(spec *torrent.TorrentSpec, dest string) (string, error)
 	}
 
 	if err := e.attach(tr, spec, dest); err != nil {
+		// attach can fail (e.g. validateSpecPaths refusing an unsafe
+		// path) before it ever calls client.AddTorrentSpec, so there is
+		// nothing on the underlying client to clean up here — but tr
+		// itself, minted by findOrTrack above, is still sitting in
+		// e.torrents/e.order with its infohash recorded. Left there, a
+		// retried Add of the same magnet/file would have findOrTrack
+		// match that stale, never-attached entry by infohash and hand
+		// back its id with a nil error — silently succeeding on a
+		// retry of a refused Add, in violation of AGENT.md §6.11's
+		// "refused with a clear reason, not silently rewritten" (T-944
+		// QA remediation, regression from this task's own findOrTrack
+		// change: the pre-T-944 findByInfoHash only matched an
+		// already-attached tr.t != nil entry, so this stale entry was
+		// never found — this untrack restores that same effect while
+		// keeping the concurrency fix). Untracking it here means a
+		// retry starts clean: a fresh findOrTrack finds nothing, mints
+		// a new entry, and attach fails the same way again, reporting
+		// the same error every time the underlying condition holds.
+		e.untrackFailedSpec(tr)
 		return "", err
 	}
 
 	return tr.id, nil
+}
+
+// untrackFailedSpec removes tr from e.torrents/e.order after its attach
+// call failed, freeing its infohash for a subsequent Add to retry against a
+// clean slate. It is a no-op if tr is no longer the entry registered under
+// its own id — e.g. a concurrent Remove already untracked it — so it never
+// deletes something else's entry.
+func (e *Engine) untrackFailedSpec(tr *tracked) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.torrents[tr.id] != tr {
+		return
+	}
+
+	delete(e.torrents, tr.id)
+
+	for i, id := range e.order {
+		if id == tr.id {
+			e.order = append(e.order[:i], e.order[i+1:]...)
+			break
+		}
+	}
 }
 
 // findOrTrack looks up a tracked torrent by infohash and, if none is found,
@@ -653,6 +710,10 @@ func (e *Engine) fetchAndAttach(ctx context.Context, tr *tracked, rawURL, dest s
 	if existing, ok := e.findByInfoHash(spec.InfoHash.HexString()); ok && existing != tr.id {
 		e.fail(tr, fmt.Errorf("already added as %s", existing))
 		return
+	}
+
+	if e.beforeAttach != nil {
+		e.beforeAttach()
 	}
 
 	if err := e.attach(tr, spec, dest); err != nil {
