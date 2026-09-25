@@ -12,7 +12,8 @@
 # chosen when adding a download override this.
 download_dir = "~/Downloads/tortui"
 
-# Additional destination roots you've saved, offered when adding a torrent.
+# Additional destination roots you've saved, offered when adding a torrent
+# (most recently used first).
 saved_destinations = []
 
 # Rate limits in bytes/sec. 0 means unlimited.

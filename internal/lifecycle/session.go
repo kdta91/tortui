@@ -85,6 +85,18 @@ func (s *Session) Resume(ctx context.Context) (ResumeReport, error) {
 		return report, nil
 	}
 
+	// Every destination the user chose in an earlier session is a known
+	// root again before anything is restored into it (AGENT.md §6.12,
+	// T-074), so a torrent saved there resumes rather than coming back
+	// errored as "outside every known root".
+	if ra, ok := s.engine.(engine.RootAdder); ok {
+		for _, dir := range s.store.Destinations() {
+			if err := ra.AddRoot(dir); err != nil {
+				s.logger.Warn("lifecycle: recorded destination not restored as a root", "dir", dir, "error", err)
+			}
+		}
+	}
+
 	records := s.store.ListTorrents()
 	slices.SortStableFunc(records, func(a, b store.TorrentRecord) int {
 		return cmp.Or(a.AddedAt.Compare(b.AddedAt), cmp.Compare(a.ID, b.ID))

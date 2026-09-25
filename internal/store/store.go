@@ -75,6 +75,9 @@ type Store struct {
 	history    []historyRecord
 	historySeq uint64
 	prefs      Prefs
+	// destinations is the used-destinations list, most recent first
+	// (destinations.go).
+	destinations []string
 
 	dirty  bool
 	closed bool
@@ -162,6 +165,12 @@ func (s *Store) load() error {
 				return fmt.Errorf("store: decode prefs: %w", err)
 			}
 		}
+
+		dests, err := loadDestinations(pb)
+		if err != nil {
+			return err
+		}
+		s.destinations = dests
 		return nil
 	})
 }
@@ -210,6 +219,7 @@ func (s *Store) flush() error {
 	history := make([]historyRecord, len(s.history))
 	copy(history, s.history)
 	prefs := s.prefs
+	destinations := append([]string(nil), s.destinations...)
 	s.mu.Unlock()
 
 	err := s.db.Update(func(tx *bolt.Tx) error {
@@ -219,7 +229,10 @@ func (s *Store) flush() error {
 		if err := writeHistory(tx, history); err != nil {
 			return err
 		}
-		return writePrefs(tx, prefs)
+		if err := writePrefs(tx, prefs); err != nil {
+			return err
+		}
+		return writeDestinations(tx, destinations)
 	})
 	if err != nil {
 		// The write failed; leave dirty set so the next tick (or an

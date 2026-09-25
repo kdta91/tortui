@@ -404,11 +404,11 @@ func (m Model) renderRemoveConfirm() string {
 
 // destinationRoots is the known destination root set `o`/`f` check a path
 // against (AGENT.md §6.12): the default download directory, every saved
-// destination, and the destination of every torrent in the current
-// snapshot. Empty entries are dropped; platform.OpenFile resolves and
+// destination, every destination a torrent was added to (T-074), and the
+// destination of every torrent in the current snapshot. Empty entries are dropped; platform.OpenFile resolves and
 // validates the rest itself.
 func (m Model) destinationRoots() []string {
-	roots := make([]string, 0, 1+len(m.savedDestinations)+len(m.torrentStatuses))
+	roots := make([]string, 0, 1+len(m.savedDestinations)+len(m.usedDestinations)+len(m.torrentStatuses))
 
 	add := func(p string) {
 		if strings.TrimSpace(p) != "" {
@@ -419,6 +419,10 @@ func (m Model) destinationRoots() []string {
 	add(m.downloadDir)
 
 	for _, d := range m.savedDestinations {
+		add(d)
+	}
+
+	for _, d := range m.usedDestinations {
 		add(d)
 	}
 

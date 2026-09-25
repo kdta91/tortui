@@ -197,7 +197,9 @@ func NewDemo(opts DemoOptions) (*Demo, error) {
 	// this package doc comment and T-056's tracker notes said T-060 would
 	// define, so this is the only change this file needed to make the
 	// indexer half of --demo visually reachable.
-	model := tui.New(eng, th, tui.WithSearcher(reg))
+	// WithDownloadDir makes the sandbox the destination picker's default
+	// (T-074), so adding a result in the demo never writes outside it.
+	model := tui.New(eng, th, tui.WithSearcher(reg), tui.WithDownloadDir(downloadsDir))
 	model.Banner = DemoBanner
 
 	return &Demo{

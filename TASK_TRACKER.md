@@ -73,37 +73,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 7 — Downloads
 
-**Done (archived in `docs/tracker-archive.md`):** `T-070` Add flow · `T-071` Downloads screen · `T-072` Download actions · `T-073` Open file and folder.
-
----
-
-### T-074 · Download destination selection
-```
-status: todo
-depends: T-070, T-034, T-054
-tier: H
-```
-**Acceptance**
-- The add flow shows the destination and lets the user change it **before** the torrent starts.
-  Default is the configured download dir; the choice is per-torrent.
-- Destination picker offers: the default, a list of saved destinations, the most recently used,
-  and a free-text path field. Directory browsing is a plus, not a requirement — a validated
-  path field plus saved entries covers the real use case.
-- Path input expands `~`, expands environment variables, accepts Windows drive letters and UNC
-  paths, and normalises separators. Relative paths resolve against the default download dir,
-  never against the process working directory.
-- Live validation shows: exists or will-be-created, writable, and free space against the
-  torrent's size (T-034). A destination failing any check blocks the add with the reason
-  visible, rather than failing after the user walks away.
-- Directories are created on demand, with parents, only after the user confirms.
-- The chosen path is recorded in the store so the downloads screen, open-file, open-folder, and
-  remove-with-data all operate on the right root after a restart (T-041).
-- Saved destinations are managed in Settings (T-082) and offered in most-recent-first order.
-- **Every destination the user has used or saved joins the known-roots set** that path
-  containment is checked against (AGENT.md §6.12). Adding a destination is the only way that
-  set grows — it is never widened implicitly by a torrent's contents.
-- `teatest`: accept default, pick a saved destination, type a new path, type an invalid path,
-  type a path with no space, cancel out of the picker.
+**Done (archived in `docs/tracker-archive.md`):** `T-070` Add flow · `T-071` Downloads screen · `T-072` Download actions · `T-073` Open file and folder · `T-074` Download destination selection.
 
 ---
 
@@ -669,7 +639,8 @@ when it reaches it and does not start backlog items on its own.
   the add flow's Origin persistence and configured download directory are inert outside tests
   until this wiring exists — the same gap T-950 already documents for `tui.WithHistory`. Found in
   review of T-070 (PR #43).
-- `T-968` `details.go`'s `resolveSavePath` never checks that `m.downloadDir` is an absolute path
+- `T-968` *(resolved by T-074: the picker only offers an absolute default and refuses relative
+  paths without one)* `details.go`'s `resolveSavePath` never checks that `m.downloadDir` is an absolute path
   before cleaning and returning it — it trusts `WithDownloadDir`'s caller-side contract
   ("expected to already be an absolute path") rather than verifying it. T-074 (per-torrent
   destination picker) should enforce this when it replaces this default-only answer, per
@@ -683,6 +654,10 @@ when it reaches it and does not start backlog items on its own.
   the launcher only opens/reveals, never writes), but it is not closed. Closing it would mean
   handing the launcher an already-open handle, which none of the three OS launchers accept.
   Found in review of T-073 (PR #46).
+- `T-970` Production wiring for T-074: the composition root (T-950/T-967) must also pass
+  `tui.WithDestinationStore(store)` and `tui.WithMinFreeSpace(<parsed min_free_space>)` into
+  `tui.New`, and T-082 must call `engine.RootAdder.AddRoot` when a saved destination is added at
+  runtime (config's saved destinations are engine roots only at construction). Found in T-074.
 
 
 
@@ -811,6 +786,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-114 | 2026-09-26 | T-071: active/completed split treats StatePaused-at-Progress-1 as complete too (seed-policy-satisfied torrents have no distinct state); queue position and seed-policy text read new optional queueProvider/seedPolicyProvider assertions, fake implements neither; TorrentStore gained GetTorrent so Source/added-at fall back to the store record for a torrent added this session (live Origin is zero until a restart); enter toggles an errored row's reason in place rather than reusing ScreenDetails |
 | DEC-115 | 2026-09-26 | T-072: optimistic pause/resume overlays snapshots only while the engine call is in flight, the next snapshot wins once it returns, failure reverts; a second p in flight is refused; remove dialog targets the ID captured at open and has no one-key delete |
 | DEC-116 | 2026-09-26 | T-073: containment enforced inside platform.OpenFile/RevealFile (symlink-resolved, strictly inside a root, logged refusal); roots = download dir + saved destinations + every torrent SavePath; f reveals the largest file o opens, both refuse below 100%; Windows quotes via SysProcAttr.CmdLine and ignores explorer exit 1; Linux reveals the parent dir |
+| DEC-117 | 2026-09-26 | T-074: destination picker as a modal step of the add flow; validation in a Cmd keyed by path; known roots grow only via new optional engine.RootAdder + store.TouchDestination, re-admitted by Session.Resume; / and \\ both separators, Windows drive/UNC paths accepted only where filepath gives them a volume; relative paths resolve against the default only |
 
 ## Blocked
 

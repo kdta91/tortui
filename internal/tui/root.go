@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -70,8 +71,7 @@ type Model struct {
 	// a components.Dialog now so the generic modal component has one real
 	// caller inside this task's own scope, per T-054's acceptance
 	// criteria, without building ahead into T-072's remove-confirm flow or
-	// T-074's destination picker, which get their own Dialog instances
-	// when those tasks land.
+	// T-074's destination picker, which own their modal state themselves.
 	quitConfirm components.Dialog
 	// removeConfirm is the downloads screen's `x` dialog (T-072,
 	// download_actions.go): remove keeping data, remove deleting data, or
@@ -178,12 +178,29 @@ type Model struct {
 
 	// downloadDir is the configured default download destination
 	// (typically config.Paths.DownloadDir, always absolute in
-	// production). The add flow (details.go, T-070) resolves it into
-	// AddSource.SavePath for every add until T-074's per-torrent
-	// destination picker lands on top of this same flow. Empty means "let
-	// the engine fall back to its own configured default"
-	// (engine.AddSource.SavePath's own documented behaviour).
+	// production): the destination picker's Default row, and the folder a
+	// typed relative path resolves against (destination.go, T-074). A
+	// relative or empty value offers no Default row.
 	downloadDir string
+
+	// dest is the add flow's destination picker while it is open
+	// (destination.go, T-074).
+	dest destPicker
+	// usedDestinations are the destinations torrents were added to, most
+	// recent first: loaded from destStore at New, grown by each successful
+	// add. Each is a known root for open/reveal (AGENT.md §6.12).
+	usedDestinations []string
+	// destStore persists usedDestinations across restarts. nil is valid.
+	destStore DestinationStore
+	// minFreeSpace is the margin (bytes) the picker's free-space check
+	// requires on top of a torrent's size — config's min_free_space, the
+	// same margin the engine enforces (T-034).
+	minFreeSpace int64
+	// destProbe, lookupEnv, and homeDir are the filesystem and environment
+	// queries the picker makes; tests replace them.
+	destProbe destProbe
+	lookupEnv func(string) (string, bool)
+	homeDir   func() (string, error)
 
 	// lastResults, lastSourceErrs, and lastQuery are the most recent
 	// completed search's outcome, set by search.go's Update handling of
@@ -236,6 +253,19 @@ func WithTorrentStore(s TorrentStore) Option {
 // its own configured default.
 func WithDownloadDir(dir string) Option {
 	return func(m *Model) { m.downloadDir = dir }
+}
+
+// WithDestinationStore wires s as the record of which destinations torrents
+// were added to (destination.go, T-074): offered most recently used first,
+// and part of the known destination roots after a restart.
+func WithDestinationStore(s DestinationStore) Option {
+	return func(m *Model) { m.destStore = s }
+}
+
+// WithMinFreeSpace sets the free-space margin, in bytes, the destination
+// picker requires on top of a torrent's size (config min_free_space).
+func WithMinFreeSpace(n int64) Option {
+	return func(m *Model) { m.minFreeSpace = n }
 }
 
 // openURLFunc opens rawURL in the system's default browser: platform.OpenURL's
@@ -309,6 +339,14 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 
 	if m.revealFile == nil {
 		m.revealFile = platform.RevealFile
+	}
+
+	m.destProbe = defaultDestProbe()
+	m.lookupEnv = os.LookupEnv
+	m.homeDir = os.UserHomeDir
+
+	if m.destStore != nil {
+		m.usedDestinations = m.destStore.Destinations()
 	}
 
 	m.search = newSearchModel(m.searcher, m.history)
@@ -484,6 +522,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case addResultMsg:
 		return m.handleAddResult(msg)
 
+	case destCheckMsg:
+		return m.handleDestCheck(msg)
+
 	case resolveResultMsg:
 		return m.handleResolveResult(msg)
 
@@ -508,6 +549,8 @@ func (m Model) context() Context {
 		return ContextQuitConfirm
 	case m.removeConfirm.IsOpen():
 		return ContextRemoveConfirm
+	case m.dest.open:
+		return ContextDestination
 	case m.showHelp:
 		return ContextHelp
 	case m.errorDetail:
@@ -523,6 +566,12 @@ func (m Model) context() Context {
 // implement and is a deliberate no-op — a later task gives it behaviour by
 // handling it in that screen's own Update, not by changing this switch.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The destination picker (T-074) is modal and owns every key while it
+	// is open, including typing into its path field.
+	if m.dest.open {
+		return m.handleDestinationKey(msg)
+	}
+
 	// While the search screen has a field in text-edit mode, most keys —
 	// including letters that are otherwise global one-key hotkeys like
 	// "s", "o", "p", "q" — must type into that field instead of triggering
@@ -783,6 +832,8 @@ func (m Model) View() string {
 		body = m.renderQuitConfirm()
 	case ContextRemoveConfirm:
 		body = m.renderRemoveConfirm()
+	case ContextDestination:
+		body = m.renderDestinationPicker()
 	case ContextErrorDetail:
 		body = m.renderErrorDetail()
 	default:
