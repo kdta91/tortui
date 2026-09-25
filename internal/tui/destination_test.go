@@ -253,7 +253,7 @@ func TestExpandDestinationRefusals(t *testing.T) {
 // TestExpandDestinationWindowsPaths: drive-letter and UNC paths are accepted
 // exactly where the OS gives them a volume name (Windows) and refused
 // elsewhere, with separators normalised either way. The branch is chosen by
-// filepath's own behaviour, not runtime.GOOS (AGENT.md §14).
+// filepath's own behaviour, never an OS-name switch (AGENT.md §14).
 func TestExpandDestinationWindowsPaths(t *testing.T) {
 	t.Parallel()
 
@@ -644,6 +644,15 @@ func startPicker(t *testing.T, m Model) *teatest.TestModel {
 	return tm
 }
 
+// pastePath sends text as one bracketed paste, so the picker only ever
+// validates the complete path: typing it rune by rune renders (and
+// validates) every prefix, and a wait on the check text could match a
+// prefix's frame before the full path's check arrived. Rune-by-rune typing
+// is covered by TestPickerPathFieldEditing.
+func pastePath(tm *teatest.TestModel, text string) {
+	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Paste: true})
+}
+
 func savePaths(eng engine.Engine) []string {
 	var out []string
 	for _, s := range eng.List() {
@@ -700,7 +709,7 @@ func TestDestinationPickerTeatest(t *testing.T) {
 
 		waitForOutput(t, tm, "writable")
 		tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-		tm.Type(target)
+		pastePath(tm, target)
 		waitForOutput(t, tm, "will be created")
 		tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 		waitForOutput(t, tm, "create folder and add")
@@ -729,7 +738,7 @@ func TestDestinationPickerTeatest(t *testing.T) {
 
 		waitForOutput(t, tm, "writable")
 		tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-		tm.Type("not-a-folder/sub")
+		pastePath(tm, "not-a-folder/sub")
 		waitForOutput(t, tm, "is a file")
 		tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 		waitForOutput(t, tm, "can't add here")
@@ -761,7 +770,7 @@ func TestDestinationPickerTeatest(t *testing.T) {
 		waitForOutput(t, tm, "can't add here: not enough space")
 
 		tm.Send(tea.KeyMsg{Type: tea.KeyDown})
-		tm.Type(roomy)
+		pastePath(tm, roomy)
 		waitForOutput(t, tm, "free, needs")
 		tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 		// The status bar still shows the refusal, so wait on the engine.
