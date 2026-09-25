@@ -3452,6 +3452,38 @@ to the store record. Vanished torrents: engine error → status bar, pending dro
 
 ---
 
+### T-073 · Open file and folder
+```
+status: done
+depends: T-071
+tier: H
+```
+**Files:** `internal/platform/`
+
+**Acceptance**
+- `o` opens the largest file in the torrent; `f` opens the containing folder.
+- Per-OS via build tags in `internal/platform`, no `runtime.GOOS` switches (AGENT.md §14):
+  macOS `open` / `open -R`; Linux `xdg-open`; Windows `explorer` / `explorer /select,`.
+- Each implementation has a unit test asserting the exact argv it would exec, without
+  actually launching anything. CI runs all three via `GOOS` cross-compilation of the tests.
+- Path is resolved, symlink-checked, and asserted to be **inside the known destination roots**
+  before launching (AGENT.md §6.12) — not against a single directory, since destinations are
+  per-torrent. Outside → refuse and log.
+- `exec.Command` with an argument slice, never a shell string. Test asserts a path containing
+  shell metacharacters is passed through inertly.
+- Incomplete torrent → status-bar message, no launch.
+
+**Notes:** `platform.OpenFile`/`RevealFile` (new `openfile*.go`) resolve the target through
+every symlink, require it to exist and sit strictly inside one of the roots they are handed
+(each root symlink-resolved too), log and return `ErrOutsideRoots`/`ErrUnsafeOpenPath`
+otherwise, and only then exec the resolved path. TUI `o`/`f` (`download_actions.go`) run
+`Files` in a `tea.Cmd`, pick the largest file, rebuild its path with `engine.CheckTorrentPath`,
+and pass roots = download dir + saved destinations + every torrent's SavePath. `f` reveals
+that same file. Windows quotes via `SysProcAttr.CmdLine` and ignores explorer's exit 1;
+Linux reveals the parent dir. Demo placeholder moved to `SavePath/<name>`. See DEC-116.
+
+---
+
 ## Blocked — Resolved
 
 

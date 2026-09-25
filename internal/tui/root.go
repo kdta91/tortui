@@ -137,6 +137,22 @@ type Model struct {
 	// actually shells out to a real browser.
 	openURL openURLFunc
 
+	// openFile and revealFile are the downloads screen's `o` and `f`
+	// (download_actions.go, T-073): open a file with its default
+	// application, or show it in its containing folder. They default to
+	// platform.OpenFile and platform.RevealFile, which refuse any path
+	// that does not resolve inside the roots they are handed; WithOpenFile
+	// and WithRevealFile are the seams a test uses so a keypress never
+	// launches a real process.
+	openFile   openPathFunc
+	revealFile openPathFunc
+
+	// savedDestinations are the user's extra destination roots
+	// (config.SavedDestinations), part of the known-root set `o`/`f` check
+	// a path against (AGENT.md §6.12) alongside downloadDir and every
+	// tracked torrent's own SavePath.
+	savedDestinations []string
+
 	// searcher is the source-agnostic fan-out the search screen dispatches
 	// against — typically *indexer.Registry in production, a test double
 	// in tests. It satisfies the local Searcher interface (search.go)
@@ -238,6 +254,30 @@ func WithOpenURL(f openURLFunc) Option {
 	return func(m *Model) { m.openURL = f }
 }
 
+// openPathFunc opens or reveals path, provided it resolves inside one of
+// roots: platform.OpenFile's and platform.RevealFile's shared signature.
+type openPathFunc func(path string, roots []string) error
+
+// WithOpenFile overrides the downloads screen's `o` action from its default,
+// platform.OpenFile, with f — the seam a test uses so pressing `o` never
+// launches a real application.
+func WithOpenFile(f openPathFunc) Option {
+	return func(m *Model) { m.openFile = f }
+}
+
+// WithRevealFile overrides the downloads screen's `f` action from its
+// default, platform.RevealFile, with f.
+func WithRevealFile(f openPathFunc) Option {
+	return func(m *Model) { m.revealFile = f }
+}
+
+// WithSavedDestinations adds dirs (config.SavedDestinations, each absolute)
+// to the known destination roots `o`/`f` accept a path inside (AGENT.md
+// §6.12).
+func WithSavedDestinations(dirs []string) Option {
+	return func(m *Model) { m.savedDestinations = append([]string(nil), dirs...) }
+}
+
 // New builds a Model wired to eng (typically a real engine in production,
 // internal/engine/fake in tests) and th, starting on ScreenSearch with no
 // modal open. opts wires the optional dependencies later screens need
@@ -261,6 +301,14 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 
 	if m.openURL == nil {
 		m.openURL = platform.OpenURL
+	}
+
+	if m.openFile == nil {
+		m.openFile = platform.OpenFile
+	}
+
+	if m.revealFile == nil {
+		m.revealFile = platform.RevealFile
 	}
 
 	m.search = newSearchModel(m.searcher, m.history)
@@ -623,6 +671,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ActionRemove:
 		// Bound only on ScreenDownloads (keymap.go).
 		return m.handleRemove()
+	case ActionOpenFile:
+		// Bound only on ScreenDownloads (keymap.go).
+		return m.handleOpenDownloadFile(false)
+	case ActionOpenFolder:
+		// Bound only on ScreenDownloads (keymap.go).
+		return m.handleOpenDownloadFile(true)
 	case ActionRefresh:
 		// AGENT.md §7: "R | Refresh current results" — re-runs the exact
 		// query that produced what's on screen (m.lastQuery/
@@ -673,7 +727,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = ScreenSettings
 		return m, nil
 	default:
-		// open-file/folder belong to T-073. No-op here.
 		return m, nil
 	}
 }

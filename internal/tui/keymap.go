@@ -16,7 +16,7 @@
 // dedup, and destination selection on top of it); downloads.go owns the
 // active/completed torrent list, its progress rows, and its own cursor
 // (T-071); download_actions.go gives those rows pause/resume, remove, and
-// open-source behaviour (T-072), with open file/folder still to come (T-073). The responsive table (T-053) is implemented in
+// open-source behaviour (T-072) and open file/folder (T-073). The responsive table (T-053) is implemented in
 // internal/tui/components. The status bar (T-052) is also implemented in
 // internal/tui/components and wired in here as root.go's bottom line and
 // ContextErrorDetail modal.
