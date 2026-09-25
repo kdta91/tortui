@@ -3427,6 +3427,31 @@ row's reason to its full text; `j`/`k` drive the screen's own cursor. `make chec
 
 ---
 
+### T-072 · Download actions
+```
+status: done
+depends: T-071, T-032, T-054
+tier: H
+```
+**Notes:** `download_actions.go`. `p` resumes a paused row, pauses anything else (errored → notice,
+no call); the row moves optimistically, the engine call runs in a `tea.Cmd`. Rule (DEC-115): while
+the call is in flight the optimistic state overlays every snapshot; once it returns OK the next
+snapshot wins; on failure the row reverts. A second `p` while in flight is refused (no ordering
+between two Cmds). `x` opens `removeConfirm` (keep / delete / cancel, default cancel, no one-key
+delete) targeting the ID captured at open, so a reorder cannot redirect it; a target gone from the
+snapshot at confirm is reported without an engine call. `u` opens `Origin.SourceURL`, falling back
+to the store record. Vanished torrents: engine error → status bar, pending dropped, no panic.
+`make check`, `make race` (tui), `make cover` (tui 96.0%) green; teatest drives pause → resume → remove.
+
+**Acceptance**
+- `p` pause/resume, optimistic state update reconciled on the next snapshot.
+- `x` opens the confirm dialog with three choices: remove keeping data, remove deleting data,
+  cancel. Default is cancel.
+- `u` opens the source page.
+- Actions on a torrent that vanished between render and keypress fail gracefully.
+
+---
+
 ## Blocked — Resolved
 
 

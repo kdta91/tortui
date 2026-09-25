@@ -6,8 +6,8 @@
 // the engine's own coalesced snapshots (Updates(), never polled — AGENT.md
 // §6.5) so this file's only job is turning that snapshot into rows and a
 // render, the same split every other screen in this package already
-// follows. T-072/T-073 give the rows real pause/resume/remove/open/folder
-// behaviour on top of what's built here; this task only displays them.
+// follows. download_actions.go (T-072) gives the rows pause/resume, remove,
+// and open-source behaviour; T-073 adds open file/folder.
 package tui
 
 import (
@@ -50,6 +50,10 @@ type downloadsModel struct {
 	// expandedErr is the ID of the one torrent whose error line is shown in
 	// full rather than truncated, or "" when none is expanded.
 	expandedErr string
+	// pending holds each torrent's in-flight or just-settled pause/resume
+	// (T-072, download_actions.go), keyed by ID. Replaced, never mutated in
+	// place (withPending), since Model is a value type.
+	pending map[string]pendingToggle
 }
 
 // newDownloadsModel returns a downloadsModel with nothing selected or

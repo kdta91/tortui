@@ -73,22 +73,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 7 — Downloads
 
-**Done (archived in `docs/tracker-archive.md`):** `T-070` Add flow · `T-071` Downloads screen.
-
----
-
-### T-072 · Download actions
-```
-status: todo
-depends: T-071, T-032, T-054
-tier: H
-```
-**Acceptance**
-- `p` pause/resume, optimistic state update reconciled on the next snapshot.
-- `x` opens the confirm dialog with three choices: remove keeping data, remove deleting data,
-  cancel. Default is cancel.
-- `u` opens the source page.
-- Actions on a torrent that vanished between render and keypress fail gracefully.
+**Done (archived in `docs/tracker-archive.md`):** `T-070` Add flow · `T-071` Downloads screen · `T-072` Download actions.
 
 ---
 
@@ -839,6 +824,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-112 | 2026-09-25 | T-063: indexer.ExtraKeyFiles is a new well-known, optional Extra convention for the details screen's file list; internal/platform.OpenURL (open/xdg-open/rundll32, http(s)-only) backs `u`; results-screen j/k now move the table's own cursor instead of the unused generic m.selection |
 | DEC-113 | 2026-09-26 | T-070: resolves the T-070/T-074 mutual dependency — SavePath defaults via WithDownloadDir only, T-074 adds the real picker; dedup matches only on Result.InfoHash; Resolve triggers on an empty Magnet via new Searcher.Get; Origin persists via new optional TorrentStore; duplicate selects the existing row via m.selection; results-screen enter now also adds |
 | DEC-114 | 2026-09-26 | T-071: active/completed split treats StatePaused-at-Progress-1 as complete too (seed-policy-satisfied torrents have no distinct state); queue position and seed-policy text read new optional queueProvider/seedPolicyProvider assertions, fake implements neither; TorrentStore gained GetTorrent so Source/added-at fall back to the store record for a torrent added this session (live Origin is zero until a restart); enter toggles an errored row's reason in place rather than reusing ScreenDetails |
+| DEC-115 | 2026-09-26 | T-072: optimistic pause/resume overlays snapshots only while the engine call is in flight, the next snapshot wins once it returns, failure reverts; a second p in flight is refused; remove dialog targets the ID captured at open and has no one-key delete |
 
 ## Blocked
 

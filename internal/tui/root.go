@@ -73,6 +73,13 @@ type Model struct {
 	// T-074's destination picker, which get their own Dialog instances
 	// when those tasks land.
 	quitConfirm components.Dialog
+	// removeConfirm is the downloads screen's `x` dialog (T-072,
+	// download_actions.go): remove keeping data, remove deleting data, or
+	// cancel (the default). removeTarget is the torrent it is asking about,
+	// captured by ID when it opened so a snapshot reordering the rows
+	// underneath the dialog cannot redirect the removal.
+	removeConfirm components.Dialog
+	removeTarget  removeTarget
 	// errorDetail is true while the status bar's source-error detail panel
 	// (T-052, ContextErrorDetail) is open. This is an info panel, not a
 	// confirm dialog, so it stays a plain bool rather than a Dialog.
@@ -239,12 +246,13 @@ func WithOpenURL(f openURLFunc) Option {
 // that predates them keeps working unchanged.
 func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 	m := Model{
-		eng:         eng,
-		theme:       th,
-		keys:        NewKeyMap(),
-		screen:      ScreenSearch,
-		statusBar:   components.New(),
-		quitConfirm: newQuitDialog(),
+		eng:           eng,
+		theme:         th,
+		keys:          NewKeyMap(),
+		screen:        ScreenSearch,
+		statusBar:     components.New(),
+		quitConfirm:   newQuitDialog(),
+		removeConfirm: newRemoveDialog(),
 	}
 
 	for _, opt := range opts {
@@ -389,7 +397,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusBar.ActiveDownloads = m.activeDownloads
 		m.statusBar.DownRate, m.statusBar.UpRate = aggregateRates(msg.statuses)
 
-		m.torrentStatuses = msg.statuses
+		// Lay any still-in-flight optimistic pause/resume over the
+		// snapshot, or let the snapshot win for one that has settled
+		// (T-072, download_actions.go's reconcilePending).
+		m.torrentStatuses, m.downloads.pending = reconcilePending(msg.statuses, m.downloads.pending)
 		m.downloads = m.downloads.clampCursor(len(m.downloadRows()))
 
 		return m, waitForEngineUpdate(m.eng)
@@ -428,6 +439,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case resolveResultMsg:
 		return m.handleResolveResult(msg)
 
+	case pauseResumeResultMsg:
+		return m.handlePauseResumeResult(msg)
+
+	case removeResultMsg:
+		return m.handleRemoveResult(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -441,6 +458,8 @@ func (m Model) context() Context {
 	switch {
 	case m.quitConfirm.IsOpen():
 		return ContextQuitConfirm
+	case m.removeConfirm.IsOpen():
+		return ContextRemoveConfirm
 	case m.showHelp:
 		return ContextHelp
 	case m.errorDetail:
@@ -493,6 +512,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	action, ok := m.keys.Lookup(m.context(), key)
 	if !ok {
 		return m, nil
+	}
+
+	// The remove dialog's actions (move, confirm, cancel) mean something
+	// different there than on a screen — ActionConfirmYes quits below — so
+	// that context is routed on its own.
+	if m.context() == ContextRemoveConfirm {
+		return m.handleRemoveConfirmAction(action)
 	}
 
 	switch action {
@@ -587,7 +613,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == ScreenDetails {
 			return m.handleOpenSource()
 		}
+		if m.screen == ScreenDownloads {
+			return m.handleOpenDownloadSource()
+		}
 		return m, nil
+	case ActionPauseResume:
+		// Bound only on ScreenDownloads (keymap.go).
+		return m.handlePauseResume()
+	case ActionRemove:
+		// Bound only on ScreenDownloads (keymap.go).
+		return m.handleRemove()
 	case ActionRefresh:
 		// AGENT.md §7: "R | Refresh current results" — re-runs the exact
 		// query that produced what's on screen (m.lastQuery/
@@ -638,9 +673,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = ScreenSettings
 		return m, nil
 	default:
-		// open-file/folder, pause/resume, and remove all belong to the
-		// downloads screen this task does not implement (T-071). No-op
-		// here.
+		// open-file/folder belong to T-073. No-op here.
 		return m, nil
 	}
 }
@@ -695,6 +728,8 @@ func (m Model) View() string {
 		body = m.renderHelp()
 	case ContextQuitConfirm:
 		body = m.renderQuitConfirm()
+	case ContextRemoveConfirm:
+		body = m.renderRemoveConfirm()
 	case ContextErrorDetail:
 		body = m.renderErrorDetail()
 	default:
