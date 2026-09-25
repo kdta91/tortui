@@ -12,6 +12,7 @@ import (
 	"github.com/kdta91/tortui/internal/engine/fake"
 	"github.com/kdta91/tortui/internal/indexer"
 	indexerfake "github.com/kdta91/tortui/internal/indexer/fake"
+	"github.com/kdta91/tortui/internal/tui/theme"
 )
 
 // --- detailsFiles / formatting helpers (no I/O, no teatest) -------------
@@ -308,6 +309,69 @@ func TestRenderDetailsScreenMissingFieldsShowDash(t *testing.T) {
 
 	if !strings.Contains(got, "not yet resolved") {
 		t.Errorf("renderDetailsScreen() missing infohash placeholder; got:\n%s", got)
+	}
+}
+
+// TestRenderDetailsScreenWrapsLongTitleWithoutTruncating is the regression
+// test for the PR #42 review's blocking finding: renderDetailsScreen used
+// to run the whole rendered body through truncateLines(..., m.width), so a
+// title longer than the terminal was silently cut off with "..." — the
+// reviewer's own 80x24 repro produced "...Words.1080p.2...". The title has
+// no spaces (a realistic scene-release-style name), so it exercises
+// theme.Wrap's hard-break path, not just ordinary word-wrap.
+func TestRenderDetailsScreenWrapsLongTitleWithoutTruncating(t *testing.T) {
+	title := strings.Repeat("Words.1080p.2.", 8) + "Tail" // 116 columns, no spaces
+
+	m := New(fake.New(), testTheme())
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(Model)
+	m.details = m.details.withResult(indexer.Result{Title: title, Magnet: "magnet:?xt=urn:btih:aaaa"})
+
+	got := m.renderDetailsScreen()
+
+	joined := strings.ReplaceAll(got, "\n", "")
+	if !strings.Contains(joined, title) {
+		t.Fatalf("renderDetailsScreen() lost part of a long title; want %q reproduced in the joined output; got:\n%s",
+			title, got)
+	}
+
+	for _, line := range strings.Split(got, "\n") {
+		if w := theme.Width(line); w > 80 {
+			t.Errorf("renderDetailsScreen() line %q is %d columns wide, want <= 80", line, w)
+		}
+	}
+}
+
+// TestRenderDetailsScreenWrapsLongSourceURLWithoutTruncating is the same
+// regression for the Source field the review also called out.
+func TestRenderDetailsScreenWrapsLongSourceURLWithoutTruncating(t *testing.T) {
+	url := "https://example.org/torrents/" + strings.Repeat("a", 90)
+
+	m := New(fake.New(), testTheme())
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(Model)
+	m.details = m.details.withResult(indexer.Result{
+		Title: "short.iso", Magnet: "magnet:?xt=urn:btih:aaaa", SourceURL: url,
+	})
+
+	got := m.renderDetailsScreen()
+
+	// writeWrappedField indents every continuation line by two spaces
+	// (like the file list below it); strip "\n  " as a unit before the
+	// plain "\n" removal below, so that indent is never mistaken for part
+	// of the reconstructed URL itself.
+	joined := strings.ReplaceAll(got, "\n  ", "")
+	joined = strings.ReplaceAll(joined, "\n", "")
+
+	if !strings.Contains(joined, url) {
+		t.Fatalf("renderDetailsScreen() lost part of a long source URL; want %q reproduced in the joined output; got:\n%s",
+			url, got)
+	}
+
+	for _, line := range strings.Split(got, "\n") {
+		if w := theme.Width(line); w > 80 {
+			t.Errorf("renderDetailsScreen() line %q is %d columns wide, want <= 80", line, w)
+		}
 	}
 }
 

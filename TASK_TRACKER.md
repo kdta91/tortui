@@ -721,6 +721,14 @@ when it reaches it and does not start backlog items on its own.
   at the top after the default sort. A fresh result set's highlighted row is not necessarily the
   one shown at the top of the table. Found while building T-063, whose `d` key needed "the
   highlighted row" to mean something predictable.
+- `T-964` `TestDetailsScreenEndToEndSelectAndAdd` (`internal/tui/details_test.go`) never checks
+  that the rendered output actually shows the downloads screen after `enter` — it only waits for
+  the "added ..." status-bar message, which appears regardless of which screen is current.
+  Strengthen it to also assert on the downloads screen's own body. Found by QA on T-063 (PR #42).
+- `T-965` `details.go`'s file list (`writeWrappedField`'s sibling rendering under "Files") has no
+  scrolling or cap: a long `indexer.ExtraKeyFiles` list can overflow the 80×24 floor with no way
+  to see the rest. Needs the same kind of viewport `components.Table` already has, or a hard cap
+  with a "+N more" line. Found by QA on T-063 (PR #42).
 
 
 

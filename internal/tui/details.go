@@ -15,6 +15,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kdta91/tortui/internal/engine"
 	"github.com/kdta91/tortui/internal/indexer"
@@ -273,8 +274,50 @@ func detailsTrustText(t indexer.Trust) string {
 // detailsFieldLine renders one "Label: value" line, label muted and value
 // in the theme's foreground style — the same two-tone convention
 // renderErrorDetail (root.go) already uses for its own label/value pairs.
+// It is for a field whose value has a known, bounded shape (a size, a
+// category token, a date) — never for unbounded, attacker-influenced text
+// like a title or a URL, which writeWrappedTitle/writeWrappedField exist
+// for instead (PR #42 review: this file used to run the *whole* rendered
+// body through truncateLines, silently dropping the tail of a title or
+// source URL wider than the terminal — AC1, "full title").
 func detailsFieldLine(th theme.Theme, label, value string) string {
 	return th.Muted.Render(label+": ") + th.Foreground.Render(value)
+}
+
+// writeWrappedTitle writes title to b, word-wrapped to width columns
+// (theme.Wrap) with style applied per line — unlike detailsFieldLine's
+// fixed-shape fields, a title is attacker-influenced text of unbounded
+// length (AGENT.md's own note on Result.Title: "measure it with
+// rivo/uniseg and never with len") that must stay fully visible rather
+// than losing its tail to Truncate. Wrapping the *plain* text first, then
+// styling each already-measured line, avoids measuring ANSI escape bytes
+// as if they were display columns — the same order renderResultsScreen's
+// header already uses (Truncate before Render, never after).
+func writeWrappedTitle(b *strings.Builder, style lipgloss.Style, title string, width int) {
+	for i, line := range theme.Wrap(title, width) {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+
+		b.WriteString(style.Render(line))
+	}
+}
+
+// writeWrappedField writes label as its own muted heading line, then value
+// word-wrapped (theme.Wrap) across one or more two-space-indented lines
+// underneath — the details screen's convention for an unbounded,
+// attacker-influenced value (today: the source URL) that must never lose
+// content to Truncate, unlike detailsFieldLine's inline fixed-shape
+// fields. width is the full screen width; the wrap target is width-2 to
+// leave room for the indent, matching the file list's own two-space
+// indent below.
+func writeWrappedField(b *strings.Builder, th theme.Theme, label, value string, width int) {
+	b.WriteString(th.Muted.Render(label + ":"))
+
+	for _, line := range theme.Wrap(value, width-2) {
+		b.WriteString("\n")
+		b.WriteString(th.Foreground.Render("  " + line))
+	}
 }
 
 // renderDetailsScreen draws ScreenDetails' real body: every field T-063's
@@ -296,7 +339,7 @@ func (m Model) renderDetailsScreen() string {
 
 	var b strings.Builder
 
-	b.WriteString(th.Accent.Render(r.Title))
+	writeWrappedTitle(&b, th.Accent, r.Title, m.width)
 	b.WriteString("\n\n")
 	b.WriteString(detailsFieldLine(th, "Size", formatSize(r.SizeBytes)))
 	b.WriteString("\n")
@@ -308,7 +351,7 @@ func (m Model) renderDetailsScreen() string {
 	b.WriteString("\n")
 	b.WriteString(detailsFieldLine(th, "Published", formatPublishedDate(r.Published)))
 	b.WriteString("\n")
-	b.WriteString(detailsFieldLine(th, "Source", detailsOrDash(r.SourceURL)))
+	writeWrappedField(&b, th, "Source", detailsOrDash(r.SourceURL), m.width)
 	b.WriteString("\n")
 	b.WriteString(detailsFieldLine(th, "Infohash", detailsInfoHashText(r.InfoHash)))
 	b.WriteString("\n\n")
