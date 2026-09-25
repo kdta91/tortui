@@ -67,26 +67,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 6 — Search and results
 
-**Done (archived in `docs/tracker-archive.md`):** `T-060` Search screen.
-
-### T-061 · Results screen
-```
-status: todo
-depends: T-060, T-053
-tier: M
-```
-**Acceptance**
-- Columns exactly `Title · Size · S/L · Trust · Age · Source`. Default sort follows the mode:
-  seeders desc for Search, age ascending (newest first) for Latest.
-- Header states the current mode and query, so a Latest view is never mistaken for a stale
-  search result.
-- `R` refreshes, honouring the T-012 cache and per-source minimum interval; the status bar shows
-  when results came from cache rather than a fresh fetch.
-- Sizes human-readable; ages relative (`3h`, `2d`, `1y`).
-- Per-source failures shown in the status bar without hiding successful results.
-- Zero results shows an explicit empty state naming which sources were queried, and in Search
-  mode offers Latest as a next step.
-- `teatest` covers render, sort cycling, and the partial-failure case.
+**Done (archived in `docs/tracker-archive.md`):** `T-060` Search screen · `T-061` Results screen.
 
 ---
 

@@ -48,11 +48,11 @@ func TestNavigationAllScreensViaNumberKeys(t *testing.T) {
 		key  string
 		want string
 	}{
-		// ScreenSearch is real now (T-060): "Query:" is the search
-		// screen's own stable marker, not the generic placeholder text
-		// every other screen still renders.
+		// ScreenSearch (T-060) and ScreenResults (T-061) are real now:
+		// "Query:" and "No search yet" are their own stable markers, not
+		// the generic placeholder text the remaining screens still render.
 		{"1", "Query:"},
-		{"2", ScreenResults.String() + " screen"},
+		{"2", "No search yet"},
 		{"3", ScreenDetails.String() + " screen"},
 		{"4", ScreenDownloads.String() + " screen"},
 		{"5", ScreenSettings.String() + " screen"},
@@ -73,11 +73,12 @@ func TestNavigationTabCyclesForwardAndBack(t *testing.T) {
 	t.Cleanup(func() { _ = tm.Quit() })
 
 	// Starts on ScreenSearch. tab -> results -> details -> downloads ->
-	// settings -> (wrap) search. ScreenSearch has real content now
-	// (T-060), so it is checked by its own "Query:" marker rather than
-	// the generic placeholder text the other screens still render.
+	// settings -> (wrap) search. ScreenSearch and ScreenResults have real
+	// content now (T-060, T-061), so they are checked by their own
+	// "Query:"/"No search yet" markers rather than the generic placeholder
+	// text the remaining screens still render.
 	forward := []string{
-		ScreenResults.String() + " screen",
+		"No search yet",
 		ScreenDetails.String() + " screen",
 		ScreenDownloads.String() + " screen",
 		ScreenSettings.String() + " screen",

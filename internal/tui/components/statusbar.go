@@ -55,6 +55,14 @@ type StatusBar struct {
 	// order — this is exactly what the expanded detail view lists.
 	FailedSources []string
 
+	// CacheHint reports whether the most recently displayed results came
+	// from the indexer registry's cache rather than a fresh fetch (T-061
+	// acceptance: "the status bar shows when results came from cache
+	// rather than a fresh fetch"): "cached", "fresh", "partial cache", or
+	// "" when no search has produced any results to characterise yet
+	// (nothing to show, not a claim that they're fresh).
+	CacheHint string
+
 	// Timeout overrides DefaultTransientTimeout when positive. Tests use
 	// this to avoid a real 4-second wait; production code leaves it zero.
 	Timeout time.Duration
@@ -151,6 +159,10 @@ func (s StatusBar) View(width int, screen string, th theme.Theme) string {
 
 	if failed := len(s.FailedSources); s.SourcesTotal > 0 && failed > 0 {
 		parts = append(parts, th.Error.Render(fmt.Sprintf("%d/%d sources failed (e to view)", failed, s.SourcesTotal)))
+	}
+
+	if s.CacheHint != "" {
+		parts = append(parts, th.Muted.Render(s.CacheHint))
 	}
 
 	if s.current != "" {

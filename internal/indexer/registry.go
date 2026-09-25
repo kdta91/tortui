@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,16 @@ const (
 // It is bookkeeping the registry writes for display, not something core logic
 // may branch on, and no adapter may set it: the registry overwrites it.
 const ExtraKeySources = "tortui.sources"
+
+// ExtraKeyCacheHit is the Result.Extra key under which SearchAll records
+// whether the copy of this result that survived merging (mergeResults picks
+// the highest-seeder copy when several sources agree) was served from the
+// registry's short-lived cache (DefaultCacheTTL) rather than a fresh fetch —
+// "true" or "false", via strconv.FormatBool. Like ExtraKeySources it is
+// registry bookkeeping written for display (T-061's "status bar shows when
+// results came from cache"), never set by an adapter: the registry
+// overwrites it on every result it returns.
+const ExtraKeyCacheHit = "tortui.cacheHit"
 
 // Registry errors. Callers match them with errors.Is; a SourceError unwraps to
 // the one that explains that source's outcome.
@@ -370,9 +381,10 @@ func (r *Registry) SearchAll(ctx context.Context, q Query, ids ...string) ([]Res
 	}
 
 	var (
-		groups = make([][]Result, len(selected))
-		errs   = make([]*SourceError, len(selected))
-		wg     sync.WaitGroup
+		groups    = make([][]Result, len(selected))
+		fromCache = make([]bool, len(selected))
+		errs      = make([]*SourceError, len(selected))
+		wg        sync.WaitGroup
 	)
 	for i, sel := range selected {
 		if sel.ix == nil {
@@ -382,7 +394,7 @@ func (r *Registry) SearchAll(ctx context.Context, q Query, ids ...string) ([]Res
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			groups[i], errs[i] = r.searchOne(ctx, sel.ix, q)
+			groups[i], fromCache[i], errs[i] = r.searchOne(ctx, sel.ix, q)
 		}()
 	}
 	wg.Wait()
@@ -391,6 +403,7 @@ func (r *Registry) SearchAll(ctx context.Context, q Query, ids ...string) ([]Res
 		sourceErrs []SourceError
 		okIDs      = make([]string, 0, len(selected))
 		okGroups   = make([][]Result, 0, len(selected))
+		okCache    = make(map[string]bool, len(selected))
 		failed     int
 	)
 	for i, sel := range selected {
@@ -403,9 +416,10 @@ func (r *Registry) SearchAll(ctx context.Context, q Query, ids ...string) ([]Res
 		}
 		okIDs = append(okIDs, sel.id)
 		okGroups = append(okGroups, groups[i])
+		okCache[sel.id] = fromCache[i]
 	}
 
-	results := mergeResults(q.Mode, okIDs, okGroups)
+	results := mergeResults(q.Mode, okIDs, okGroups, okCache)
 	if failed > 0 && len(okIDs) == 0 {
 		return results, sourceErrs, fmt.Errorf("%w (%d of %d sources)", ErrAllSourcesFailed, failed, len(selected))
 	}
@@ -414,21 +428,22 @@ func (r *Registry) SearchAll(ctx context.Context, q Query, ids ...string) ([]Res
 
 // searchOne is one source's half of a fan-out: capability check, cache, the
 // refresh floor, then the request itself. It returns either results or a
-// SourceError, never both.
-func (r *Registry) searchOne(ctx context.Context, ix Indexer, q Query) ([]Result, *SourceError) {
+// SourceError, never both, plus whether those results came from the cache
+// (ExtraKeyCacheHit) rather than a fresh fetch.
+func (r *Registry) searchOne(ctx context.Context, ix Indexer, q Query) ([]Result, bool, *SourceError) {
 	id := ix.ID()
 
 	if err := supports(ix.Caps(), q.Mode); err != nil {
-		return nil, &SourceError{IndexerID: id, Skipped: true, Err: err}
+		return nil, false, &SourceError{IndexerID: id, Skipped: true, Err: err}
 	}
 
 	key := newCacheKey(id, q)
 	if cached, hit := r.cachedResults(key); hit {
-		return cached, nil
+		return cached, true, nil
 	}
 
 	if !r.reserveFetch(id) {
-		return nil, &SourceError{
+		return nil, false, &SourceError{
 			IndexerID: id,
 			Skipped:   true,
 			Err:       fmt.Errorf("%w (minimum %s between requests to one source)", ErrThrottled, r.cfg.MinRefreshInterval),
@@ -440,10 +455,10 @@ func (r *Registry) searchOne(ctx context.Context, ix Indexer, q Query) ([]Result
 
 	results, err := callSearch(sctx, ix, q, r.cfg.Timeout)
 	if err != nil {
-		return nil, &SourceError{IndexerID: id, Err: err}
+		return nil, false, &SourceError{IndexerID: id, Err: err}
 	}
 	r.storeResults(key, results)
-	return results, nil
+	return results, false, nil
 }
 
 // supports reports whether caps allow mode, as the error explaining the skip
@@ -613,10 +628,12 @@ func cloneResults(in []Result) []Result {
 	return out
 }
 
-// merged is one deduplicated result plus the sources that contributed a copy.
+// merged is one deduplicated result plus the sources that contributed a
+// copy, and whether the copy that currently survives (res) came from cache.
 type merged struct {
-	res     Result
-	sources []string
+	res       Result
+	sources   []string
+	fromCache bool
 }
 
 // mergeResults deduplicates results across sources and orders them.
@@ -638,7 +655,12 @@ type merged struct {
 // table). Ties break on the other of those two, then title, then indexer id,
 // then result id, so the output is fully determined by the answers and never
 // by which source replied first.
-func mergeResults(mode Mode, ids []string, groups [][]Result) []Result {
+//
+// cacheHit reports, per source id in ids, whether that source's group came
+// from the registry's cache (see searchOne) — the surviving copy of each
+// merged row is tagged with ExtraKeyCacheHit accordingly, for the TUI's
+// status bar (T-061).
+func mergeResults(mode Mode, ids []string, groups [][]Result, cacheHit map[string]bool) []Result {
 	var (
 		order   []*merged
 		index   = make(map[string]*merged)
@@ -657,7 +679,7 @@ func mergeResults(mode Mode, ids []string, groups [][]Result) []Result {
 
 			existing, seen := index[key]
 			if !seen {
-				m := &merged{res: res, sources: []string{id}}
+				m := &merged{res: res, sources: []string{id}, fromCache: cacheHit[id]}
 				index[key] = m
 				order = append(order, m)
 				continue
@@ -667,6 +689,7 @@ func mergeResults(mode Mode, ids []string, groups [][]Result) []Result {
 			}
 			if res.Seeders > existing.res.Seeders {
 				existing.res = res
+				existing.fromCache = cacheHit[id]
 			}
 		}
 	}
@@ -674,9 +697,10 @@ func mergeResults(mode Mode, ids []string, groups [][]Result) []Result {
 	out := make([]Result, 0, len(order))
 	for _, m := range order {
 		res := m.res
-		extra := make(map[string]string, len(res.Extra)+1)
+		extra := make(map[string]string, len(res.Extra)+2)
 		maps.Copy(extra, res.Extra)
 		extra[ExtraKeySources] = strings.Join(m.sources, ",")
+		extra[ExtraKeyCacheHit] = strconv.FormatBool(m.fromCache)
 		res.Extra = extra
 		out = append(out, res)
 	}

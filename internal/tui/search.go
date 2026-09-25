@@ -373,7 +373,11 @@ type searchResultMsg struct {
 	// status bar's "N/M sources failed" needs M even when every one of
 	// them failed and so contributed nothing to results.
 	queried int
-	err     error
+	// queriedIDs is exactly which sources dispatchSearch asked, in
+	// dispatch order — T-061's empty-results state names them ("no
+	// results from: alpha, bravo"), which a bare count cannot do.
+	queriedIDs []string
+	err        error
 }
 
 // searchTickMsg advances the in-flight spinner. Same gen-guard as
@@ -399,7 +403,10 @@ func searchTickCmd(gen int) tea.Cmd {
 func dispatchSearchCmd(searcher Searcher, ctx context.Context, q indexer.Query, ids []string, gen int) tea.Cmd {
 	return func() tea.Msg {
 		results, sourceErrs, err := searcher.SearchAll(ctx, q, ids...)
-		return searchResultMsg{gen: gen, query: q, results: results, sourceErrs: sourceErrs, queried: len(ids), err: err}
+		return searchResultMsg{
+			gen: gen, query: q, results: results, sourceErrs: sourceErrs,
+			queried: len(ids), queriedIDs: ids, err: err,
+		}
 	}
 }
 
@@ -499,6 +506,9 @@ func (m Model) handleSearchResult(msg searchResultMsg) (tea.Model, tea.Cmd) {
 	m.lastResults = msg.results
 	m.lastSourceErrs = msg.sourceErrs
 	m.lastQuery = msg.query
+	m.lastQueriedIDs = msg.queriedIDs
+	m.results = m.results.setResults(msg.results, msg.query.Mode, time.Now())
+	m.statusBar.CacheHint = cacheSummary(msg.results)
 
 	failed := make([]string, 0, len(msg.sourceErrs))
 	for _, se := range msg.sourceErrs {
@@ -520,8 +530,7 @@ func (m Model) handleSearchResult(msg searchResultMsg) (tea.Model, tea.Cmd) {
 
 	// T-060 acceptance ("L ... jumps to results") and the natural reading
 	// of enter's own dispatch: once there is something to show, go show
-	// it. T-061 (not yet built) is what actually renders m.lastResults;
-	// until then this lands on Results' placeholder body.
+	// it. T-061's results.go is what actually renders m.lastResults.
 	m.screen = ScreenResults
 
 	return m, nil

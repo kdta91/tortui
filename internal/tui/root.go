@@ -77,6 +77,12 @@ type Model struct {
 	// spinner, and recent-query suggestions. See search.go.
 	search searchModel
 
+	// results is the T-061 results screen's own state: the responsive
+	// table (T-053) holding the most recently completed search's rows,
+	// kept in sync with lastResults/lastQuery by search.go's
+	// handleSearchResult. See results.go.
+	results resultsModel
+
 	// searcher is the source-agnostic fan-out the search screen dispatches
 	// against — typically *indexer.Registry in production, a test double
 	// in tests. It satisfies the local Searcher interface (search.go)
@@ -104,6 +110,10 @@ type Model struct {
 	lastResults    []indexer.Result
 	lastSourceErrs []indexer.SourceError
 	lastQuery      indexer.Query
+	// lastQueriedIDs is exactly which sources the most recent dispatch
+	// actually asked, in dispatch order — results.go's empty state names
+	// them (T-061 acceptance: "naming which sources were queried").
+	lastQueriedIDs []string
 }
 
 // Option configures optional Model wiring not every caller needs. Adding
@@ -147,6 +157,7 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 	}
 
 	m.search = newSearchModel(m.searcher, m.history)
+	m.results = newResultsModel()
 
 	return m
 }
@@ -423,9 +434,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == ScreenSearch {
 			return m.dispatchSearch(false)
 		}
-		// Every other screen's meaning of enter (add torrent on results,
-		// open details on downloads) belongs to a task this one does not
-		// implement (T-061, T-071). No-op here.
+		// Results' own meaning of enter (add torrent) belongs to T-070;
+		// downloads' (open details) to T-071. No-op here.
+		return m, nil
+	case ActionRefresh:
+		// AGENT.md §7: "R | Refresh current results" — re-runs the search
+		// screen's current settings exactly like enter does. This is what
+		// makes T-061's "honouring the T-012 cache" acceptance true for
+		// free: SearchAll itself serves an unchanged query from its cache
+		// within CacheTTL, so mashing R re-renders rather than re-fetching
+		// (search.go's dispatchSearch is the single dispatch path both
+		// keys share).
+		return m.dispatchSearch(false)
+	case ActionSortCycle:
+		m.results = m.results.cycleSort()
+		return m, nil
+	case ActionSortReverse:
+		m.results = m.results.reverseSort()
 		return m, nil
 	case ActionFocusSearch:
 		m.screen = ScreenSearch
@@ -462,9 +487,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = ScreenSettings
 		return m, nil
 	default:
-		// ActionRefresh, ActionDetails, sort, open-file/folder/source,
-		// pause/resume, and remove all belong to screens/components this
-		// task does not implement (T-061, T-063, T-071, T-080). No-op here.
+		// ActionDetails, open-file/folder/source, pause/resume, and remove
+		// all belong to screens/components this task does not implement
+		// (T-063, T-071, T-080). No-op here.
 		return m, nil
 	}
 }
@@ -614,11 +639,15 @@ func itoa(n int) string {
 }
 
 // renderScreenBody draws the current screen's real content, where a task has
-// built one (ScreenSearch, T-060 — see search.go), or its placeholder
-// otherwise (see keymap.go's Screen.placeholderTask for which task owns it).
+// built one (ScreenSearch, T-060, search.go; ScreenResults, T-061,
+// results.go), or its placeholder otherwise (see keymap.go's
+// Screen.placeholderTask for which task owns it).
 func (m Model) renderScreenBody() string {
-	if m.screen == ScreenSearch {
+	switch m.screen {
+	case ScreenSearch:
 		return m.renderSearchScreen()
+	case ScreenResults:
+		return m.renderResultsScreen()
 	}
 
 	body := m.screen.String() + " screen — placeholder, see " + m.screen.placeholderTask()

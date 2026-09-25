@@ -439,7 +439,7 @@ func TestEnterOnEmptyQueryDispatchesLatest(t *testing.T) {
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 	// A completed dispatch (this stub never blocks) jumps to Results.
-	waitForOutput(t, tm, "results screen")
+	waitForOutput(t, tm, "Sources queried")
 
 	call, ok := searcher.lastCall()
 	if !ok {
@@ -476,7 +476,7 @@ func TestTypedQueryDispatchesSearchWithText(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // commits the field, does not submit
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // submits
 
-	waitForOutput(t, tm, "results screen")
+	waitForOutput(t, tm, "Sources queried")
 
 	call, ok := searcher.lastCall()
 	if !ok {
@@ -508,7 +508,7 @@ func TestSpaceDeselectsSourceExcludesItFromDispatch(t *testing.T) {
 	waitForOutput(t, tm, "[ ] bravo")
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
-	waitForOutput(t, tm, "results screen")
+	waitForOutput(t, tm, "Sources queried")
 
 	call, ok := searcher.lastCall()
 	if !ok {
@@ -597,7 +597,7 @@ func TestInFlightSpinnerAndEscCancels(t *testing.T) {
 		t.Fatalf("expected the spinner/cancel hint gone after cancelling, got %q", after)
 	}
 
-	if strings.Contains(string(after), "results screen") {
+	if strings.Contains(string(after), "Sources queried") {
 		t.Fatalf("a cancelled search must not advance to the Results screen, got %q", after)
 	}
 }
@@ -616,7 +616,7 @@ func TestLatestFromAnotherScreenDispatchesAndJumpsToResults(t *testing.T) {
 	waitForOutput(t, tm, "downloads screen")
 
 	tm.Send(keyRune("L"))
-	waitForOutput(t, tm, "results screen")
+	waitForOutput(t, tm, "Sources queried")
 
 	call, ok := searcher.lastCall()
 	if !ok {
@@ -652,7 +652,7 @@ func TestRecentQueriesRenderedAndRecorded(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
-	waitForOutput(t, tm, "results screen")
+	waitForOutput(t, tm, "Sources queried")
 
 	hist.mu.Lock()
 	added := append([]string(nil), hist.added...)
@@ -693,7 +693,7 @@ func TestHistorySaveFailureIsSurfacedNotSwallowed(t *testing.T) {
 	// T-052), so only the message's leading words are checked for, same
 	// as TestFatalSearchErrorReportedAndStaysOnSearch. The search itself
 	// must still have gone out despite the history write failing.
-	waitForAllOutput(t, tm, "couldn't save query history", "results screen")
+	waitForAllOutput(t, tm, "couldn't save query history", "Sources queried")
 
 	call, ok := searcher.lastCall()
 	if !ok {
