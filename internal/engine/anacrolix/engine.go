@@ -31,7 +31,6 @@ import (
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
-	"github.com/anacrolix/torrent/storage"
 	"golang.org/x/time/rate"
 
 	"github.com/kdta91/tortui/internal/config"
@@ -161,6 +160,14 @@ type tracked struct {
 	savePath string
 	origin   engine.Origin
 
+	// magnet and torrentURL are the source the torrent was added from,
+	// and metainfo the bencoded .torrent a restore was handed. They are
+	// what ResumeData reports when the torrent's own info dictionary is
+	// not (or no longer) available from the client (T-041).
+	magnet     string
+	torrentURL string
+	metainfo   []byte
+
 	// infoHash is the torrent's infohash, hex-encoded, as soon as it is
 	// known: at track time for addSpec (a magnet or a local .torrent file
 	// both already carry it before tracking begins), or set by attach
@@ -278,7 +285,7 @@ type Engine struct {
 	torrents map[string]*tracked
 	order    []string
 	queue    []string
-	storages map[string]storage.ClientImplCloser
+	storages map[string]safeStorage
 }
 
 // Compile-time proof that Engine satisfies the frozen contract.
@@ -361,7 +368,7 @@ func New(opts Options) (*Engine, error) {
 		beforeAttach:    opts.beforeAttach,
 		done:            make(chan struct{}),
 		torrents:        make(map[string]*tracked),
-		storages:        make(map[string]storage.ClientImplCloser),
+		storages:        make(map[string]safeStorage),
 	}
 
 	newTicker := opts.newTicker
@@ -568,12 +575,12 @@ func (e *Engine) Add(ctx context.Context, src engine.AddSource) (string, error) 
 
 	switch kind {
 	case sourceMagnet:
-		spec, err := torrent.TorrentSpecFromMagnetUri(src.Magnet)
+		spec, err := specFromMagnet(src.Magnet)
 		if err != nil {
-			return "", fmt.Errorf("anacrolix: parse magnet: %w", err)
+			return "", err
 		}
 
-		return e.addSpec(spec, dest)
+		return e.addSpec(spec, dest, provenance{magnet: src.Magnet})
 
 	case sourceFile:
 		spec, err := specFromFile(src.FilePath)
@@ -581,14 +588,30 @@ func (e *Engine) Add(ctx context.Context, src engine.AddSource) (string, error) 
 			return "", err
 		}
 
-		return e.addSpec(spec, dest)
+		return e.addSpec(spec, dest, provenance{})
 
 	case sourceURL:
-		return e.addFromURL(ctx, src.TorrentURL, dest)
+		return e.addFromURL(ctx, src.TorrentURL, dest, provenance{torrentURL: src.TorrentURL})
 
 	default:
 		return "", ErrNoSource
 	}
+}
+
+// specFromMagnet parses a magnet URI, refusing one that names no infohash:
+// the library accepts "magnet:?xt=<anything>" with a zero infohash and then
+// panics when that spec is added.
+func specFromMagnet(uri string) (*torrent.TorrentSpec, error) {
+	spec, err := torrent.TorrentSpecFromMagnetUri(uri)
+	if err != nil {
+		return nil, fmt.Errorf("anacrolix: parse magnet: %w", err)
+	}
+
+	if spec.InfoHash == (metainfo.Hash{}) {
+		return nil, errors.New("anacrolix: parse magnet: no infohash")
+	}
+
+	return spec, nil
 }
 
 // sourceKind names which of AddSource's three mutually exclusive fields was
@@ -678,7 +701,7 @@ func specFromFile(path string) (*torrent.TorrentSpec, error) {
 // the URL (and the Add call's context values) until the queue promotes it,
 // and queued is true; otherwise the caller starts the fetch, having been
 // counted in e.wg under the same lock that checked the engine is open.
-func (e *Engine) track(ctx context.Context, dest, rawURL string) (tr *tracked, queued bool, err error) {
+func (e *Engine) track(ctx context.Context, dest, rawURL string, prov provenance) (tr *tracked, queued bool, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -686,14 +709,8 @@ func (e *Engine) track(ctx context.Context, dest, rawURL string) (tr *tracked, q
 		return nil, false, ErrClosed
 	}
 
-	e.nextID++
-	t := &tracked{
-		id:       fmt.Sprintf("an-%d", e.nextID),
-		savePath: dest,
-		name:     rawURL,
-		state:    engine.StateChecking,
-		done:     make(chan struct{}),
-	}
+	t := prov.newTracked(e.mintIDLocked(prov.id), dest, rawURL)
+	t.state = engine.StateChecking
 
 	e.torrents[t.id] = t
 	e.order = append(e.order, t.id)
@@ -718,12 +735,12 @@ func (e *Engine) track(ctx context.Context, dest, rawURL string) (tr *tracked, q
 // tracked, so an unsafe or oversized torrent is refused by Add itself with a
 // readable reason (AGENT.md §6.11, T-034). attach checks both again when the
 // torrent actually starts, since a queued torrent may start much later.
-func (e *Engine) addSpec(spec *torrent.TorrentSpec, dest string) (string, error) {
+func (e *Engine) addSpec(spec *torrent.TorrentSpec, dest string, prov provenance) (string, error) {
 	if err := e.precheckSpec(spec, dest); err != nil {
 		return "", err
 	}
 
-	tr, existingID, queued, err := e.findOrTrack(spec, dest)
+	tr, existingID, queued, err := e.findOrTrack(spec, dest, prov)
 	if err != nil {
 		return "", err
 	}
@@ -804,7 +821,7 @@ func (e *Engine) untrackFailedSpec(tr *tracked) {
 // The same critical section decides whether the new entry starts now or
 // queues (queued true, spec held on the entry until promote attaches it), so
 // concurrent Adds can never together overshoot max_active_downloads.
-func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string) (tr *tracked, existingID string, queued bool, err error) {
+func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string, prov provenance) (tr *tracked, existingID string, queued bool, err error) {
 	hex, name := spec.InfoHash.HexString(), displayName(spec)
 
 	e.mu.Lock()
@@ -822,15 +839,9 @@ func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string) (tr *tracke
 		}
 	}
 
-	e.nextID++
-	t := &tracked{
-		id:       fmt.Sprintf("an-%d", e.nextID),
-		savePath: dest,
-		name:     name,
-		infoHash: hex,
-		state:    engine.StateChecking,
-		done:     make(chan struct{}),
-	}
+	t := prov.newTracked(e.mintIDLocked(prov.id), dest, name)
+	t.infoHash = hex
+	t.state = engine.StateChecking
 
 	if e.activeLocked() >= e.maxActive {
 		t.spec = spec
@@ -866,8 +877,8 @@ func (e *Engine) precheckSpec(spec *torrent.TorrentSpec, dest string) error {
 // cancellation or deadline: ctx belongs to the Add call, which has already
 // returned by the time the fetch runs, while the fetch's own lifetime is
 // governed by the metadata timeout instead.
-func (e *Engine) addFromURL(ctx context.Context, rawURL, dest string) (string, error) {
-	tr, queued, err := e.track(ctx, dest, rawURL)
+func (e *Engine) addFromURL(ctx context.Context, rawURL, dest string, prov provenance) (string, error) {
+	tr, queued, err := e.track(ctx, dest, rawURL, prov)
 	if err != nil {
 		return "", err
 	}
@@ -1144,12 +1155,12 @@ func validateInfoPaths(info *metainfo.Info, dest string) error {
 // use. One backend per destination rather than one per torrent: the backend
 // owns a piece-completion database, and two of them rooted at the same
 // directory would be two writers to one file.
-func (e *Engine) storageFor(dest string) (storage.ClientImplCloser, error) {
+func (e *Engine) storageFor(dest string) (safeStorage, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if e.closed {
-		return nil, ErrClosed
+		return safeStorage{}, ErrClosed
 	}
 
 	if s, ok := e.storages[dest]; ok {
@@ -1157,7 +1168,7 @@ func (e *Engine) storageFor(dest string) (storage.ClientImplCloser, error) {
 	}
 
 	if err := os.MkdirAll(dest, 0o700); err != nil {
-		return nil, fmt.Errorf("anacrolix: create destination %s: %w", dest, err)
+		return safeStorage{}, fmt.Errorf("anacrolix: create destination %s: %w", dest, err)
 	}
 
 	s := newSafeStorage(dest, e.logger)
@@ -1739,7 +1750,7 @@ func (e *Engine) Close() error {
 				errs = append(errs, fmt.Errorf("close storage %s: %w", dest, err))
 			}
 		}
-		e.storages = map[string]storage.ClientImplCloser{}
+		e.storages = map[string]safeStorage{}
 		e.mu.Unlock()
 
 		close(e.updates)

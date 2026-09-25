@@ -36,6 +36,11 @@ type ShutdownOptions struct {
 	// Store is flushed and then closed. May be nil.
 	Store *store.Store
 
+	// Session, when set, is saved after torrents are paused and before
+	// the store is flushed, so the final flush carries the session a
+	// restart resumes (T-041). May be nil.
+	Session *Session
+
 	// StopInput, when set, is called first and is expected to stop any
 	// further input from reaching the application (e.g. cancel a
 	// bubbletea program's input reader). It is expected to return quickly;
@@ -106,6 +111,12 @@ func Shutdown(opts ShutdownOptions) []error {
 		if err := runStep(logger, timeout, "pause torrents", func() error {
 			return pauseAll(opts.Engine, logger)
 		}); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if opts.Session != nil {
+		if err := runStep(logger, timeout, "save session", opts.Session.Save); err != nil {
 			errs = append(errs, err)
 		}
 	}

@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -40,12 +41,12 @@ func TestSetGetDeleteTorrent(t *testing.T) {
 	if !ok {
 		t.Fatalf("GetTorrent: not found")
 	}
-	if got != rec {
+	if !reflect.DeepEqual(got, rec) {
 		t.Fatalf("GetTorrent = %+v, want %+v", got, rec)
 	}
 
 	list := s.ListTorrents()
-	if len(list) != 1 || list[0] != rec {
+	if len(list) != 1 || !reflect.DeepEqual(list[0], rec) {
 		t.Fatalf("ListTorrents = %+v", list)
 	}
 
@@ -139,7 +140,7 @@ func TestFlushAndReopenPersists(t *testing.T) {
 	defer func() { _ = s2.Close() }()
 
 	got, ok := s2.GetTorrent("t1")
-	if !ok || got != rec {
+	if !ok || !reflect.DeepEqual(got, rec) {
 		t.Fatalf("GetTorrent after reopen = %+v, %v", got, ok)
 	}
 	hist := s2.ListHistory()
@@ -207,5 +208,33 @@ func TestFlushIsANoOpWhenNotDirty(t *testing.T) {
 	s, _ := openTest(t, time.Hour)
 	if err := s.Flush(); err != nil {
 		t.Fatalf("Flush on clean store: %v", err)
+	}
+}
+
+func TestTorrentResumeFieldsSurviveReopen(t *testing.T) {
+	s, path := openTest(t, time.Hour)
+
+	rec := TorrentRecord{
+		ID: "t1", Name: "example", Magnet: "magnet:?xt=urn:btih:aa", TorrentURL: "https://example.org/t1.torrent",
+		Metainfo: []byte("d4:infod4:name7:exampleee"), SavePath: "/downloads", AddedAt: time.Unix(1700000000, 0).UTC(),
+	}
+	if err := s.SetTorrent(rec); err != nil {
+		t.Fatalf("SetTorrent: %v", err)
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	reopened, err := open(path, time.Hour)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	got, ok := reopened.GetTorrent("t1")
+	if !ok || got.Name != rec.Name || got.Magnet != rec.Magnet || got.TorrentURL != rec.TorrentURL ||
+		string(got.Metainfo) != string(rec.Metainfo) || !got.AddedAt.Equal(rec.AddedAt) {
+		t.Fatalf("reopened record = %+v, want %+v", got, rec)
 	}
 }

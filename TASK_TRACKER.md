@@ -55,23 +55,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 4 — Persistence
 
-**Done (archived in `docs/tracker-archive.md`):** `T-040` bbolt store · `T-042` Single-instance lock and data integrity.
-
----
-
-### T-041 · Session resume
-```
-status: todo
-depends: T-040, T-032
-tier: H
-```
-**Acceptance**
-- On startup, torrents recorded in the store are re-added to the engine and resume from
-  existing data without re-downloading completed pieces.
-- A torrent whose data is missing on disk is surfaced as `StateErrored` with a clear message
-  and an offer to remove the entry — it is not silently dropped.
-- `Origin` (indexer ID + source URL) survives restart so the downloads screen can still show
-  the source.
+**Done (archived in `docs/tracker-archive.md`):** `T-040` bbolt store · `T-042` Single-instance lock and data integrity · `T-041` Session resume.
 
 ---
 
@@ -732,6 +716,16 @@ when it reaches it and does not start backlog items on its own.
   of refusing again; a queued spec whose promote-time `attach` fails stays tracked via `e.fail` the
   same way. Untrack (or re-evaluate) refused entries on re-`Add`, as `untrackFailedSpec` does for
   `addSpec`. Found in review of T-034 (PR #36).
+- `T-950` Wire `lifecycle.Session` into the composition root when one exists: `NewSession` after
+  `OpenStore` and the engine, `Resume` before the TUI starts (show `ResumeReport.Missing` on
+  first render), `Save` after every add/remove, and `ShutdownOptions.Session`. The add flow
+  (T-070) records `Origin` with `SetTorrent` before `Save`; `Save` keeps it. From T-041.
+- `T-951` Downloads screen: a row whose `Err` wraps `engine.ErrDataMissing` offers removal (the
+  `x` dialog, keep-data default) as its primary action, not just the truncated reason (T-071,
+  T-072). From T-041.
+- `T-952` A user-paused torrent comes back running after a restart. `Shutdown` pauses everything
+  before `Session.Save`, so pause state cannot be read from `State` there; needs a
+  user-pause flag in `engine.ResumeData` read before the shutdown pause. From T-041.
 
 
 
@@ -852,6 +846,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-105 | 2026-09-25 | T-944: findOrTrack (one critical section) fixes concurrent Add; a beforeAttach test hook and untrackFailedSpec fix two pre-merge review findings in the fix itself; check-goos-scope gates runtime.GOOS |
 | DEC-106 | 2026-09-25 | T-034: queue via optional engine.Queuer; space shortfall pauses as StateErrored; seed-policy stop shows StatePaused, Resume overrides; listen port 6881 with random fallback; Windows path limit is MAX_PATH |
 | DEC-107 | 2026-09-25 | T-949: merge gate is macOS-first (macOS make check + build-all + licenses + hostname check required, Linux/Windows make check advisory); reviewers stop checking CI; re-review resumes the same reviewer; stalled agents get one auto-resume then a fresh agent; tests wait on a predicate/terminal state, not one exact intermediate state; Windows shellcheck installs from a pinned, checksum-verified GitHub release |
+| DEC-108 | 2026-09-25 | T-041: session resume via optional engine.Resumer; persistent per-destination piece completion; unresumable torrents tracked as StateErrored (ErrDataMissing); lifecycle.Session saves only after Resume |
 
 ## Blocked
 
