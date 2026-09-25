@@ -710,17 +710,35 @@ type probeParseFailure interface {
 	ParseFailed() bool
 }
 
+// probeTimeoutError is the standard net.Error-family shape (net.OpError,
+// url.Error, and friends all implement it) for "this failed because it
+// timed out," distinct from context.DeadlineExceeded itself: an adapter's
+// own HTTP client can return a timeout that never actually observes this
+// package's context deadline — a dial timeout or a lower, per-request
+// timeout of the adapter's own — so relying on errors.Is(context.
+// DeadlineExceeded) alone would misclassify those as probeUnreachable.
+type probeTimeoutError interface {
+	Timeout() bool
+}
+
 // classifyProbeError sorts a TestSource error into one of the outcomes
-// above. A context deadline always wins over the marker interfaces below —
-// an error can plausibly implement one of them *and* have been produced
-// only because the context expired — since showing a probe that was cut
-// short by its own timeout as some other failure would be misleading.
+// above. A timeout — either this package's own context deadline, or an
+// adapter's own transport-level timeout (probeTimeoutError) — always wins
+// over the auth/parse marker interfaces below: an error can plausibly
+// implement one of them *and* have been produced only because something
+// timed out, and showing a probe that was cut short by a timeout as some
+// other failure would be misleading.
 func classifyProbeError(err error) probeOutcome {
 	if err == nil {
 		return probeReachable
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) {
+		return probeTimeout
+	}
+
+	var timeout probeTimeoutError
+	if errors.As(err, &timeout) && timeout.Timeout() {
 		return probeTimeout
 	}
 

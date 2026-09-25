@@ -3600,13 +3600,23 @@ tier: M
 
 **Notes:** `handleSourceTest` (`t`) dispatches a cancellable, 15s-bounded `testSourceCmd`;
 `classifyProbeError` sorts the result into reachable/timeout/auth failed/parse failed/unreachable
-via `errors.Is(context.DeadlineExceeded)` and two duck-typed marker interfaces
-(`probeAuthFailure`/`probeParseFailure`, matched with `errors.As`) since `internal/tui` cannot
-import a concrete adapter (AGENT.md §4). A second `t` while one is in flight is refused (DEC-115's
-discipline); `esc` cancels it via its own `context.CancelFunc`. `lastProbe` keeps the last
-classified outcome + underlying error per source id; `d` opens a new `ContextSourceTestDetail`
-panel showing it, word-wrapped. No adapter today implements the marker interfaces (Backlog
-`T-981`) since no composition root calls `TestSource` with a real one yet (`T-975`).
+via `errors.Is(context.DeadlineExceeded)` plus duck-typed marker interfaces
+(`probeAuthFailure`/`probeParseFailure`/`probeTimeoutError`, matched with `errors.As`) since
+`internal/tui` cannot import a concrete adapter (AGENT.md §4). A second `t` while one is in flight
+is refused (DEC-115's discipline); `esc` cancels it via its own `context.CancelFunc`. `lastProbe`
+keeps the last classified outcome + underlying error per source id; `d` opens a new
+`ContextSourceTestDetail` panel showing it, word-wrapped.
+
+**Review remediation (PR #49):** the settings list's hand-claimed esc/d keys were swallowing the
+quit-confirm dialog and the error-detail panel from the Settings screen (esc no longer closed
+quit-confirm); guarded with `!m.quitConfirm.IsOpen() && !m.errorDetail`, the same way the search
+screen's own esc/space block already is, with a regression test. `classifyProbeError` also matches
+the standard `net.Error`-family `Timeout() bool` shape, not just `context.DeadlineExceeded`.
+`httpx.StatusError.AuthFailed()` (401/403) and `torznab.APIError.AuthFailed()` (wraps `IsAuth`) now
+implement the auth marker for real, so live probes against those two adapters classify correctly
+once a composition root exists (`T-975`) — narrows Backlog `T-981` to the parse-failed bucket
+only, since torznab's and scraper's document-malformed errors are plain `errors.New` sentinel
+values that would need a wrapper type, not just a method, to carry `ParseFailed()`.
 
 ---
 

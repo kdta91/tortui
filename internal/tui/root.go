@@ -679,9 +679,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// keymap.go's comment by "The settings screen's own list-view keys"
 	// explains why they are not declarative Bindings (the `?` overlay's
 	// 80×24 budget, AGENT.md §7). Gated on no modal being open, the same
-	// way the search-screen block above is.
+	// way the search-screen block above is — m.screen can still read
+	// ScreenSettings while the quit-confirm dialog (or help, or the error
+	// detail panel) is open over it, and those must keep their own esc
+	// meaning (found in review of T-081: esc no longer closed quit-confirm
+	// from the Settings screen because this block swallowed it first).
 	if m.screen == ScreenSettings && m.settings.form == nil && !m.settings.removeConfirm.IsOpen() &&
-		!m.settings.detailOpen && !m.showHelp {
+		!m.settings.detailOpen && !m.showHelp && !m.quitConfirm.IsOpen() && !m.errorDetail {
 		switch msg.String() {
 		case "a":
 			return m.handleSourceAdd()

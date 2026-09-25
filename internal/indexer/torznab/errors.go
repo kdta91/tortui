@@ -108,6 +108,12 @@ func (e *APIError) Error() string {
 // around a source's access controls (AGENT.md §2).
 func (e *APIError) IsAuth() bool { return e.Code >= 100 && e.Code <= 199 }
 
+// AuthFailed is IsAuth under the name internal/tui's settings screen
+// matches via errors.As (T-081): the duck-typed shape that lets a
+// connection-test probe classify this as "auth failed" without importing
+// this package's concrete type directly (AGENT.md §4).
+func (e *APIError) AuthFailed() bool { return e.IsAuth() }
+
 // apiErrorFamily names the code's family. Only the family is reported,
 // never a per-code message: the exact code-to-text table varies between
 // implementations, and a family is what a user can act on anyway.

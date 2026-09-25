@@ -649,6 +649,7 @@ func TestListTestKeyClassifiesOutcomes(t *testing.T) {
 		want    string
 	}{
 		{name: "timeout", testErr: context.DeadlineExceeded, want: "My Tracker: timeout"},
+		{name: "transport timeout", testErr: timeoutErr{}, want: "My Tracker: timeout"},
 		{name: "auth failed", testErr: authFailureErr{}, want: "My Tracker: auth failed"},
 		{name: "parse failed", testErr: parseFailureErr{}, want: "My Tracker: parse failed"},
 		{name: "unreachable", testErr: errors.New("connection refused"), want: "My Tracker: unreachable"},
@@ -697,6 +698,15 @@ type parseFailureErr struct{}
 
 func (parseFailureErr) Error() string     { return "malformed response" }
 func (parseFailureErr) ParseFailed() bool { return true }
+
+// timeoutErr is a minimal test double for the standard net.Error-family
+// Timeout() bool shape (net.OpError, url.Error, ...) — not
+// context.DeadlineExceeded itself, proving classifyProbeError's second,
+// duck-typed timeout path.
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string { return "dial tcp: i/o timeout" }
+func (timeoutErr) Timeout() bool { return true }
 
 // TestListTestKeyRefusesSecondProbeWhileInFlight proves a second `t` while
 // one is already running is refused rather than racing it (DEC-115's same
