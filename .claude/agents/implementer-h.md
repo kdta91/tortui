@@ -25,6 +25,14 @@ with `grep -n '^| DEC-0NN ' docs/decisions.md` and a finished task with
 - Use make targets, not env-prefixed raw commands (`make lint-cross`, not `GOOS=windows go vet`).
 - **Windows CI is the one that bites**: `filepath` everywhere, volume prefixes, CRLF, symlink
   privilege errors. Think about the Windows path before pushing.
+- **Tests wait for a predicate or a terminal state, never one exact intermediate state a
+  background loop can skip.** Waiting for `StateDownloading` exactly is a race whenever something
+  else keeps ticking: the T-034 Windows failure was `waitForState(t, e, id, StateDownloading)` on a
+  torrent whose data was already complete — the policy tick could move it straight to `StateSeeding`
+  (or `StatePaused` under the "off" policy) before the poll ever observed `StateDownloading`, green
+  on macOS/Linux, flaky on Windows CI. Fixed by waiting for "downloading or later"
+  (`{StateDownloading, StateSeeding, StatePaused}`), not the single state. Write waits the same way:
+  a predicate over the acceptable terminal/next states, never a single exact one.
 
 **Verification (AGENT.md §11 — your row only)**
 `make check`; `make race PKG=<touched packages>`; `make cover` if you touched

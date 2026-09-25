@@ -501,8 +501,10 @@ verification is enough to stop.
 | **L** | display-only or documentation | `implementer` (Sonnet, medium) | `reviewer` (Opus, medium) | 10 min |
 
 Agent definitions live in `.claude/agents/`. **Escalation:** a tier M/L task that fails review twice,
-or fails CI three times for the same cause, is re-run with `implementer-h`. Budgets are targets
-for pacing, not stop conditions — the hard stop is §12's two hours.
+or fails a **required** check (the macOS-first gate below) three times for the same cause, is
+re-run with `implementer-h`. A repeatedly red *advisory* check gets a Backlog entry instead, never
+an escalation. Budgets are targets for pacing, not stop conditions — the hard stop is §12's two
+hours.
 
 ### Verification — who proves what
 
@@ -511,12 +513,22 @@ Each gate is run by exactly one party. Re-running someone else's gate is waste, 
 | Party | Runs | Enough to stop when |
 |---|---|---|
 | Implementer | `make check`; `make race PKG=<touched pkgs>`; `make cover` if it touched `internal/{indexer,engine,tui}`; `make lint-cross` **only** if it touched a build-tagged file; `make licenses` + `make vuln` **only** if `go.mod`/`go.sum` changed | every acceptance criterion has a test or quoted evidence, and those commands are green |
-| CI | all three OSes' `make check`, `build-all`, `licenses` | every required check is `pass` (pending or skipped ≠ pass) |
-| Reviewer | reads the diff against each acceptance criterion and §2/§6; **mutation-tests the load-bearing assertion** and quotes the failing output (required for H and M, optional for L); `gh pr checks <N> --watch` | a verdict per criterion, the mutation result, green CI, and the reviewed head SHA |
-| Orchestrator | `gh pr view` / `gh pr checks` only | reviewer PASS at the current head SHA + all checks pass |
+| CI | **Required:** `make check (macos-latest)`, `make build-all`, `make licenses`, the indexer hostname allowlist check. **Advisory:** `make check (ubuntu-latest)` and `make check (windows-latest)` — run on every PR, never block it | every required check is `pass` (pending or skipped ≠ pass); a red advisory check does not block — see the macOS-first gate below |
+| Reviewer | reads the diff against each acceptance criterion and §2/§6; **mutation-tests the load-bearing assertion** and quotes the failing output (required for H and M, optional for L) | a verdict per criterion and the quoted mutation result, at the checked-out head SHA — the reviewer does **not** wait on or check CI; that is the orchestrator's job alone |
+| Orchestrator | `gh pr view` / `gh pr checks` — the only party that reads CI | reviewer PASS at the current head SHA + every required check `pass`; a red advisory check gets a Backlog `T-9NN` entry naming the failing test and job, not a hold |
 
 Tier H reviewers additionally look for data races, goroutine leaks (`goleak`), unreaped
 per-object goroutines, and path containment on every create/open/delete.
+
+**Merge gate is macOS-first (DEC-107).** `make check (macos-latest)`, `make build-all`,
+`make licenses`, and the indexer hostname allowlist check are **required** for merge.
+`make check (ubuntu-latest)` and `make check (windows-latest)` run on every PR as **advisory**
+only: if one is red, the orchestrator still merges once the required checks and review pass, and
+adds a `T-9NN` Backlog entry naming the failing test and job instead of sending the task back. This
+does not relax the §14 portability contract — code stays cross-platform, OS-specific code stays
+behind build tags in `internal/platform`, the Windows path is still written in the same task, and
+`make lint-cross` still runs whenever a build-tagged file changes. CI job names are unchanged. All
+three OSes must be green before any release tag regardless of this gate (§12).
 
 ### The loop
 
@@ -529,17 +541,29 @@ per-object goroutines, and path containment on every create/open/delete.
    satisfies the criteria (no building ahead); its verification row above; the tracker update per
    the Protocol; commit, push, `gh pr create --label qa::pending`; report the PR URL, head SHA,
    elapsed minutes, and quoted command output. It does **not** wait for CI.
-4. **Orchestrator → reviewer** (fresh agent) as soon as the PR exists — review overlaps CI.
+4. **Orchestrator → reviewer** (fresh agent, unless this is a re-review — see step 7) as soon as
+   the PR exists — review overlaps CI.
 5. **Reviewer:** checks out the branch, reviews, mutation-tests, restores the tree (`git status`
-   clean), then waits on CI. Returns `PASS` or `FAIL` with numbered findings and the head SHA.
-6. **PASS** → orchestrator confirms the SHA is still the PR head and checks pass, then
+   clean). Returns `PASS` or `FAIL` with numbered findings and the head SHA. Does **not** wait on
+   or check CI — the orchestrator does that next.
+6. **PASS** → orchestrator checks CI itself: confirms the SHA is still the PR head and every
+   **required** check (`make check (macos-latest)`, `build-all`, `licenses`, indexer hostname
+   allowlist) is `pass`. A red **advisory** check (`make check` on `ubuntu-latest`/`windows-latest`)
+   does not block — add a `T-9NN` Backlog entry naming the failing test and job, then proceed.
    `gh pr edit <N> --add-label qa::passed --remove-label qa::pending`,
    `gh pr merge <N> --squash --delete-branch`, `git switch main && git pull --ff-only`. Next task.
-7. **FAIL** (including red CI) → orchestrator sends the findings to the **same implementer**
-   (context intact) to fix on the same branch; then a **fresh** reviewer checks only the findings
-   and the new commits. Back to step 6.
+7. **FAIL** (including a red **required** check) → orchestrator sends the findings to the **same
+   implementer** (context intact) to fix on the same branch; then sends the fix to **the same
+   reviewer** (context intact) to check only the findings and the new commits. Start a **fresh**
+   reviewer only if the original one is unavailable. The implementer still never reviews its own
+   work. Back to step 6.
 8. **BLOCKED** from any agent → orchestrator writes the Blocked entry (§12) on `main`, pushes,
    prints `BLOCKED: <task> <reason>`, and stops the run.
+
+**Stall recovery needs no owner input.** If an agent stalls or errors mid-task, the orchestrator
+resumes it once immediately. If it stalls or errors again, the orchestrator starts a fresh agent of
+the same type, briefed with what the failed one had already found. Neither counts as a step back —
+it is how the orchestrator keeps moving without asking.
 
 Progress updates are informational: no agent stops merely to report status. The session log
 (`docs/session-log.md`, written in each task's PR) is what a human reads to catch up, and
@@ -571,8 +595,14 @@ Stop and ask, even mid-run, for: pushing a tag or publishing a release (`git pus
 (including the Homebrew tap and Scoop bucket); changing repository settings, branch protection, or
 `gh` authentication; running `//go:build integration` tests or anything else against the live
 network; manual steps needing a human at a real terminal (the T-094 matrix); anything that changes
-§2, §3, the frozen §5 contracts, or the MPL-2.0 module set. Build everything up to that point,
-merge it, and leave the owner-only step as a checklist in the task's notes.
+§2, §3, the frozen §5 contracts, or the MPL-2.0 module set; changing which CI checks branch
+protection requires. Build everything up to that point, merge it, and leave the owner-only step as
+a checklist in the task's notes.
+
+**Release gate is all three OSes, unlike the per-PR merge gate.** §11's macOS-first gate only
+lowers the bar for merging an ordinary PR. Before pushing a release tag, `make check` must be
+green on `macos-latest`, `ubuntu-latest`, *and* `windows-latest` — verify all three, not just the
+required one, even if a prior PR merged with an advisory failure logged as a Backlog item.
 
 ---
 
@@ -643,6 +673,12 @@ terminal-visible behaviour. The binding summary:
 - **Windows CI is the one that bites** (volume prefixes in `filepath.Abs`, symlink privilege
   `ERROR_PRIVILEGE_NOT_HELD`, CRLF). Native darwin `make check` does not lint other platforms'
   build-tagged files — run `make lint-cross` when you touch any.
+- **The PR merge gate is macOS-first (§11, DEC-107):** `make check (macos-latest)` is required;
+  `make check` on `ubuntu-latest`/`windows-latest` is advisory per PR (a red one logs a Backlog
+  item instead of blocking). That is a pacing decision about *when* a red non-macOS test blocks a
+  merge, not a relaxation of this contract — all three OSes still get real code and real tests in
+  the same task, `make lint-cross` still runs on build-tagged changes, and all three OSes must be
+  green before any release tag.
 
 ---
 

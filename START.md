@@ -44,13 +44,19 @@ Read AGENT.md in full now — it overrides anything in this prompt. §11 is the 
    implementer for M/L). Brief: "Task <ID>, tier <T>, branch task/<ID>-<slug>." Nothing more —
    the agent definition carries the rules.
 3. As soon as it reports a PR, delegate review to a fresh reviewer-h (H) or reviewer (M/L):
-   "Review PR #<N> for <ID>, tier <T>." Never the agent that wrote it.
-4. PASS at the current head SHA and every check `pass` → `gh pr edit <N> --add-label qa::passed
-   --remove-label qa::pending`, `gh pr merge <N> --squash --delete-branch`,
-   `git switch main && git pull --ff-only`. Next task.
-5. FAIL → SendMessage the numbered findings to the same implementer to fix on the branch; then a
-   fresh reviewer in re-review mode ("Re-review PR #<N>: findings <list>, since <sha>"). Two
-   FAILs, or three CI failures for the same cause, on a tier M/L task → redo it with implementer-h.
+   "Review PR #<N> for <ID>, tier <T>." Never the agent that wrote it. The reviewer does not wait
+   on or check CI — you do that yourself in step 4, once its verdict comes back.
+4. PASS at the current head SHA and every **required** check `pass` (`make check (macos-latest)`,
+   `make build-all`, `make licenses`, the indexer hostname allowlist check) → `gh pr edit <N>
+   --add-label qa::passed --remove-label qa::pending`, `gh pr merge <N> --squash --delete-branch`,
+   `git switch main && git pull --ff-only`. Next task. A red **advisory** check (`make check` on
+   `ubuntu-latest` or `windows-latest`) does not block — add a `T-9NN` Backlog entry naming the
+   failing test and job, then merge anyway (AGENT.md §11, DEC-107).
+5. FAIL (including a red required check) → SendMessage the numbered findings to the same
+   implementer to fix on the branch; then send the fix to **the same reviewer** in re-review mode
+   ("Re-review PR #<N>: findings <list>, since <sha>") — start a fresh reviewer only if that one is
+   unavailable. Two FAILs, or three failures of a required check for the same cause, on a tier M/L
+   task → redo it with implementer-h.
 6. BLOCKED → write the Blocked entry in TASK_TRACKER.md on main, push, print
    "BLOCKED: <task> <reason>", stop.
 7. Print one line per task: id, tier, verdict, PR number, minutes. Continue.
@@ -58,7 +64,10 @@ Read AGENT.md in full now — it overrides anything in this prompt. §11 is the 
 RULES:
 - Never implement anything yourself. Delegate. One task at a time. One agent in the worktree at a
   time; never `git switch` while an agent is working.
-- Verify only PR state, CI state, and the reviewed SHA — do not re-run the agents' gates.
+- Verify only PR state, required-CI state, and the reviewed SHA — do not re-run the agents' gates.
+- If an agent stalls or errors, resume it once immediately. If it stalls or errors again, start a
+  fresh agent of the same type with a note on what the failed one had found. This needs no
+  confirmation from me.
 - Print subagent verdict first lines verbatim. Keep your own output short.
 - Progress updates are informational; do not stop to report status.
 ```
