@@ -234,6 +234,19 @@ type Model struct {
 	// settings is the settings screen's own state: the list cursor, an
 	// open add/edit form, and the remove confirmation.
 	settings settingsModel
+
+	// prefsManager is the preferences panel's (T-082, preferences.go)
+	// source of truth for every remaining configuration knob. nil is
+	// valid: the panel refuses to open and reports "no preferences
+	// manager configured" via the status bar, the same nil-is-valid
+	// convention SourceManager already establishes.
+	prefsManager PreferencesManager
+	// configSnapshot is the preferences panel's model-side cache of
+	// prefsManager.Config(): populated once at construction (New, below)
+	// and kept in sync afterwards purely by messages (prefsSaveResultMsg)
+	// — never by a synchronous Config() call from Update() or View(),
+	// mirroring sourcesSnapshot's own doc comment (AGENT.md §6.1/§6.8).
+	configSnapshot config.Config
 }
 
 // Option configures optional Model wiring not every caller needs. Adding
@@ -326,6 +339,11 @@ func WithSavedDestinations(dirs []string) Option {
 	return func(m *Model) { m.savedDestinations = append([]string(nil), dirs...) }
 }
 
+// WithPreferencesManager is documented in preferences.go, alongside the
+// interface it wires (PreferencesManager) — kept there rather than here so
+// the option and the interface it configures stay next to each other, the
+// one exception to this file otherwise owning every Option.
+
 // New builds a Model wired to eng (typically a real engine in production,
 // internal/engine/fake in tests) and th, starting on ScreenSearch with no
 // modal open. opts wires the optional dependencies later screens need
@@ -374,6 +392,10 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 	// messages (settings.go's sourcesSaveResultMsg/formSaveResultMsg).
 	if m.sources != nil {
 		m.sourcesSnapshot = m.sources.Sources()
+	}
+
+	if m.prefsManager != nil {
+		m.configSnapshot = m.prefsManager.Config()
 	}
 
 	m.search = newSearchModel(m.searcher, m.history)
@@ -580,6 +602,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reloadResultMsg:
 		return m.handleReloadResult(msg)
 
+	case prefsDownloadDirCheckMsg:
+		return m.handlePrefsDownloadDirCheck(msg)
+
+	case prefsSaveResultMsg:
+		return m.handlePrefsSaveResult(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -603,6 +631,8 @@ func (m Model) context() Context {
 		return ContextSourceRemoveConfirm
 	case m.settings.detailOpen:
 		return ContextSourceTestDetail
+	case m.settings.prefsForm != nil:
+		return ContextPreferences
 	case m.showHelp:
 		return ContextHelp
 	case m.errorDetail:
@@ -628,6 +658,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// it is open, the same reason the destination picker does above.
 	if m.settings.form != nil {
 		return m.handleSourceFormKey(msg)
+	}
+
+	// The preferences panel (T-082, preferences.go) is modal the same way,
+	// for the same reason: it needs almost every key for free-text fields.
+	if m.settings.prefsForm != nil {
+		return m.handlePreferencesKey(msg)
 	}
 
 	// While the search screen has a field in text-edit mode, most keys —
@@ -708,6 +744,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// T-081: esc cancels an in-flight probe. A no-op otherwise —
 			// nothing else on this screen's list view binds esc.
 			return m.handleSourceTestCancel()
+		case "p":
+			// T-082: opens the preferences panel — download dir, saved
+			// destinations, rate limits, and the rest of the settings
+			// screen's remaining knobs.
+			return m.handlePreferencesOpen()
 		}
 	}
 
@@ -972,6 +1013,8 @@ func (m Model) View() string {
 		body = m.renderSourceRemoveConfirm()
 	case ContextSourceTestDetail:
 		body = m.renderSourceTestDetail()
+	case ContextPreferences:
+		body = m.renderPreferencesScreen()
 	case ContextErrorDetail:
 		body = m.renderErrorDetail()
 	default:

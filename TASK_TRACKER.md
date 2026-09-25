@@ -79,25 +79,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 8 — Settings
 
-**Done (archived in `docs/tracker-archive.md`):** `T-080` Indexer management · `T-081` Connection test.
-
----
-
-### T-082 · Preferences
-```
-status: todo
-depends: T-080
-tier: M
-```
-**Acceptance**
-- Edit default download dir (with existence, writability, and free-space validation), manage
-  the **saved destinations list** (add/rename/remove, most-recent-first), rate limits, max
-  active downloads, max peers, listen port, seeding policy, ratio and duration, minimum free space,
-  search timeout, theme, and ASCII mode.
-- Removing a saved destination warns if any active torrent is downloading there, and never
-  silently drops it from the known-roots set while in use (AGENT.md §6.12).
-- Changes apply live where the engine supports it; where they need a restart, say so explicitly.
-- Invalid values rejected inline with the reason, never silently clamped.
+**Done (archived in `docs/tracker-archive.md`):** `T-080` Indexer management · `T-081` Connection test · `T-082` Preferences.
 
 ---
 
@@ -794,6 +776,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-119 | 2026-09-26 | T-080 review remediation: model-side sourcesSnapshot replaces every synchronous SourceManager.Sources() call from Update/View, updated optimistically and reverted on failure; refreshSearchSources re-reads Searcher.Enabled() after every successful save so Settings changes are visible on the Search screen live |
 | DEC-120 | 2026-09-26 | T-081: classifyProbeError sorts a TestSource error via errors.Is(context.DeadlineExceeded) plus two duck-typed marker interfaces (no adapter import, AGENT.md §4); t refuses a second in-flight probe (DEC-115), esc cancels via its own CancelFunc; d opens a new ContextSourceTestDetail panel from lastProbe |
 | DEC-121 | 2026-09-26 | T-081 review remediation: settings list esc/d now guarded against quit-confirm/error-detail (regression test added); classifyProbeError also matches net.Error's Timeout() bool; httpx.StatusError and torznab.APIError now implement the auth marker for real, narrowing Backlog T-981 to parse-failed only |
+| DEC-122 | 2026-09-26 | T-082: preferences panel (p key) applies download_dir/saved_destinations/min_free_space live (TUI-owned state); rate limits/peers/port/seed policy/search timeout/theme/ascii have no live-reconfigure path against the frozen Engine interface, so they're persisted and named "restart to apply" instead; destination-removal warning reuses engine.ContainedIn — the known-roots set was never actually at risk since tracked torrents' own SavePaths already widen it regardless of SavedDestinations |
 
 ## Blocked
 

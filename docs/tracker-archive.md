@@ -3620,6 +3620,39 @@ values that would need a wrapper type, not just a method, to carry `ParseFailed(
 
 ---
 
+### T-082 · Preferences
+```
+status: done
+depends: T-080
+tier: M
+```
+**Acceptance**
+- Edit default download dir (with existence, writability, and free-space validation), manage
+  the **saved destinations list** (add/rename/remove, most-recent-first), rate limits, max
+  active downloads, max peers, listen port, seeding policy, ratio and duration, minimum free space,
+  search timeout, theme, and ASCII mode.
+- Removing a saved destination warns if any active torrent is downloading there, and never
+  silently drops it from the known-roots set while in use (AGENT.md §6.12).
+- Changes apply live where the engine supports it; where they need a restart, say so explicitly.
+- Invalid values rejected inline with the reason, never silently clamped.
+
+**Notes:** New `internal/tui/preferences.go`: `PreferencesManager` interface (same composition-
+root seam as `SourceManager`; concrete wiring is Backlog, no composition root yet, T-950/T-975),
+a `p`-key panel beside the source list with a flat row list (fixed fields + saved-destination
+rows + an "add" row), inline `liveIssues` validation (never clamped), and the download dir's
+existence/writability/free-space check reusing `destination.go`'s `checkDestination` via its own
+`tea.Cmd`. Only `download_dir`/`saved_destinations`/`min_free_space` are TUI-owned state applied
+live on save; every other field (rate limits, peers, port, seed policy/ratio/duration, search
+timeout, theme, ASCII) has no live-reconfigure path against the frozen `Engine` interface or this
+package's existing rendering setup, so it is persisted and reported "restart to apply: ..." in the
+status bar rather than half-applied (DEC-122). Removing a saved destination warns via
+`destinationInUse` (`engine.ContainedIn` against tracked torrents) but the known-roots set was
+never at risk: `destinationRoots`/`destinationEntries` already always add every tracked torrent's
+own `SavePath` regardless of `SavedDestinations` (T-074), so this warning is purely informational.
+`make check`, `make race` (tui), `make cover` (tui 92.9%) green.
+
+---
+
 ## Blocked — Resolved
 
 

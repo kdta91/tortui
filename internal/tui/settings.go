@@ -428,6 +428,14 @@ type settingsModel struct {
 	// detailOpen is true while the `d` connection-test detail panel
 	// (ContextSourceTestDetail) is open.
 	detailOpen bool
+
+	// view selects which of the settings screen's two panels is shown:
+	// the source list (default) or the preferences panel (T-082,
+	// preferences.go), reached with "p".
+	view settingsView
+	// prefsForm is the open preferences panel's own state, nil when the
+	// source list has focus.
+	prefsForm *prefsForm
 }
 
 func newSettingsModel() settingsModel {
@@ -1307,7 +1315,7 @@ func maskSecret(v string, reveal bool) string {
 // settingsScreenLegend documents the list-view keys keymap.go deliberately
 // keeps out of the `?` overlay (the 80×24 budget) — shown here instead so
 // they stay discoverable without ever needing the config file.
-const settingsScreenLegend = "a add · e edit · t test (esc cancels) · d test detail · space enable/disable · x remove · r reload definitions"
+const settingsScreenLegend = "a add · e edit · t test (esc cancels) · d test detail · space enable/disable · x remove · r reload definitions · p preferences"
 
 // renderSettingsScreen draws ScreenSettings' real body: the source list, or
 // the open add/edit form on top of it. Pure (AGENT.md §6.8).
