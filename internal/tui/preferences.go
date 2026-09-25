@@ -431,10 +431,17 @@ func (f prefsForm) fieldIssue(cursor int) string {
 			return strings.TrimPrefix(err.Error(), engine.ErrUnsafePath.Error()+": ")
 		}
 
-		if f.checkedPath == f.downloadDir {
-			if reason := f.downloadDirCheck.blockReason(); reason != "" {
-				return reason
-			}
+		if strings.TrimSpace(f.checkedPath) != strings.TrimSpace(f.downloadDir) {
+			// The existence/writability/free-space check is still pending
+			// (or stale) for the currently typed path: refuse to treat the
+			// field as valid until it lands, so ctrl+s can never race ahead
+			// of prefsDownloadDirCheckMsg and save a path that turns out to
+			// be a file, unwritable, or out of space.
+			return "checking…"
+		}
+
+		if reason := f.downloadDirCheck.blockReason(); reason != "" {
+			return reason
 		}
 
 		return ""
@@ -560,17 +567,44 @@ func (f prefsForm) rowLabel(cursor int) string {
 // f, and the cleaned, de-duplicated, non-blank destination list. base
 // carries whatever else the configuration holds (Indexers, most of all)
 // unchanged.
-func (f prefsForm) applyTo(base config.Config) config.Config {
+// applyTo's own fields are validated by fieldIssue before this ever runs
+// (handlePrefsSave refuses to call it while liveIssues is non-empty), so
+// every parse below is expected to succeed — but AGENT.md §6.9 forbids
+// discarding an error with "_" regardless, so a parse failure here is
+// returned rather than silently zeroed.
+func (f prefsForm) applyTo(base config.Config) (config.Config, error) {
 	cfg := base
 
 	cfg.DownloadDir = strings.TrimSpace(f.downloadDir)
-	cfg.MaxDownloadRate, _ = config.ParseByteSize(f.maxDownloadRate)
-	cfg.MaxUploadRate, _ = config.ParseByteSize(f.maxUploadRate)
-	cfg.MaxActiveDownloads, _ = strconv.Atoi(f.maxActiveDownloads)
-	cfg.MaxPeers, _ = strconv.Atoi(f.maxPeers)
-	cfg.ListenPort, _ = strconv.Atoi(f.listenPort)
+
+	var err error
+
+	if cfg.MaxDownloadRate, err = config.ParseByteSize(f.maxDownloadRate); err != nil {
+		return config.Config{}, fmt.Errorf("max_download_rate: %w", err)
+	}
+
+	if cfg.MaxUploadRate, err = config.ParseByteSize(f.maxUploadRate); err != nil {
+		return config.Config{}, fmt.Errorf("max_upload_rate: %w", err)
+	}
+
+	if cfg.MaxActiveDownloads, err = strconv.Atoi(f.maxActiveDownloads); err != nil {
+		return config.Config{}, fmt.Errorf("max_active_downloads: %w", err)
+	}
+
+	if cfg.MaxPeers, err = strconv.Atoi(f.maxPeers); err != nil {
+		return config.Config{}, fmt.Errorf("max_peers: %w", err)
+	}
+
+	if cfg.ListenPort, err = strconv.Atoi(f.listenPort); err != nil {
+		return config.Config{}, fmt.Errorf("listen_port: %w", err)
+	}
+
 	cfg.SeedPolicy = f.seedPolicy
-	cfg.SeedRatio, _ = strconv.ParseFloat(f.seedRatio, 64)
+
+	if cfg.SeedRatio, err = strconv.ParseFloat(f.seedRatio, 64); err != nil {
+		return config.Config{}, fmt.Errorf("seed_ratio: %w", err)
+	}
+
 	cfg.SeedDuration = f.seedDuration
 	cfg.MinFreeSpace = strings.TrimSpace(f.minFreeSpace)
 	cfg.SearchTimeout = f.searchTimeout
@@ -593,7 +627,7 @@ func (f prefsForm) applyTo(base config.Config) config.Config {
 
 	cfg.SavedDestinations = dests
 
-	return cfg
+	return cfg, nil
 }
 
 // changedRestartFields reports which restart-required fields differ
@@ -649,7 +683,15 @@ func (m Model) revalidatePrefsDownloadDir() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	return m, checkPrefsDownloadDirCmd(path, m.minFreeSpace, m.destProbe)
+	// Use the min-free-space value currently being edited in the form, not
+	// the running m.minFreeSpace: a change to that field must be reflected
+	// in the download-dir check without requiring a save first.
+	margin := m.minFreeSpace
+	if n, err := config.ParseByteSize(f.minFreeSpace); err == nil {
+		margin = n
+	}
+
+	return m, checkPrefsDownloadDirCmd(path, margin, m.destProbe)
 }
 
 // prefsDownloadDirCheckMsg carries one download-dir validation outcome,
@@ -808,8 +850,16 @@ func (m Model) handlePreferencesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.Type {
-	case tea.KeyRunes:
+	case tea.KeyRunes, tea.KeySpace:
+		// Bubble Tea reports the space bar as its own tea.KeySpace, distinct
+		// from tea.KeyRunes, so a typed field (the download directory, a
+		// saved destination) needs it handled here too or a space can never
+		// be typed into a path.
 		text := string(msg.Runes)
+		if msg.Type == tea.KeySpace {
+			text = " "
+		}
+
 		f = f.setValueAt(f.cursor, f.valueAt(f.cursor)+text)
 		f.dirty = true
 		m.settings.prefsForm = &f
@@ -853,7 +903,14 @@ func (m Model) handlePrefsSave(f prefsForm) (tea.Model, tea.Cmd) {
 	}
 
 	previous := m.configSnapshot
-	next := f.applyTo(previous)
+
+	next, err := f.applyTo(previous)
+	if err != nil {
+		f.err = err.Error()
+		m.settings.prefsForm = &f
+
+		return m, nil
+	}
 
 	f.err = ""
 	m.settings.prefsForm = &f

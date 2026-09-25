@@ -244,6 +244,13 @@ when it reaches it and does not start backlog items on its own.
 
 ## Backlog (not scheduled)
 
+- `T-982` Apply theme and ASCII-mode changes live from the preferences panel
+  instead of requiring a restart. Both are TUI-owned rendering state (not a
+  property of the frozen engine.Engine contract), so — unlike the other
+  restart-required fields in T-082's prefsForm — there is no structural
+  reason they could not take effect immediately on save, the same way
+  download_dir/saved_destinations/min_free_space already do. Deferred as
+  non-blocking QA feedback on PR #50 (T-082) to keep that fix scoped.
 - `T-901` RSS/watch-list auto-download
 - `T-902` Sequential download / streaming-while-downloading
 - `T-903` Per-file selection before adding

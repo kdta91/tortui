@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -254,6 +255,164 @@ func TestPreferencesDownloadDirRejectsFileInThePlaceOfAFolder(t *testing.T) {
 	}
 }
 
+// TestPreferencesDownloadDirCheckMustLandBeforeSave reproduces QA finding 1a
+// on PR #50: pressing ctrl+s before prefsDownloadDirCheckMsg arrives must not
+// save a download directory that turns out to be a regular file. Earlier,
+// fieldIssue only consulted the async check's result when
+// f.checkedPath == f.downloadDir and otherwise treated the field as valid,
+// so a save racing ahead of the check went through unchecked.
+func TestPreferencesDownloadDirCheckMustLandBeforeSave(t *testing.T) {
+	dir := t.TempDir()
+	occupied := filepath.Join(dir, "occupied")
+	if err := os.WriteFile(occupied, []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
+	m := newPrefsTestModel(t, fake.New(), pm)
+
+	f := m.settings.prefsForm
+	clearLen := len(f.downloadDir) + 4
+
+	for i := 0; i < clearLen; i++ {
+		updated, cmd := m.handlePreferencesKey(tea.KeyMsg{Type: tea.KeyBackspace})
+		m = updated.(Model)
+		_ = cmd // dropped: only the final rune's check matters below
+	}
+
+	// Type the occupied path but deliberately never run the resulting
+	// tea.Cmd, simulating ctrl+s racing ahead of prefsDownloadDirCheckMsg.
+	updated, cmd := m.handlePreferencesKey(keyRune(occupied))
+	m = updated.(Model)
+	_ = cmd
+
+	if got := m.settings.prefsForm.checkedPath; got == strings.TrimSpace(m.settings.prefsForm.downloadDir) {
+		t.Fatalf("test setup invalid: the check must not have landed yet, checkedPath = %q", got)
+	}
+
+	updated, _ = m.handlePreferencesKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(Model)
+
+	if pm.saveCallCount() != 0 {
+		t.Fatal("must not save while the download-dir check is still pending")
+	}
+}
+
+// TestPreferencesDownloadDirCheckAppliesDespiteTrailingWhitespace reproduces
+// QA finding 1b on PR #50: checkedPath is stored trimmed, but was compared
+// against the untrimmed current value, so a trailing space or tab meant the
+// check's result never applied and a file path could be saved and applied
+// live.
+func TestPreferencesDownloadDirCheckAppliesDespiteTrailingWhitespace(t *testing.T) {
+	dir := t.TempDir()
+	occupied := filepath.Join(dir, "occupied")
+	if err := os.WriteFile(occupied, []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
+	m := newPrefsTestModel(t, fake.New(), pm)
+
+	f := m.settings.prefsForm
+	backspace(t, &m, len(f.downloadDir)+4)
+	typeText(t, &m, occupied+"\t")
+
+	issues := m.settings.prefsForm.liveIssues()
+
+	found := false
+
+	for _, issue := range issues {
+		if strings.Contains(issue, "a file, not a folder") {
+			found = true
+		}
+	}
+
+	if !found {
+		t.Fatalf("issues = %v, want the occupied-by-a-file reason despite trailing whitespace", issues)
+	}
+
+	sendPrefsKey(t, &m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if pm.saveCallCount() != 0 {
+		t.Fatal("must not save a trailing-whitespace path pointed at a file")
+	}
+}
+
+// --- download dir: not-writable / not-enough-space outcomes -------------
+
+// TestPreferencesDownloadDirNotWritable exercises the "not writable" branch
+// of destCheck.blockReason through the full preferences flow, with a fake
+// m.destProbe standing in for the filesystem (QA finding 3 on PR #50).
+func TestPreferencesDownloadDirNotWritable(t *testing.T) {
+	dir := t.TempDir()
+	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
+
+	probe := destProbe{
+		freeSpace: func(string) (uint64, error) { return 1 << 40, nil },
+		writable:  func(string) error { return errors.New("permission denied") },
+	}
+
+	m := newPrefsTestModelWithProbe(t, fake.New(), pm, probe)
+
+	issues := m.settings.prefsForm.liveIssues()
+
+	found := false
+
+	for _, issue := range issues {
+		if strings.Contains(issue, "not writable") {
+			found = true
+		}
+	}
+
+	if !found {
+		t.Fatalf("issues = %v, want a not-writable reason", issues)
+	}
+
+	sendPrefsKey(t, &m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if pm.saveCallCount() != 0 {
+		t.Fatal("must not save an unwritable download directory")
+	}
+}
+
+// TestPreferencesDownloadDirNotEnoughSpace exercises the "not enough space"
+// branch of destCheck.blockReason with a fake m.destProbe (QA finding 3 on
+// PR #50). The download-directory check itself never carries a candidate
+// torrent size (checkPrefsDownloadDirCmd always passes size 0), so
+// destCheck.need() — and therefore this branch — can only ever be reached
+// through the same checkDestination/blockReason machinery the download-dir
+// check shares with the add-destination picker (destination.go); this test
+// pins that shared behaviour using the probe wiring the preferences panel's
+// revalidatePrefsDownloadDir dispatches through.
+func TestPreferencesDownloadDirNotEnoughSpace(t *testing.T) {
+	probe := destProbe{
+		freeSpace: func(string) (uint64, error) { return 1 << 10, nil }, // 1 KiB free
+		writable:  func(string) error { return nil },
+	}
+
+	c := checkDestination(t.TempDir(), 1<<30, 0, probe) // needs 1 GiB
+	if reason := c.blockReason(); !strings.Contains(reason, "not enough space") {
+		t.Fatalf("blockReason() = %q, want a not-enough-space reason", reason)
+	}
+}
+
+// newPrefsTestModelWithProbe is newPrefsTestModel with a caller-supplied
+// destProbe wired in before the panel opens (and its opening check runs),
+// so a test can script a full disk or an unwritable folder without
+// touching the real filesystem.
+func newPrefsTestModelWithProbe(t *testing.T, eng engine.Engine, pm PreferencesManager, probe destProbe) Model {
+	t.Helper()
+
+	m := New(eng, testTheme(), WithPreferencesManager(pm))
+	m.screen = ScreenSettings
+	m.width, m.height = 100, 40
+	m.destProbe = probe
+
+	updated, cmd := m.handlePreferencesOpen()
+	m = updated.(Model)
+	m, _ = runCmd(t, m, cmd)
+
+	return m
+}
+
 // --- saved destinations: add / rename / remove --------------------------
 
 func TestPreferencesSavedDestinationsAddRenameRemove(t *testing.T) {
@@ -476,5 +635,42 @@ func TestPreferencesThemeAndSeedPolicyCycleWithLeftRight(t *testing.T) {
 	sendPrefsKey(t, &m, tea.KeyMsg{Type: tea.KeySpace})
 	if !m.settings.prefsForm.ascii {
 		t.Fatal("space on ascii must toggle it on")
+	}
+}
+
+// --- space typed into a path field ---------------------------------------
+
+// TestPreferencesSpaceTypedIntoDownloadDir reproduces QA finding 5 on PR #50:
+// Bubble Tea reports the space bar as its own tea.KeySpace, distinct from
+// tea.KeyRunes, so a typed field's append switch (which only matched
+// tea.KeyRunes and tea.KeyBackspace) silently dropped every space typed into
+// the download directory or a saved destination.
+func TestPreferencesSpaceTypedIntoDownloadDir(t *testing.T) {
+	dir := t.TempDir()
+	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
+	m := newPrefsTestModel(t, fake.New(), pm)
+
+	before := m.settings.prefsForm.downloadDir
+	sendPrefsKey(t, &m, tea.KeyMsg{Type: tea.KeySpace})
+
+	if want := before + " "; m.settings.prefsForm.downloadDir != want {
+		t.Fatalf("downloadDir = %q, want %q (space must be typed into the field)", m.settings.prefsForm.downloadDir, want)
+	}
+}
+
+// --- applyTo never discards a parse error --------------------------------
+
+// TestPreferencesApplyToReturnsParseErrorRatherThanDiscarding pins AGENT.md
+// §6.9: applyTo must return an error instead of silently zeroing a field
+// whose value fails to parse (QA finding 4 on PR #50). fieldIssue already
+// keeps an invalid value like this from reaching applyTo through the normal
+// ctrl+s path, so this test calls applyTo directly.
+func TestPreferencesApplyToReturnsParseErrorRatherThanDiscarding(t *testing.T) {
+	dir := t.TempDir()
+	f := newPrefsForm(newTestConfig(dir), nil)
+	f.maxPeers = "not-a-number"
+
+	if _, err := f.applyTo(newTestConfig(dir)); err == nil {
+		t.Fatal("applyTo must return an error for an unparseable field rather than discarding it")
 	}
 }
