@@ -15,8 +15,8 @@
 // basic add-to-engine path enter drives from there (T-070 builds resolve,
 // dedup, and destination selection on top of it); downloads.go owns the
 // active/completed torrent list, its progress rows, and its own cursor
-// (T-071; T-072/T-073 give it pause/resume/remove/open/folder behaviour on
-// top of the same rows). The responsive table (T-053) is implemented in
+// (T-071); download_actions.go gives those rows pause/resume, remove, and
+// open-source behaviour (T-072), with open file/folder still to come (T-073). The responsive table (T-053) is implemented in
 // internal/tui/components. The status bar (T-052) is also implemented in
 // internal/tui/components and wired in here as root.go's bottom line and
 // ContextErrorDetail modal.
@@ -191,6 +191,9 @@ const (
 	// (ActionNextScreen) is bound only in the five screenContext values,
 	// never in a modal context; see DEC-092.
 	ContextErrorDetail Context = "modal:error-detail"
+	// ContextRemoveConfirm is the downloads screen's `x` dialog (T-072):
+	// remove keeping data, remove deleting data, or cancel.
+	ContextRemoveConfirm Context = "modal:remove-confirm"
 )
 
 // screenContext names the Context a given Screen's keymap lookups use.
@@ -352,6 +355,22 @@ func quitConfirmBindings() []Binding {
 	}
 }
 
+// removeConfirmBindings are the bindings live while the downloads screen's
+// remove dialog (ContextRemoveConfirm) is open: move between its three
+// choices, confirm the highlighted one, or cancel. There is deliberately no
+// one-key shortcut for "delete data" — an irreversible choice is reached
+// only by moving onto it and confirming.
+func removeConfirmBindings() []Binding {
+	ctx := []Context{ContextRemoveConfirm}
+
+	return []Binding{
+		{Keys: []string{"j", "down"}, Action: ActionMoveDown, Help: "next choice", Contexts: ctx},
+		{Keys: []string{"k", "up"}, Action: ActionMoveUp, Help: "previous choice", Contexts: ctx},
+		{Keys: []string{"enter"}, Action: ActionConfirmYes, Help: "confirm highlighted choice", Contexts: ctx},
+		{Keys: []string{"esc", "n"}, Action: ActionCancel, Help: "cancel", Contexts: ctx},
+	}
+}
+
 // AllBindings returns every binding tortui defines, across every context:
 // the global/screen keymap plus both modal overlays. This is what
 // TestKeymapNoConflicts checks and what the help overlay for a modal
@@ -361,6 +380,7 @@ func AllBindings() []Binding {
 	all = append(all, helpOverlayBindings()...)
 	all = append(all, quitConfirmBindings()...)
 	all = append(all, errorDetailBindings()...)
+	all = append(all, removeConfirmBindings()...)
 
 	return all
 }
