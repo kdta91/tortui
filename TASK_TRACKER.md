@@ -61,7 +61,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ### T-041 · Session resume
 ```
-status: todo
+status: blocked
 depends: T-040, T-032
 tier: H
 ```
@@ -855,6 +855,14 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 
 ## Blocked
 
-*(empty — append `T-0NN` blocks here with the exact input needed to unblock)*
+### T-041 · Session resume — blocked 2026-09-25
+PR #38 (`task/T-041-session-resume`, head `cc97d20`) is code-complete and reviewer-passed except for
+the required `check indexer hostname allowlist (T-007)` check. The scan covers every commit message in
+base..head, and the message of already-pushed commit `3041707` quotes `d.Origin.IndexerID`. The narrowed
+rule flags that, correctly. Removing it needs a history rewrite (force-push is denied, and §10 forbids it
+on a PR under review) or a replacement PR (§10: no second PR).
+**Unblock:** owner picks one: (a) authorise rewording `3041707` plus `git push --force-with-lease`;
+(b) authorise a replacement PR from one clean commit with the same tree, closing #38; or
+(c) another resolution.
 
 Resolved blockers are archived verbatim under **Blocked — Resolved** in `docs/tracker-archive.md`.
