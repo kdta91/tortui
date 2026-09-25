@@ -400,7 +400,7 @@ func TestConfigIsAppliedToTheClient(t *testing.T) {
 		MaxUploadRate:   2048,
 	}
 
-	clientCfg := clientConfig(Options{Config: cfg}, dir, discardLogger())
+	clientCfg := clientConfig(Options{Config: cfg}, dir, discardLogger(), 0)
 
 	if clientCfg.DataDir != dir {
 		t.Errorf("DataDir = %q, want %q", clientCfg.DataDir, dir)
@@ -418,7 +418,7 @@ func TestConfigIsAppliedToTheClient(t *testing.T) {
 		t.Errorf("upload limit = %v, want 2048", got)
 	}
 
-	unlimited := clientConfig(Options{Config: config.Config{DownloadDir: dir}}, dir, discardLogger())
+	unlimited := clientConfig(Options{Config: config.Config{DownloadDir: dir}}, dir, discardLogger(), 0)
 	if unlimited.DownloadRateLimiter.Limit() != rate.Inf {
 		t.Error("a zero max_download_rate must mean unlimited")
 	}

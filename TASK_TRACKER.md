@@ -49,36 +49,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 3 — Torrent engine
 
-**Done (archived in `docs/tracker-archive.md`):** `T-030` Engine contracts and fake · `T-942` Admit MPL-2.0 for the torrent engine · `T-943` Extend the MPL-2.0 exception to the engine's named module set · `T-031` anacrolix engine — add and list · `T-032` Engine lifecycle operations · `T-033` Update stream · `T-944` Engine review follow-ups from T-031/T-032 QA.
-
----
-
-### T-034 · Download policy and path safety
-```
-status: todo
-depends: T-031, T-032
-tier: H
-```
-**Files:** `internal/engine/anacrolix/`, `internal/engine/paths.go`
-
-**Acceptance**
-- **Path sanitization.** Every file path declared by a torrent is cleaned and verified to resolve
-  inside its destination before any write. Reject `..` traversal, absolute paths, NUL bytes,
-  Windows reserved names (`CON`, `NUL`, `AUX`, `COM1`…), trailing dots and spaces, and paths
-  exceeding the platform limit. A torrent with an unsafe path is refused with a clear reason,
-  not silently rewritten. **Tests must include a crafted malicious `.torrent` fixture for each
-  category** (AGENT.md §6.11, §13).
-- **Free-space precheck.** Refuse to add when the destination has less free space than the
-  torrent needs plus a configurable margin, and say how much is short. Re-check periodically
-  during download and pause with a clear message rather than filling the disk.
-- **Queueing.** `max_active_downloads` (default 3). Torrents beyond it sit in `StateQueued` and
-  start automatically as slots free. Queue order is user-visible and reorderable.
-- **Seeding policy.** Configurable: seed until ratio, seed for a duration, or stop at
-  completion. Default is a modest ratio with the policy stated in the UI, never silent
-  indefinite upload (AGENT.md §13).
-- **Listen port** configurable, with a sensible default and a random fallback if taken. `doctor`
-  reports the bound port.
-- Every knob here is editable in Settings (T-082), not config-file-only.
+**Done (archived in `docs/tracker-archive.md`):** `T-030` Engine contracts and fake · `T-942` Admit MPL-2.0 for the torrent engine · `T-943` Extend the MPL-2.0 exception to the engine's named module set · `T-031` anacrolix engine — add and list · `T-032` Engine lifecycle operations · `T-033` Update stream · `T-944` Engine review follow-ups from T-031/T-032 QA · `T-034` Download policy and path safety.
 
 ---
 
@@ -358,7 +329,7 @@ tier: M
 **Acceptance**
 - Edit default download dir (with existence, writability, and free-space validation), manage
   the **saved destinations list** (add/rename/remove, most-recent-first), rate limits, max
-  active downloads, max peers, listen port, seeding policy and ratio, minimum free space,
+  active downloads, max peers, listen port, seeding policy, ratio and duration, minimum free space,
   search timeout, theme, and ASCII mode.
 - Removing a saved destination warns if any active torrent is downloading there, and never
   silently drops it from the known-roots set while in use (AGENT.md §6.12).
@@ -748,6 +719,19 @@ when it reaches it and does not start backlog items on its own.
   page path, and building that path today would mean hand-formatting a string no response field
   actually carries, which AGENT.md §16 treats as inference rather than verification. Found while
   building T-024; see `docs/bundled-sources.md`.
+- `T-946` `awaitInfo` reads `paused`/queued under `Engine.mu`, then calls
+  `DisallowDataDownload`/`DisallowDataUpload` after unlocking, so a concurrent `promote` or `Resume`
+  in that window can leave a torrent showing `StateDownloading` with its transfers disallowed.
+  Apply the gate under the lock, or re-check after it. Found in review of T-034 (PR #36).
+- `T-947` The free-space checks (add-time and the periodic re-check) are per torrent and ignore the
+  remaining need of other active downloads on the same destination/filesystem, so several
+  downloads can together overcommit a disk each one fits alone. Sum the remaining need per
+  destination (ideally per filesystem). Found in review of T-034 (PR #36).
+- `T-948` A magnet refused in `awaitInfo` (unsafe path or not enough space) stays tracked as
+  `StateErrored`, so a re-`Add` of the same infohash returns that stale id with a nil error instead
+  of refusing again; a queued spec whose promote-time `attach` fails stays tracked via `e.fail` the
+  same way. Untrack (or re-evaluate) refused entries on re-`Add`, as `untrackFailedSpec` does for
+  `addSpec`. Found in review of T-034 (PR #36).
 
 
 
@@ -866,6 +850,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-103 | 2026-09-25 | Owner-authorised rework of the task loop for pace (T-945): slim tracker/AGENT.md, tiers, PR-carried status, single-party gates, faster CI, autonomy |
 | DEC-104 | 2026-09-25 | T-033: Updates sends on the sample tick only when the snapshot changed; ETA from a 10-sample rolling average; test-only injectable ticker |
 | DEC-105 | 2026-09-25 | T-944: findOrTrack (one critical section) fixes concurrent Add; a beforeAttach test hook and untrackFailedSpec fix two pre-merge review findings in the fix itself; check-goos-scope gates runtime.GOOS |
+| DEC-106 | 2026-09-25 | T-034: queue via optional engine.Queuer; space shortfall pauses as StateErrored; seed-policy stop shows StatePaused, Resume overrides; listen port 6881 with random fallback; Windows path limit is MAX_PATH |
 
 ## Blocked
 

@@ -122,6 +122,16 @@ func TestConfigValidate(t *testing.T) {
 			wantKey: "seed_ratio",
 		},
 		{
+			name:    "unparseable seed_duration",
+			mutate:  func(c *Config) { c.SeedDuration = "a while" },
+			wantKey: "seed_duration",
+		},
+		{
+			name:    "zero seed_duration",
+			mutate:  func(c *Config) { c.SeedDuration = "0s" },
+			wantKey: "seed_duration",
+		},
+		{
 			name:    "unparseable min_free_space",
 			mutate:  func(c *Config) { c.MinFreeSpace = "lots" },
 			wantKey: "min_free_space",

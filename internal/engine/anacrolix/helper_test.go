@@ -136,6 +136,9 @@ func newTestEngine(t *testing.T, mutate func(*Options)) *Engine {
 		MetadataTimeout:    150 * time.Millisecond,
 		RateSampleInterval: 10 * time.Millisecond,
 		Offline:            true,
+		// A test never depends on how full the host's disk is; the
+		// free-space tests install their own reading.
+		freeSpace: func(string) (uint64, error) { return 1 << 50, nil },
 	}
 
 	if mutate != nil {

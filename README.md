@@ -142,7 +142,7 @@ go build -o bin\tortui.exe .\cmd\tortui
 
 ```sh
 tortui --version    # confirm it runs
-tortui doctor       # environment report — terminal, paths, limits, sources
+tortui doctor       # environment report — terminal, paths, limits, listen port, sources
 tortui --demo       # full UI with fake data, no network, nothing to clean up
 ```
 
@@ -250,10 +250,11 @@ max_active_downloads = 3     # further torrents queue
 max_download_rate    = 0     # bytes/sec, 0 = unlimited
 max_upload_rate      = 0
 max_peers            = 50
-listen_port          = 0     # 0 = pick a free port
-seed_policy          = "ratio"   # ratio | duration | off
-seed_ratio           = 1.0
-min_free_space       = "1GB" # refuse to start a download that would cut it closer than this
+listen_port          = 6881  # 0 = random; a taken port falls back to a random one
+seed_policy          = "ratio"   # ratio | duration | off — never seeds forever
+seed_ratio           = 1.0   # "ratio": stop once uploaded = 1.0 x the torrent's size
+seed_duration        = "24h" # "duration": stop this long after completing
+min_free_space       = "1GB" # refuse (or pause) a download that would cut it closer than this
 search_timeout       = "15s" # per source; slow sources are dropped, not waited on
 theme                = "default"
 ascii                = false # force ASCII glyphs instead of block characters

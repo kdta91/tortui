@@ -2579,6 +2579,45 @@ Re-verified: `make check`, `make race` (`engine/anacrolix`, `config`, `doctor`, 
 
 ---
 
+### T-034 · Download policy and path safety
+```
+status: done
+depends: T-031, T-032
+tier: H
+```
+**Files:** `internal/engine/anacrolix/`, `internal/engine/paths.go`
+
+**Acceptance**
+- **Path sanitization.** Every file path declared by a torrent is cleaned and verified to resolve
+  inside its destination before any write. Reject `..` traversal, absolute paths, NUL bytes,
+  Windows reserved names (`CON`, `NUL`, `AUX`, `COM1`…), trailing dots and spaces, and paths
+  exceeding the platform limit. A torrent with an unsafe path is refused with a clear reason,
+  not silently rewritten. **Tests must include a crafted malicious `.torrent` fixture for each
+  category** (AGENT.md §6.11, §13).
+- **Free-space precheck.** Refuse to add when the destination has less free space than the
+  torrent needs plus a configurable margin, and say how much is short. Re-check periodically
+  during download and pause with a clear message rather than filling the disk.
+- **Queueing.** `max_active_downloads` (default 3). Torrents beyond it sit in `StateQueued` and
+  start automatically as slots free. Queue order is user-visible and reorderable.
+- **Seeding policy.** Configurable: seed until ratio, seed for a duration, or stop at
+  completion. Default is a modest ratio with the policy stated in the UI, never silent
+  indefinite upload (AGENT.md §13).
+- **Listen port** configurable, with a sensible default and a random fallback if taken. `doctor`
+  reports the bound port.
+- Every knob here is editable in Settings (T-082), not config-file-only.
+
+**Notes:** Component/containment rules moved to `internal/engine/paths.go` (shared by every future
+open/reveal/delete site), adding a 255-byte component limit and a per-OS whole-path limit
+(`platform.MaxPathLength`: 4095 B Linux, 1023 B macOS, 259 UTF-16 units Windows). Eleven committed
+fixtures in `anacrolix/testdata/malicious/` (pinned to their generator) are refused by `Add` and by
+the storage gate. Free space via `platform.FreeSpace`, checked at add (`.torrent`) or metadata
+arrival (magnet), re-checked every 10s; a shortfall pauses as `StateErrored` naming what is short.
+Queue, seed policy, listen-port fallback and `doctor`'s port line: see DEC-106. Queue order is
+exposed through the optional `engine.Queuer` (not the frozen `Engine`); Settings editing of every
+knob is T-082's job (its list now names seed duration); `engine/fake` does not queue yet.
+
+---
+
 ## Phase 4 — Persistence
 
 ### T-040 · bbolt store

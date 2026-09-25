@@ -2,3 +2,7 @@
 # Windows' default core.autocrlf=true checkout otherwise turns Go source into
 # CRLF, which gofumpt/gofmt then reports as unformatted (T-001).
 * text=auto eol=lf
+
+# Crafted .torrent fixtures are bencoded binary; never let eol conversion touch
+# them, or the committed bytes stop matching their generator (T-034).
+*.torrent binary

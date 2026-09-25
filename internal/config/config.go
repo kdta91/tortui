@@ -29,16 +29,25 @@ type Config struct {
 	// MaxPeers caps peer connections per torrent.
 	MaxPeers int `toml:"max_peers"`
 
-	// ListenPort is the BitTorrent listen port. Zero means "pick a free
-	// port" (T-034).
+	// ListenPort is the BitTorrent listen port (default DefaultListenPort).
+	// Zero means "pick a random free port"; a configured port that is
+	// already taken falls back to a random one at startup (T-034).
 	ListenPort int `toml:"listen_port"`
 
-	// SeedPolicy is one of "ratio", "duration", or "off".
+	// SeedPolicy is one of "ratio" (seed until SeedRatio), "duration" (seed
+	// for SeedDuration after completing), or "off" (stop uploading as soon
+	// as the download completes). It is never "seed forever" (T-034,
+	// AGENT.md §13).
 	SeedPolicy string `toml:"seed_policy"`
 
-	// SeedRatio is the upload/download ratio to seed to when SeedPolicy is
+	// SeedRatio is the upload/size ratio to seed to when SeedPolicy is
 	// "ratio".
 	SeedRatio float64 `toml:"seed_ratio"`
+
+	// SeedDuration is a Go duration string (e.g. "24h") to keep seeding
+	// for after completion when SeedPolicy is "duration". Parse with
+	// time.ParseDuration.
+	SeedDuration string `toml:"seed_duration"`
 
 	// MinFreeSpace is a human-readable size (e.g. "1GB", "500MB") below
 	// which tortui refuses to start a new download (T-034). Parse with
@@ -91,6 +100,10 @@ type Indexer struct {
 	Enabled bool `toml:"enabled"`
 }
 
+// DefaultListenPort is the BitTorrent listen port a fresh configuration uses:
+// the conventional first port of the BitTorrent range.
+const DefaultListenPort = 6881
+
 // Default returns a fresh Config populated with tortui's built-in defaults,
 // using downloadDir as the default download destination. Callers load a
 // user's file on top of this (see Load) so that any key the user omits
@@ -103,9 +116,10 @@ func Default(downloadDir string) Config {
 		MaxUploadRate:      0,
 		MaxActiveDownloads: 3,
 		MaxPeers:           50,
-		ListenPort:         0,
+		ListenPort:         DefaultListenPort,
 		SeedPolicy:         "ratio",
 		SeedRatio:          1.0,
+		SeedDuration:       "24h",
 		MinFreeSpace:       "1GB",
 		SearchTimeout:      "15s",
 		Theme:              "default",

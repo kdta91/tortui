@@ -25,16 +25,22 @@ max_active_downloads = 3
 # Peer connections per torrent.
 max_peers = 50
 
-# BitTorrent listen port. 0 means "pick a free port".
-listen_port = 0
+# BitTorrent listen port. 0 means "pick a random free port"; if this port
+# is already taken at startup, a random free one is used instead.
+# `tortui doctor` reports the port that would be bound.
+listen_port = 6881
 
-# One of "ratio", "duration", or "off".
-seed_policy = "ratio"
-seed_ratio  = 1.0
+# What happens after a download completes. Never "seed forever":
+#   "ratio"    - keep uploading until uploaded bytes reach seed_ratio x size
+#   "duration" - keep uploading for seed_duration, then stop
+#   "off"      - stop uploading as soon as the download completes
+seed_policy   = "ratio"
+seed_ratio    = 1.0
+seed_duration = "24h"
 
 # Refuse to start a download that would leave less than this much free
-# space on its destination. Accepts a plain byte count or a suffix of B,
-# KB, MB, GB, or TB.
+# space on its destination, and pause one that would during download.
+# Accepts a plain byte count or a suffix of B, KB, MB, GB, or TB.
 min_free_space = "1GB"
 
 # Per-source timeout for a search fan-out. A Go duration string.

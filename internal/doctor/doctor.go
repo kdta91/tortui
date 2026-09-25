@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/kdta91/tortui/internal/config"
+	"github.com/kdta91/tortui/internal/engine"
 	"github.com/kdta91/tortui/internal/indexer/httpx"
 	"github.com/kdta91/tortui/internal/logging"
 	"github.com/kdta91/tortui/internal/platform"
@@ -98,8 +99,21 @@ type Report struct {
 	DownloadDirWritable bool
 	DownloadDirProblem  string
 
+	// ListenPort is the BitTorrent listen port a client starting now would
+	// bind: the configured listen_port, or the random port it falls back
+	// to when that one is taken (T-034). ListenPortDetail explains it.
+	// doctor runs without starting the engine, so this is a probe that
+	// binds and releases the port the same way, not a live client's port.
+	ListenPort       int
+	ListenPortDetail string
+
 	Indexers []IndexerVerdict
 }
+
+// defaultProbeListenPort is Options.ProbeListenPort's default. It is a
+// package variable only so this package's tests can keep the default off
+// every real interface.
+var defaultProbeListenPort = engine.ProbeListenPort
 
 // Options configures Build. Every field is required except Timeout and
 // NewClient, which default when zero/nil.
@@ -125,6 +139,10 @@ type Options struct {
 	// credentials. Tests override this to point at an httptest.Server
 	// instead of the network (AGENT.md §6.7).
 	NewClient func(ix config.Indexer, timeout time.Duration) *httpx.Client
+
+	// ProbeListenPort reports the port that would be bound for a
+	// configured listen port. Nil uses engine.ProbeListenPort.
+	ProbeListenPort func(port int) (bound int, fellBack bool, err error)
 }
 
 // Build assembles a Report. It performs I/O — a download-directory write
@@ -156,9 +174,34 @@ func Build(ctx context.Context, opts Options) Report {
 	}
 
 	r.DownloadDirWritable, r.DownloadDirProblem = checkWritable(opts.Paths.DownloadDir)
+	r.ListenPort, r.ListenPortDetail = checkListenPort(opts)
 	r.Indexers = checkIndexers(ctx, opts)
 
 	return r
+}
+
+// checkListenPort describes the listen port a client starting now would
+// bind for the configured one.
+func checkListenPort(opts Options) (int, string) {
+	probe := opts.ProbeListenPort
+	if probe == nil {
+		probe = defaultProbeListenPort
+	}
+
+	configured := opts.Config.ListenPort
+
+	bound, fellBack, err := probe(configured)
+
+	switch {
+	case err != nil:
+		return 0, logging.Redact(fmt.Sprintf("cannot bind any port: %v", err))
+	case configured == 0:
+		return bound, fmt.Sprintf("%d (listen_port = 0: a random free port each start)", bound)
+	case fellBack:
+		return bound, fmt.Sprintf("%d (configured %d is in use — tortui falls back to a random free port)", bound, configured)
+	default:
+		return bound, fmt.Sprintf("%d (configured, free)", bound)
+	}
 }
 
 // checkWritable reports whether dir exists (creating it if missing) and
@@ -304,6 +347,7 @@ func Format(r Report) string {
 	fmt.Fprintf(&b, "Definitions:    %s\n", r.DefinitionsDir)
 	fmt.Fprintf(&b, "\n")
 	fmt.Fprintf(&b, "Download dir writable: %s\n", yesNoProblem(r.DownloadDirWritable, r.DownloadDirProblem))
+	fmt.Fprintf(&b, "Listen port:           %s\n", r.ListenPortDetail)
 	fmt.Fprintf(&b, "\n")
 	fmt.Fprintf(&b, "File descriptors:\n")
 
