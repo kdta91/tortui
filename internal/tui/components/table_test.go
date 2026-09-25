@@ -403,3 +403,112 @@ func TestTableSortIndicatorAbsentWhenUnsorted(t *testing.T) {
 		t.Fatalf("unsorted table header %q should have no sort indicator", header)
 	}
 }
+
+// --- T-062: SortKey, SortMissingLast, Column.Accent ----------------------
+
+// trustSortRows builds three rows whose trust column all render the exact
+// same blank display text ("") but carry different SortKey values — the
+// shape T-062's results screen needs: Badge() renders TrustUnknown and
+// TrustNone identically, so a Less/SortMissingLast function working off
+// Cells alone could never separate "unknown" from "known, but rated
+// none" from "known and VIP" here. sortKey values follow indexer.Trust's
+// own ordering (TrustUnknown=0 < TrustNone=1 < ... < TrustVIP=4), the same
+// convention results.go's parseTrustOrder uses.
+func trustSortRows() []Row {
+	return []Row{
+		{ID: "vip", Cells: []string{"vip.iso", "1 B", "1/0", "VIP", "1h", "src"}, SortKey: []string{"", "", "", "4", "", ""}},
+		{ID: "unknown", Cells: []string{"unknown.iso", "1 B", "1/0", "", "1h", "src"}, SortKey: []string{"", "", "", "0", "", ""}},
+		{ID: "none", Cells: []string{"none.iso", "1 B", "1/0", "", "1h", "src"}, SortKey: []string{"", "", "", "1", "", ""}},
+	}
+}
+
+func trustSortColumns() []Column {
+	cols := resultColumns()
+	cols[3].Less = func(a, b string) bool {
+		an, _ := strconv.Atoi(a)
+		bn, _ := strconv.Atoi(b)
+		return an < bn
+	}
+	cols[3].SortMissingLast = func(cell string) bool { return cell == "0" }
+
+	return cols
+}
+
+// TestSortKeyOverridesCellsForSorting confirms applySort compares
+// Row.SortKey, not the identical-looking Cells text, when SortKey is set
+// — "unknown" and "none" both render "" in the Trust column but must not
+// sort as equal/interchangeable.
+func TestSortKeyOverridesCellsForSorting(t *testing.T) {
+	tbl := NewTable(trustSortColumns()).SetRows(trustSortRows())
+	tbl = tbl.SortBy(3) // trust, ascending; "unknown" is pinned last regardless (see next test)
+
+	ids := make([]string, len(tbl.Rows()))
+	for i, r := range tbl.Rows() {
+		ids[i] = r.ID
+	}
+
+	// Ascending by trust value with unknown pinned last: none (1) before
+	// vip (4), unknown always last.
+	want := []string{"none", "vip", "unknown"}
+	if ids[0] != want[0] || ids[1] != want[1] || ids[2] != want[2] {
+		t.Fatalf("sorted order = %v, want %v — SortKey must distinguish rows whose Cells text is identical", ids, want)
+	}
+}
+
+// TestSortMissingLastPinsRegardlessOfDirection confirms a
+// SortMissingLast-pinned row ("unknown", value "0") stays last whether the
+// column is sorted ascending or descending — T-062's "TrustUnknown sorts
+// last" must not flip when "S" reverses the column, or a user reversing
+// the sort would see "no information" masquerade as the best-rated row.
+func TestSortMissingLastPinsRegardlessOfDirection(t *testing.T) {
+	tbl := NewTable(trustSortColumns()).SetRows(trustSortRows())
+
+	tbl = tbl.SortBy(3) // ascending
+	if last := tbl.Rows()[len(tbl.Rows())-1]; last.ID != "unknown" {
+		t.Fatalf("ascending: last row = %q, want \"unknown\"", last.ID)
+	}
+
+	tbl = tbl.SortBy(3) // toggle to descending, same column
+
+	if tbl.SortAscending() {
+		t.Fatal("setup: expected SortBy on the same column to toggle to descending")
+	}
+
+	if last := tbl.Rows()[len(tbl.Rows())-1]; last.ID != "unknown" {
+		t.Fatalf("descending: last row = %q, want \"unknown\" (pinned regardless of direction)", last.ID)
+	}
+}
+
+// TestTableAccentColumnUsesAccentStyleNotForeground confirms Column.Accent
+// renders that column's cells in the theme's accent colour even on an
+// unselected row (T-062: the trust badge is "accent-coloured"), by
+// comparing the same row's rendered line with and without Accent set on a
+// full-colour theme — under NO_COLOR (testTableTheme, used by every other
+// test in this file) no style attaches a colour at all, so this is the one
+// test in the package that needs a real colour profile to observe
+// anything.
+func TestTableAccentColumnUsesAccentStyleNotForeground(t *testing.T) {
+	th := theme.New(theme.DefaultThemeName, theme.Capability{Color: theme.ColorTrue, Unicode: true, Interactive: true})
+	rows := sampleRows() // r1 selected by default; r2 ("TR") is not
+
+	plainCols := resultColumns()
+	accentCols := resultColumns()
+	accentCols[3].Accent = true
+
+	plainLines := strings.Split(NewTable(plainCols).SetRows(rows).View(80, 10, th), "\n")
+	accentLines := strings.Split(NewTable(accentCols).SetRows(rows).View(80, 10, th), "\n")
+
+	for i := 1; i < len(plainLines) && i < len(accentLines); i++ {
+		if !strings.Contains(plainLines[i], "TR") {
+			continue
+		}
+
+		if plainLines[i] == accentLines[i] {
+			t.Fatalf("Column.Accent=true should change an unselected row's rendered line, got identical output:\n%s", plainLines[i])
+		}
+
+		return
+	}
+
+	t.Fatal("could not find the unselected \"TR\" row to compare")
+}

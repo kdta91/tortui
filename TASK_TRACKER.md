@@ -67,23 +67,8 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 6 — Search and results
 
-**Done (archived in `docs/tracker-archive.md`):** `T-060` Search screen · `T-061` Results screen.
-
----
-
-### T-062 · Trust badges and filtering
-```
-status: todo
-depends: T-061
-tier: L
-```
-**Acceptance**
-- `Trust` rendered as a compact badge (`VIP` / `TR` / `✓` / blank), accent-coloured, and
-  legible with `NO_COLOR`.
-- Sortable by trust; a filter toggle restricts to `TrustTrusted` and above.
-- `TrustUnknown` sorts last and never displays as a false negative.
-- Badge semantics documented in `README.md`: this is uploader reputation metadata reported by
-  the source, it is not a quality guarantee and it does not affect download behaviour.
+**Done (archived in `docs/tracker-archive.md`):** `T-060` Search screen · `T-061` Results screen ·
+`T-062` Trust badges and filtering.
 
 ---
 
@@ -859,6 +844,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-107 | 2026-09-25 | T-949: merge gate is macOS-first (macOS make check + build-all + licenses + hostname check required, Linux/Windows make check advisory); reviewers stop checking CI; re-review resumes the same reviewer; stalled agents get one auto-resume then a fresh agent; tests wait on a predicate/terminal state, not one exact intermediate state; Windows shellcheck installs from a pinned, checksum-verified GitHub release |
 | DEC-108 | 2026-09-25 | T-041: session resume via optional engine.Resumer; persistent per-destination piece completion; unresumable torrents tracked as StateErrored (ErrDataMissing); lifecycle.Session saves only after Resume |
 | DEC-109 | 2026-09-25 | T-060: internal/tui defines its own Searcher/HistoryStore interfaces, never a concrete Registry/Store; New() gains a variadic Option instead of new required params; esc-cancel/space-toggle handled as raw key checks, not declarative Bindings, to stay inside the search screen's help overlay's 24-line budget at the 80×24 floor; empty query dispatches Latest; L jumps to Results once the fetch resolves |
+| DEC-111 | 2026-09-25 | T-062: components.Table gains Row.SortKey, Column.SortMissingLast, and Column.Accent (all generic, no Trust-specific logic); Trust's sort key comes from the real Trust value since Badge() renders Unknown/None identically; Unknown pins last in both sort directions; the "t" filter toggle re-derives rows from resultsModel.allRows |
 
 ## Blocked
 
