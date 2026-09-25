@@ -172,8 +172,9 @@ func statusOf(t *testing.T, e *Engine, id string) engine.TorrentStatus {
 }
 
 // waitForState polls List until the torrent reaches want, or the deadline
-// passes. Polling is acceptable here because Updates() does not emit yet
-// (T-033 owns that); the interval is short and the budget is small.
+// passes. Tests poll rather than read Updates() so the tests that assert the
+// update stream's own behaviour are the only readers of that channel; the
+// interval is short and the budget is small.
 func waitForState(t *testing.T, e *Engine, id string, want engine.State) engine.TorrentStatus {
 	t.Helper()
 

@@ -2500,6 +2500,29 @@ uncalled-code advisories as before). PR checks re-run and green on all jobs.
 
 ---
 
+### T-033 · Update stream
+```
+status: done
+depends: T-031
+tier: H
+```
+**Acceptance**
+- `Updates()` emits a full `[]TorrentStatus` snapshot at ~2 Hz, coalesced — no per-torrent spam.
+- Channel is buffered; a slow consumer drops stale snapshots rather than blocking the engine.
+- ETA computed from a rolling rate average, `-1` when indeterminate.
+- Closing the engine closes the channel exactly once.
+- Test asserts cadence, coalescing, and drop-on-slow-consumer behaviour.
+
+**Notes:** The sample loop (`sampleRates`, `RateSampleInterval`, default 500ms) now builds the full
+snapshot after each rate sample and sends it only if it differs from the last one sent (DEC-104),
+so events never send on their own. `publish` drains an unread snapshot before sending, into a
+1-slot buffer: a slow consumer reads the newest state and the sampler never blocks. ETA uses a
+10-sample rolling average (`rateMeter.avg`, ~5s); `DownRate` stays instantaneous. Tests drive an
+unexported injectable ticker (`Options.newTicker`) tick by tick, with no sleeps. `anacrolix`
+coverage 90.4%.
+
+---
+
 ## Phase 4 — Persistence
 
 ### T-040 · bbolt store

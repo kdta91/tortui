@@ -45,7 +45,9 @@ import (
 const DefaultMetadataTimeout = 60 * time.Second
 
 // DefaultRateSampleInterval is how often transfer rates are resampled from the
-// underlying client's byte counters. List reports the most recent sample
+// underlying client's byte counters, and therefore the cadence of Updates:
+// each sample is followed by at most one coalesced snapshot, so the default
+// is the ~2 Hz AGENT.md §5 documents. List reports the most recent sample
 // rather than computing a rate itself, so the numbers it returns do not depend
 // on how often a caller happens to call it.
 const DefaultRateSampleInterval = 500 * time.Millisecond
@@ -94,9 +96,16 @@ type Options struct {
 	// test can assert the timeout path without waiting a real minute.
 	MetadataTimeout time.Duration
 
-	// RateSampleInterval is how often transfer rates are resampled. Zero
-	// uses DefaultRateSampleInterval.
+	// RateSampleInterval is how often transfer rates are resampled and a
+	// snapshot is considered for Updates. Zero uses
+	// DefaultRateSampleInterval.
 	RateSampleInterval time.Duration
+
+	// newTicker, when set, replaces time.NewTicker for the sample loop. It
+	// returns the tick channel and a stop function. It exists so this
+	// package's tests can drive the Updates cadence tick by tick instead of
+	// sleeping on a wall clock.
+	newTicker func(time.Duration) (<-chan time.Time, func())
 
 	// HTTPClient fetches a .torrent named by AddSource.TorrentURL. A nil
 	// HTTPClient builds one with tortui's shared defaults.
@@ -262,8 +271,15 @@ func New(opts Options) (*Engine, error) {
 		storages:        make(map[string]storage.ClientImplCloser),
 	}
 
+	newTicker := opts.newTicker
+	if newTicker == nil {
+		newTicker = realTicker
+	}
+
+	ticks, stopTicks := newTicker(sampleInterval)
+
 	e.wg.Add(1)
-	go e.sampleRates(sampleInterval)
+	go e.sampleRates(ticks, stopTicks)
 
 	logger.Info("anacrolix: engine started",
 		"download_dir", downloadDir,
@@ -875,7 +891,9 @@ func (e *Engine) statusLocked(tr *tracked) engine.TorrentStatus {
 		st.UpRate = tr.up.rate
 	}
 
-	st.ETA = eta(st.State, st.TotalBytes, st.DownloadedBytes, st.DownRate)
+	// ETA uses the rolling average, not the instantaneous DownRate, so a
+	// single bursty or idle sample does not make the estimate jump.
+	st.ETA = eta(st.State, st.TotalBytes, st.DownloadedBytes, tr.down.avg)
 
 	return st
 }
@@ -894,9 +912,9 @@ func progress(done, total int64) float64 {
 	return float64(done) / float64(total)
 }
 
-// eta estimates the time to completion from the current download rate, or -1
-// when it cannot be known: no metadata, no rate, not downloading, or already
-// complete.
+// eta estimates the time to completion from a download rate — the rolling
+// average, at the one call site — or -1 when it cannot be known: no metadata,
+// no rate, not downloading, or already complete.
 func eta(state engine.State, total, done, downRate int64) time.Duration {
 	if state != engine.StateDownloading || total <= 0 || downRate <= 0 || done >= total {
 		return -1
@@ -905,46 +923,121 @@ func eta(state engine.State, total, done, downRate int64) time.Duration {
 	return time.Duration(float64(total-done) / float64(downRate) * float64(time.Second))
 }
 
-// sampleRates refreshes every torrent's transfer rates on a fixed interval, so
-// the rates List reports do not depend on how often List is called.
-func (e *Engine) sampleRates(interval time.Duration) {
-	defer e.wg.Done()
+// realTicker is the production ticker for the sample loop.
+func realTicker(d time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTicker(d)
+	return t.C, t.Stop
+}
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+// sampleRates refreshes every torrent's transfer rates on each tick, so the
+// rates List reports do not depend on how often List is called, and then
+// publishes the resulting snapshot on Updates if anything changed.
+//
+// This goroutine is the only sender on e.updates, and Close closes the
+// channel only after it has exited (wg.Wait), so a send can never race the
+// close.
+func (e *Engine) sampleRates(ticks <-chan time.Time, stop func()) {
+	defer e.wg.Done()
+	defer stop()
+
+	var last []engine.TorrentStatus
 
 	for {
 		select {
 		case <-e.done:
 			return
-		case now := <-ticker.C:
-			e.sampleOnce(now)
+		case now := <-ticks:
+			snap := e.sampleOnce(now)
+			if last == nil || !snapshotsEqual(last, snap) {
+				e.publish(snap)
+				last = snap
+			}
 		}
 	}
 }
 
-// sampleOnce takes one rate sample for every tracked torrent.
-func (e *Engine) sampleOnce(now time.Time) {
+// sampleOnce takes one rate sample for every tracked torrent and returns the
+// full snapshot as it stands immediately afterwards.
+func (e *Engine) sampleOnce(now time.Time) []engine.TorrentStatus {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	out := make([]engine.TorrentStatus, 0, len(e.order))
+
 	for _, id := range e.order {
 		tr := e.torrents[id]
-		if tr.t == nil {
-			continue
+		if tr.t != nil {
+			stats := tr.t.Stats()
+			tr.down.observe(now, stats.BytesReadUsefulData.Int64())
+			tr.up.observe(now, stats.BytesWrittenData.Int64())
 		}
 
-		stats := tr.t.Stats()
-		tr.down.observe(now, stats.BytesReadUsefulData.Int64())
-		tr.up.observe(now, stats.BytesWrittenData.Int64())
+		out = append(out, e.statusLocked(tr))
+	}
+
+	return out
+}
+
+// publish hands snap to the Updates channel without ever blocking the
+// engine. The channel holds one snapshot; if the consumer has not taken the
+// previous one yet, that stale snapshot is discarded and replaced, so a slow
+// consumer always reads the newest state and never makes the sampler wait.
+//
+// Only sampleRates calls this, so after the drain the buffer is guaranteed
+// to have room; the second select's default is a belt-and-braces guard, not
+// a path expected to run.
+func (e *Engine) publish(snap []engine.TorrentStatus) {
+	select {
+	case <-e.updates:
+	default:
+	}
+
+	select {
+	case e.updates <- snap:
+	default:
 	}
 }
 
-// Updates returns the engine's snapshot channel. The channel is created here
-// and closed exactly once by Close.
-//
-// TODO(T-033): emit coalesced ~2 Hz snapshots on this channel; T-031 only
-// establishes and closes it.
+// snapshotsEqual reports whether two snapshots describe the same state, so
+// an idle engine does not wake its subscriber twice a second with nothing
+// new. Err is compared by message: an error's dynamic type need not be
+// comparable, and == on one that is not panics.
+func snapshotsEqual(a, b []engine.TorrentStatus) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		x, y := a[i], b[i]
+		if errText(x.Err) != errText(y.Err) {
+			return false
+		}
+
+		x.Err, y.Err = nil, nil
+		if x != y {
+			return false
+		}
+	}
+
+	return true
+}
+
+// errText is err's message, or "" for nil.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return err.Error()
+}
+
+// Updates returns the engine's snapshot channel. After every rate sample
+// (DefaultRateSampleInterval, ~2 Hz) the engine sends one full snapshot of
+// every tracked torrent, if it differs from the last one sent — never one
+// message per torrent or per event. The channel buffers a single snapshot and
+// a newer one replaces an unread older one, so a slow consumer loses only
+// stale state and never blocks the engine. It is closed exactly once, by
+// Close.
 func (e *Engine) Updates() <-chan []engine.TorrentStatus {
 	return e.updates
 }

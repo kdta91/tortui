@@ -24,8 +24,29 @@ type rateMeter struct {
 	// bytes is the counter value at the previous sample.
 	bytes int64
 
-	// rate is the most recently computed bytes-per-second figure.
+	// rate is the most recently computed bytes-per-second figure: the
+	// difference between the last two samples only, so it tracks bursts.
 	rate int64
+
+	// window holds up to rateWindow+1 of the most recent samples, oldest
+	// first. avg is computed across it.
+	window []rateSample
+
+	// avg is the rolling average rate across window: the bytes gained
+	// between its oldest and newest sample over the time between them. It
+	// is what ETA is computed from, so one bursty or idle sample does not
+	// swing the estimate the way the instantaneous rate would.
+	avg int64
+}
+
+// rateWindow is how many sample intervals the rolling average spans: 10
+// intervals, or five seconds at DefaultRateSampleInterval.
+const rateWindow = 10
+
+// rateSample is one counter reading.
+type rateSample struct {
+	at    time.Time
+	bytes int64
 }
 
 // observe records a counter reading taken at now and updates the meter's rate.
@@ -40,12 +61,25 @@ func (m *rateMeter) observe(now time.Time, counter int64) {
 	m.bytes = counter
 
 	if prev.IsZero() || !now.After(prev) || counter < prevBytes {
+		// The history no longer describes the same counter (or the same
+		// clock), so the rolling window restarts from this reading too.
 		m.rate = 0
+		m.avg = 0
+		m.window = append(m.window[:0], rateSample{at: now, bytes: counter})
+
 		return
 	}
 
 	elapsed := now.Sub(prev).Seconds()
 	m.rate = int64(float64(counter-prevBytes) / elapsed)
+
+	m.window = append(m.window, rateSample{at: now, bytes: counter})
+	if n := len(m.window); n > rateWindow+1 {
+		m.window = append(m.window[:0], m.window[n-rateWindow-1:]...)
+	}
+
+	oldest := m.window[0]
+	m.avg = int64(float64(counter-oldest.bytes) / now.Sub(oldest.at).Seconds())
 }
 
 // reset clears the meter, so a torrent that stopped reports no rate rather
@@ -54,6 +88,8 @@ func (m *rateMeter) reset() {
 	m.last = time.Time{}
 	m.bytes = 0
 	m.rate = 0
+	m.avg = 0
+	m.window = m.window[:0]
 }
 
 // trimmed is strings.TrimSpace, named for how it reads at the call sites that
