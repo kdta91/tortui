@@ -49,7 +49,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 3 — Torrent engine
 
-**Done (archived in `docs/tracker-archive.md`):** `T-030` Engine contracts and fake · `T-942` Admit MPL-2.0 for the torrent engine · `T-943` Extend the MPL-2.0 exception to the engine's named module set · `T-031` anacrolix engine — add and list · `T-032` Engine lifecycle operations.
+**Done (archived in `docs/tracker-archive.md`):** `T-030` Engine contracts and fake · `T-942` Admit MPL-2.0 for the torrent engine · `T-943` Extend the MPL-2.0 exception to the engine's named module set · `T-031` anacrolix engine — add and list · `T-032` Engine lifecycle operations · `T-033` Update stream.
 
 ---
 
@@ -80,21 +80,6 @@ could silently widen, so they are tracked here rather than fixed ad hoc.
   `internal/platform` or build tags, and a lint rule or script test fails `make check` on any
   future occurrence.
 - `make check` green; coverage floors hold.
-
----
-
-### T-033 · Update stream
-```
-status: todo
-depends: T-031
-tier: H
-```
-**Acceptance**
-- `Updates()` emits a full `[]TorrentStatus` snapshot at ~2 Hz, coalesced — no per-torrent spam.
-- Channel is buffered; a slow consumer drops stale snapshots rather than blocking the engine.
-- ETA computed from a rolling rate average, `-1` when indeterminate.
-- Closing the engine closes the channel exactly once.
-- Test asserts cadence, coalescing, and drop-on-slow-consumer behaviour.
 
 ---
 
@@ -909,6 +894,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-100 | 2026-09-18 | The MPL-2.0 exception is widened from one named module to a named set of ten, enforced the same way DEC-099 built: Makefile's ALLOWED_MPL_MODULE beco… |
 | DEC-102 | 2026-09-23 | T-032 (Pause/Resume/Remove/Files) judgement calls. (1) engine.FileStatus (AGENT.md §5, frozen) carries no Priority field — only Path, SizeBytes, Down… |
 | DEC-103 | 2026-09-25 | Owner-authorised rework of the task loop for pace (T-945): slim tracker/AGENT.md, tiers, PR-carried status, single-party gates, faster CI, autonomy |
+| DEC-104 | 2026-09-25 | T-033: Updates sends on the sample tick only when the snapshot changed; ETA from a 10-sample rolling average; test-only injectable ticker |
 
 ## Blocked
 
