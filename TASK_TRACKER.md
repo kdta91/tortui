@@ -702,7 +702,11 @@ when it reaches it and does not start backlog items on its own.
 - `T-950` Wire `lifecycle.Session` into the composition root when one exists: `NewSession` after
   `OpenStore` and the engine, `Resume` before the TUI starts (show `ResumeReport.Missing` on
   first render), `Save` after every add/remove, and `ShutdownOptions.Session`. The add flow
-  (T-070) records `Origin` with `SetTorrent` before `Save`; `Save` keeps it. From T-041.
+  (T-070) records `Origin` with `SetTorrent` before `Save`; `Save` keeps it. From T-041. Also pass
+  `tui.WithHistory(store)` when wiring `tui.New` there — T-060 built the search screen against a
+  `HistoryStore` interface `*store.Store` already satisfies, but no production call site (only
+  `internal/app/demo.go`'s `WithSearcher`) passes one yet, so recent-query suggestions are inert
+  outside tests until this wiring exists. From T-060 QA.
 - `T-951` Downloads screen: a row whose `Err` wraps `engine.ErrDataMissing` offers removal (the
   `x` dialog, keep-data default) as its primary action, not just the truncated reason (T-071,
   T-072). From T-041.
@@ -733,6 +737,12 @@ when it reaches it and does not start backlog items on its own.
   in T-041). Options: selecting the library's classic file IO is only possible through the
   `TORRENT_STORAGE_DEFAULT_FILE_IO` env var at process start, so use a wrapping `storage.ClientImpl`
   whose close releases handles, or a small tortui-owned file storage. Tier H.
+- `T-956` The search screen's recent-query suggestions (T-060) are display-only: `Recent: ...` is
+  rendered from `HistoryStore.ListHistory`, but nothing lets the user click/select one back into
+  the query field — the acceptance text says "offered as suggestions," which this reads narrowly
+  as "shown," not "recallable." Needs a keybind (the flat cursor would need a row for the
+  suggestion list, or a dedicated key) that sets `search.query` to the chosen entry. Found by QA
+  on T-060 (PR #39).
 
 
 

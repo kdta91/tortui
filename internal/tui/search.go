@@ -450,14 +450,22 @@ func (m Model) dispatchSearch(forceLatest bool) (Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// historyErrCmd is nil unless AddHistory below actually fails; batched
+	// in alongside the dispatch itself so a broken store never blocks or
+	// skips the search the user actually asked for (AGENT.md §6.1 — no
+	// blocking I/O in Update, and this runs inside Update, not the Cmd,
+	// only because store writes are already just an in-memory append
+	// behind a mutex — see internal/store's own doc comment), but its
+	// error is still surfaced rather than swallowed (AGENT.md §6.9 —
+	// "never swallow an error with _").
+	var historyErrCmd tea.Cmd
+
 	if text != "" && m.history != nil {
-		// Best-effort: a full disk or a closed store must not block
-		// dispatching the search itself (AGENT.md §6.1 — no blocking
-		// I/O in Update, and this runs inside Update, not the Cmd, only
-		// because store writes are already just an in-memory append
-		// behind a mutex — see internal/store's own doc comment).
-		_ = m.history.AddHistory(text)
-		m.search.recent = loadRecentQueries(m.history)
+		if err := m.history.AddHistory(text); err != nil {
+			m.statusBar, historyErrCmd = m.statusBar.Push(fmt.Sprintf("couldn't save query history: %v", err))
+		} else {
+			m.search.recent = loadRecentQueries(m.history)
+		}
 	}
 
 	m.search.generation++
@@ -473,7 +481,7 @@ func (m Model) dispatchSearch(forceLatest bool) (Model, tea.Cmd) {
 		q.Categories = []indexer.Category{cat}
 	}
 
-	return m, tea.Batch(dispatchSearchCmd(m.searcher, ctx, q, ids, gen), searchTickCmd(gen))
+	return m, tea.Batch(dispatchSearchCmd(m.searcher, ctx, q, ids, gen), searchTickCmd(gen), historyErrCmd)
 }
 
 // handleSearchResult applies one dispatch's outcome (root.go's Update,
@@ -540,11 +548,12 @@ func (m Model) handleSearchTick(msg searchTickMsg) (tea.Model, tea.Cmd) {
 	return m, searchTickCmd(msg.gen)
 }
 
-// handleSearchCancel implements esc on the search screen (root.go's
-// handleKey, screenContext(ScreenSearch)'s own ActionCancel binding):
-// cancel the in-flight query, if any, and bump generation so its eventual
-// (now-cancelled) result is recognised as stale and dropped rather than
-// shown as an error. A no-op when nothing is in flight.
+// handleSearchCancel implements esc on the search screen — a raw key check
+// in root.go's handleKey, not a declarative Binding (see keymap.go's note
+// on GlobalBindings for why): cancel the in-flight query, if any, and bump
+// generation so its eventual (now-cancelled) result is recognised as stale
+// and dropped rather than shown as an error. A no-op when nothing is in
+// flight.
 func (m Model) handleSearchCancel() (tea.Model, tea.Cmd) {
 	if !m.search.inFlight {
 		return m, nil

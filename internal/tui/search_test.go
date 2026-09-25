@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -62,6 +64,14 @@ type stubOutcome struct {
 // (or a zero outcome); with block == true it hangs until either release
 // receives an outcome or ctx is cancelled — exactly what the in-flight
 // spinner and esc-cancel tests need to observe a real intermediate state.
+//
+// release is deliberately unbuffered: an unconditional, best-effort send
+// on it from a test's cleanup would otherwise always "succeed" whether or
+// not anything was actually listening — including the exact case where
+// handleSearchCancel's ctx cancellation was silently removed and the
+// SearchAll goroutine is still parked, forever, on the select below.
+// cancelled is the actual, positive proof: it only ever receives when
+// SearchAll's select resolves via ctx.Done(), never via release.
 type stubSearcher struct {
 	enabled []indexer.Indexer
 
@@ -70,10 +80,19 @@ type stubSearcher struct {
 	block   bool
 	outcome stubOutcome
 	release chan stubOutcome
+	// cancelled receives once for every SearchAll call that returned
+	// because ctx was cancelled, never because it was released.
+	// Buffered so a send here never itself blocks a goroutine no test
+	// is currently reading from.
+	cancelled chan error
 }
 
 func newStubSearcher(enabled ...indexer.Indexer) *stubSearcher {
-	return &stubSearcher{enabled: enabled, release: make(chan stubOutcome, 1)}
+	return &stubSearcher{
+		enabled:   enabled,
+		release:   make(chan stubOutcome),
+		cancelled: make(chan error, 4),
+	}
 }
 
 func (s *stubSearcher) Enabled() []indexer.Indexer { return s.enabled }
@@ -94,6 +113,7 @@ func (s *stubSearcher) SearchAll(ctx context.Context, q indexer.Query, ids ...st
 	case out := <-s.release:
 		return out.results, out.errs, out.err
 	case <-ctx.Done():
+		s.cancelled <- ctx.Err()
 		return nil, nil, ctx.Err()
 	}
 }
@@ -121,6 +141,10 @@ type stubHistory struct {
 	mu      sync.Mutex
 	entries []store.HistoryEntry
 	added   []string
+	// addErr, when non-nil, is returned by AddHistory instead of
+	// recording anything — the search_test.go "history save failed"
+	// coverage for AGENT.md §6.9's "never swallow an error with _".
+	addErr error
 }
 
 func (h *stubHistory) ListHistory() []store.HistoryEntry {
@@ -136,6 +160,10 @@ func (h *stubHistory) ListHistory() []store.HistoryEntry {
 func (h *stubHistory) AddHistory(text string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	if h.addErr != nil {
+		return h.addErr
+	}
 
 	h.added = append(h.added, text)
 	h.entries = append(h.entries, store.HistoryEntry{Text: text, At: time.Now()})
@@ -500,10 +528,14 @@ func TestSpaceDeselectsSourceExcludesItFromDispatch(t *testing.T) {
 
 // TestInFlightSpinnerAndEscCancels drives a SearchAll call that blocks
 // until released, confirms the spinner (and cancel hint) render while it
-// is outstanding, then confirms esc actually cancels it: the screen never
-// advances to Results and the eventually-cancelled call's own return value
-// is discarded rather than reported as an error (T-060 acceptance:
-// "in-flight query shows a spinner and is cancellable with esc").
+// is outstanding, then confirms esc actually cancels it — not just in the
+// UI: the blocked SearchAll call itself must observe ctx cancellation and
+// return via ctx.Done(), proven on stubSearcher.cancelled, a channel only
+// that branch ever sends on (never a release, and never a bare UI-state
+// flip that leaves the goroutine parked forever). The screen never
+// advances to Results, and the spinner/cancel hint is gone from a render
+// taken fresh after cancellation is confirmed (T-060 acceptance: "in-flight
+// query shows a spinner and is cancellable with esc").
 func TestInFlightSpinnerAndEscCancels(t *testing.T) {
 	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
 	searcher.block = true
@@ -521,20 +553,52 @@ func TestInFlightSpinnerAndEscCancels(t *testing.T) {
 	// tea.Tick chain and not a static glyph.
 	waitForOutput(t, tm, "/ searching")
 
+	// Flush whatever is already sitting in the output pipe (spinner frames
+	// from before esc was even sent) so the post-cancel read below reports
+	// only what was written *after* esc, not a stale backlog that could
+	// still contain "esc to cancel" from a moment ago.
+	if _, err := io.ReadAll(tm.Output()); err != nil {
+		t.Fatalf("io.ReadAll (pre-esc flush): %v", err)
+	}
+
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
 
-	// The spinner/cancel hint must disappear once cancelled, and the
-	// screen must not have advanced to Results — there is nothing to show.
-	teatest.WaitFor(t, tm.Output(),
-		func(bts []byte) bool { return strings.Contains(string(bts), "Query:") },
-		teatest.WithCheckInterval(10*time.Millisecond), teatest.WithDuration(3*time.Second),
-	)
-
-	// Let the blocked SearchAll goroutine actually return (ctx was
-	// cancelled) so it does not linger for the rest of the test binary.
+	// This is the load-bearing assertion (finding #1 on this PR's review):
+	// removing the m.search.cancel() call inside handleSearchCancel, while
+	// leaving every UI-state field flip in place, still makes every other
+	// assertion in this file pass — the spinner disappears either way,
+	// because that is driven by m.search.inFlight, not by whether ctx was
+	// actually cancelled. Only stubSearcher.cancelled distinguishes a real
+	// cancel from a UI state change that abandons the goroutine.
 	select {
-	case searcher.release <- stubOutcome{}:
-	case <-time.After(time.Second):
+	case err := <-searcher.cancelled:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled reported err = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SearchAll never observed ctx cancellation after esc — esc did not actually cancel the query")
+	}
+
+	// bubbletea's renderer runs on its own tick, not synchronously inside
+	// Send; give the esc-triggered frame a moment to actually reach the
+	// output pipe before reading it.
+	time.Sleep(150 * time.Millisecond)
+
+	after, err := io.ReadAll(tm.Output())
+	if err != nil {
+		t.Fatalf("io.ReadAll (post-esc): %v", err)
+	}
+
+	if !strings.Contains(string(after), "Query:") {
+		t.Fatalf("expected a fresh render containing \"Query:\" after cancelling, got %q", after)
+	}
+
+	if strings.Contains(string(after), "esc to cancel") {
+		t.Fatalf("expected the spinner/cancel hint gone after cancelling, got %q", after)
+	}
+
+	if strings.Contains(string(after), "results screen") {
+		t.Fatalf("a cancelled search must not advance to the Results screen, got %q", after)
 	}
 }
 
@@ -596,6 +660,82 @@ func TestRecentQueriesRenderedAndRecorded(t *testing.T) {
 
 	if len(added) != 1 || added[0] != "brand-new" {
 		t.Fatalf("AddHistory calls = %v, want exactly [\"brand-new\"]", added)
+	}
+}
+
+// TestHistorySaveFailureIsSurfacedNotSwallowed confirms a failing
+// HistoryStore.AddHistory (a full disk, a closed store) is reported to the
+// user via the status bar rather than discarded with "_ = ..." (AGENT.md
+// §6.9), and — just as important — that the search itself still runs: a
+// broken history write must not silently drop the query the user asked for.
+func TestHistorySaveFailureIsSurfacedNotSwallowed(t *testing.T) {
+	hist := &stubHistory{addErr: errors.New("disk full")}
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	tm, _ := newSearchTestModel(t, searcher, hist)
+
+	waitForOutput(t, tm, "Query:")
+
+	tm.Send(keyRune("/"))
+	waitForOutput(t, tm, "█")
+
+	for _, r := range "brand-new" {
+		tm.Send(keyRune(string(r)))
+	}
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// This (non-blocking) stub resolves the search almost instantly, so
+	// the status message and the Results transition can legitimately land
+	// in the same drained read — checked together in one call, not two
+	// (see waitForAllOutput's comment). The status bar truncates its
+	// whole line to the terminal width (components.StatusBar.View,
+	// T-052), so only the message's leading words are checked for, same
+	// as TestFatalSearchErrorReportedAndStaysOnSearch. The search itself
+	// must still have gone out despite the history write failing.
+	waitForAllOutput(t, tm, "couldn't save query history", "results screen")
+
+	call, ok := searcher.lastCall()
+	if !ok {
+		t.Fatal("expected SearchAll to have been called despite the history write failing")
+	}
+
+	if call.q.Text != "brand-new" {
+		t.Fatalf("Query.Text = %q, want \"brand-new\"", call.q.Text)
+	}
+}
+
+// TestDispatchSearchHistoryFailureLeavesRecentUnchanged is
+// TestHistorySaveFailureIsSurfacedNotSwallowed's precise, non-teatest
+// counterpart: calling dispatchSearch directly confirms a failing
+// AddHistory leaves search.recent exactly as it was (loadRecentQueries is
+// only called on success), rather than silently going stale.
+func TestDispatchSearchHistoryFailureLeavesRecentUnchanged(t *testing.T) {
+	hist := &stubHistory{
+		entries: []store.HistoryEntry{{Text: "old-one"}},
+		addErr:  errors.New("disk full"),
+	}
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+
+	m := New(fake.New(), testTheme(), WithSearcher(searcher), WithHistory(hist))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(Model)
+
+	m.search.query = "new-query"
+
+	updated, cmd := m.dispatchSearch(false)
+	m = updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected a tea.Cmd batching the dispatch and the history-error status message")
+	}
+
+	if len(m.search.recent) != 1 || m.search.recent[0] != "old-one" {
+		t.Fatalf("search.recent = %v, want unchanged [\"old-one\"] after a failed AddHistory", m.search.recent)
+	}
+
+	if !strings.Contains(m.View(), "couldn't save query history") {
+		t.Fatalf("View() = %q, want the history-save error message", m.View())
 	}
 }
 
