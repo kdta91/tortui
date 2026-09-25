@@ -81,6 +81,12 @@ func (c Config) Validate() []string {
 		problems = append(problems, "seed_ratio: must not be negative")
 	}
 
+	if d, err := time.ParseDuration(c.SeedDuration); err != nil {
+		problems = append(problems, fmt.Sprintf("seed_duration: %v", err))
+	} else if d <= 0 {
+		problems = append(problems, "seed_duration: must be positive")
+	}
+
 	if _, err := ParseByteSize(c.MinFreeSpace); err != nil {
 		problems = append(problems, fmt.Sprintf("min_free_space: %v", err))
 	}

@@ -37,6 +37,7 @@ import (
 	"github.com/kdta91/tortui/internal/config"
 	"github.com/kdta91/tortui/internal/engine"
 	"github.com/kdta91/tortui/internal/indexer/httpx"
+	"github.com/kdta91/tortui/internal/platform"
 )
 
 // DefaultMetadataTimeout is how long a torrent may sit in engine.StateChecking
@@ -80,10 +81,11 @@ var ErrMetadataTimeout = errors.New("anacrolix: metadata fetch timed out")
 // Options configures an Engine. The zero value is not usable; every field has
 // a documented default, but Config.DownloadDir must name a directory.
 type Options struct {
-	// Config supplies the user's settings. DownloadDir, MaxPeers,
-	// MaxDownloadRate, MaxUploadRate and SavedDestinations are the fields
-	// this task reads; the rest (queueing, seeding policy, listen port) are
-	// applied by T-034.
+	// Config supplies the user's settings: DownloadDir, SavedDestinations,
+	// MaxPeers, MaxDownloadRate, MaxUploadRate, MaxActiveDownloads,
+	// ListenPort, SeedPolicy/SeedRatio/SeedDuration and MinFreeSpace. A
+	// zero-valued MaxActiveDownloads, SeedPolicy, or MinFreeSpace takes
+	// config.Default's value rather than meaning "none".
 	Config config.Config
 
 	// Logger receives the engine's own lines and, via RedirectLogging,
@@ -120,6 +122,21 @@ type Options struct {
 	// in the narrow window that guard actually protects (T-944 QA
 	// remediation).
 	beforeAttach func()
+
+	// SpaceCheckInterval is how often downloading torrents' destinations
+	// are re-checked for free space. Zero uses DefaultSpaceCheckInterval.
+	// It is measured against sample-tick times, so a test driving the
+	// ticker drives this too.
+	SpaceCheckInterval time.Duration
+
+	// freeSpace, when set, replaces platform.FreeSpace, so a test can
+	// report a nearly-full disk without filling one.
+	freeSpace func(string) (uint64, error)
+
+	// listenHost, when set together with Offline, keeps a TCP listener on
+	// that host (loopback in tests) so the listen-port fallback can be
+	// exercised while still never dialling or announcing anywhere.
+	listenHost string
 
 	// HTTPClient fetches a .torrent named by AddSource.TorrentURL. A nil
 	// HTTPClient builds one with tortui's shared defaults.
@@ -194,6 +211,30 @@ type tracked struct {
 	// second time for the same tracked torrent and close this twice.
 	done chan struct{}
 
+	// spec is a torrent held in the queue before it was ever attached to
+	// the client; url (with urlCtx, the Add call's values) is a .torrent
+	// URL held in the queue before it was fetched. Both are cleared when
+	// the queue promotes the torrent.
+	spec   *torrent.TorrentSpec
+	url    string
+	urlCtx context.Context
+
+	// completedAt is when the torrent's data was first seen complete, the
+	// start of any SeedForDuration window.
+	completedAt time.Time
+
+	// seedDone is set when the seed policy stopped the torrent's upload
+	// (it then shows StatePaused); seedOverride is set when the user
+	// resumed it afterwards, which exempts it from the policy from then
+	// on — an explicit request to keep seeding is not overridden again.
+	seedDone     bool
+	seedOverride bool
+
+	// spacePaused is set when the periodic free-space check paused the
+	// torrent; it shows StateErrored with the shortfall as Err until
+	// Resume, which clears both.
+	spacePaused bool
+
 	// removed is set by Remove under Engine.mu at the same time done is
 	// closed. attach checks it after a client.AddTorrentSpec call that
 	// may have run concurrently with, or just after, a Remove — so a
@@ -215,6 +256,12 @@ type Engine struct {
 	updates chan []engine.TorrentStatus
 
 	metadataTimeout time.Duration
+	spaceInterval   time.Duration
+	freeSpace       func(string) (uint64, error)
+	maxActive       int
+	margin          int64
+	seed            engine.SeedPolicy
+	listenPort      int
 	downloadDir     string
 	roots           []string
 	http            *httpx.Client
@@ -230,6 +277,7 @@ type Engine struct {
 	nextID   int
 	torrents map[string]*tracked
 	order    []string
+	queue    []string
 	storages map[string]storage.ClientImplCloser
 }
 
@@ -261,11 +309,14 @@ func New(opts Options) (*Engine, error) {
 		return nil, fmt.Errorf("anacrolix: create download directory %s: %w", downloadDir, err)
 	}
 
-	cfg := clientConfig(opts, downloadDir, logger)
-
-	client, err := torrent.NewClient(cfg)
+	settings, err := resolvePolicy(opts.Config)
 	if err != nil {
-		return nil, fmt.Errorf("anacrolix: start torrent client: %w", err)
+		return nil, err
+	}
+
+	client, err := newClient(opts, downloadDir, logger)
+	if err != nil {
+		return nil, err
 	}
 
 	metadataTimeout := opts.MetadataTimeout
@@ -278,6 +329,16 @@ func New(opts Options) (*Engine, error) {
 		sampleInterval = DefaultRateSampleInterval
 	}
 
+	spaceInterval := opts.SpaceCheckInterval
+	if spaceInterval <= 0 {
+		spaceInterval = DefaultSpaceCheckInterval
+	}
+
+	freeSpace := opts.freeSpace
+	if freeSpace == nil {
+		freeSpace = platform.FreeSpace
+	}
+
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
 		httpClient = httpx.New(httpx.Config{MaxBodyBytes: maxTorrentFileBytes})
@@ -288,6 +349,12 @@ func New(opts Options) (*Engine, error) {
 		logger:          logger,
 		updates:         make(chan []engine.TorrentStatus, 1),
 		metadataTimeout: metadataTimeout,
+		spaceInterval:   spaceInterval,
+		freeSpace:       freeSpace,
+		maxActive:       settings.maxActive,
+		margin:          settings.margin,
+		seed:            settings.seed,
+		listenPort:      client.LocalPort(),
 		downloadDir:     downloadDir,
 		roots:           destinationRoots(downloadDir, opts.Config.SavedDestinations),
 		http:            httpClient,
@@ -309,6 +376,10 @@ func New(opts Options) (*Engine, error) {
 
 	logger.Info("anacrolix: engine started",
 		"download_dir", downloadDir,
+		"listen_port", e.listenPort,
+		"max_active_downloads", e.maxActive,
+		"min_free_space", e.margin,
+		"seed_policy", e.seed.String(),
 		"max_peers", opts.Config.MaxPeers,
 		"max_download_rate", opts.Config.MaxDownloadRate,
 		"max_upload_rate", opts.Config.MaxUploadRate,
@@ -318,11 +389,94 @@ func New(opts Options) (*Engine, error) {
 	return e, nil
 }
 
-// clientConfig translates tortui's configuration into the torrent library's.
-func clientConfig(opts Options, downloadDir string, logger *slog.Logger) *torrent.ClientConfig {
+// policySettings is the download policy New resolves from config.
+type policySettings struct {
+	maxActive int
+	margin    int64
+	seed      engine.SeedPolicy
+}
+
+// resolvePolicy reads the queueing, free-space and seeding settings from
+// cfg, taking config.Default's value for any left zero.
+func resolvePolicy(cfg config.Config) (policySettings, error) {
+	def := config.Default("")
+
+	maxActive := cfg.MaxActiveDownloads
+	if maxActive <= 0 {
+		maxActive = def.MaxActiveDownloads
+	}
+
+	minFree := cfg.MinFreeSpace
+	if minFree == "" {
+		minFree = def.MinFreeSpace
+	}
+
+	margin, err := config.ParseByteSize(minFree)
+	if err != nil {
+		return policySettings{}, fmt.Errorf("anacrolix: min_free_space: %w", err)
+	}
+
+	mode, ratio, duration := cfg.SeedPolicy, cfg.SeedRatio, cfg.SeedDuration
+	if mode == "" {
+		mode, ratio = def.SeedPolicy, def.SeedRatio
+	}
+
+	if duration == "" {
+		duration = def.SeedDuration
+	}
+
+	seed, err := engine.ParseSeedPolicy(mode, ratio, duration)
+	if err != nil {
+		return policySettings{}, fmt.Errorf("anacrolix: %w", err)
+	}
+
+	return policySettings{maxActive: maxActive, margin: margin, seed: seed}, nil
+}
+
+// newClient starts the torrent client on the configured listen port, falling
+// back to a random free port when that one cannot be bound (another client,
+// or a second program, already holds it). The fallback is logged; the port
+// actually bound is what Engine.ListenPort reports.
+func newClient(opts Options, downloadDir string, logger *slog.Logger) (*torrent.Client, error) {
+	port := opts.Config.ListenPort
+
+	client, err := torrent.NewClient(clientConfig(opts, downloadDir, logger, port))
+	if err == nil {
+		return client, nil
+	}
+
+	if port == 0 {
+		return nil, fmt.Errorf("anacrolix: start torrent client: %w", err)
+	}
+
+	logger.Warn("anacrolix: listen port unavailable, falling back to a random port",
+		"listen_port", port, "error", err)
+
+	client, retryErr := torrent.NewClient(clientConfig(opts, downloadDir, logger, 0))
+	if retryErr != nil {
+		return nil, fmt.Errorf("anacrolix: start torrent client on port %d (%w) or a random port: %w",
+			port, err, retryErr)
+	}
+
+	return client, nil
+}
+
+// ListenPort reports the port the client actually bound for incoming peer
+// connections — the configured one, or the random fallback — or 0 when no
+// listener is open (Offline).
+func (e *Engine) ListenPort() int { return e.listenPort }
+
+// SeedPolicy reports the seeding policy in effect, whose String is the
+// sentence the UI shows so continued upload is never a surprise.
+func (e *Engine) SeedPolicy() engine.SeedPolicy { return e.seed }
+
+// clientConfig translates tortui's configuration into the torrent library's,
+// listening on port (0 = random).
+func clientConfig(opts Options, downloadDir string, logger *slog.Logger, port int) *torrent.ClientConfig {
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.DataDir = downloadDir
 	cfg.Logger = anacrolixLogger(logger)
+	cfg.ListenPort = port
 
 	if n := opts.Config.MaxPeers; n > 0 {
 		cfg.EstablishedConnsPerTorrent = n
@@ -347,6 +501,12 @@ func clientConfig(opts Options, downloadDir string, logger *slog.Logger) *torren
 		cfg.NoDefaultPortForwarding = true
 		cfg.DialForPeerConns = false
 		cfg.AcceptPeerConnections = false
+
+		if host := opts.listenHost; host != "" {
+			cfg.DisableTCP = false
+			cfg.DisableIPv6 = true
+			cfg.ListenHost = func(string) string { return host }
+		}
 	}
 
 	return cfg
@@ -513,19 +673,24 @@ func specFromFile(path string) (*torrent.TorrentSpec, error) {
 // infohash is not known until the fetch completes. addSpec uses
 // findOrTrack instead, which mints under the same critical section as its
 // existing-infohash lookup (T-944).
-func (e *Engine) track(dest, name string) (*tracked, error) {
+//
+// When every download slot is taken the new entry is queued instead, holding
+// the URL (and the Add call's context values) until the queue promotes it,
+// and queued is true; otherwise the caller starts the fetch, having been
+// counted in e.wg under the same lock that checked the engine is open.
+func (e *Engine) track(ctx context.Context, dest, rawURL string) (tr *tracked, queued bool, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if e.closed {
-		return nil, ErrClosed
+		return nil, false, ErrClosed
 	}
 
 	e.nextID++
 	t := &tracked{
 		id:       fmt.Sprintf("an-%d", e.nextID),
 		savePath: dest,
-		name:     name,
+		name:     rawURL,
 		state:    engine.StateChecking,
 		done:     make(chan struct{}),
 	}
@@ -533,12 +698,32 @@ func (e *Engine) track(dest, name string) (*tracked, error) {
 	e.torrents[t.id] = t
 	e.order = append(e.order, t.id)
 
-	return t, nil
+	if e.activeLocked() > e.maxActive {
+		t.url, t.urlCtx = rawURL, context.WithoutCancel(ctx)
+		e.enqueueLocked(t)
+
+		return t, true, nil
+	}
+
+	e.wg.Add(1)
+
+	return t, false, nil
 }
 
-// addSpec attaches a spec whose infohash is already known.
+// addSpec attaches a spec whose infohash is already known, or queues it when
+// every download slot is taken.
+//
+// When the spec already carries its info dictionary (a local .torrent) its
+// paths and its space requirement are checked here, before anything is
+// tracked, so an unsafe or oversized torrent is refused by Add itself with a
+// readable reason (AGENT.md §6.11, T-034). attach checks both again when the
+// torrent actually starts, since a queued torrent may start much later.
 func (e *Engine) addSpec(spec *torrent.TorrentSpec, dest string) (string, error) {
-	tr, existingID, err := e.findOrTrack(spec.InfoHash.HexString(), dest, displayName(spec))
+	if err := e.precheckSpec(spec, dest); err != nil {
+		return "", err
+	}
+
+	tr, existingID, queued, err := e.findOrTrack(spec, dest)
 	if err != nil {
 		return "", err
 	}
@@ -548,6 +733,10 @@ func (e *Engine) addSpec(spec *torrent.TorrentSpec, dest string) (string, error)
 		// error: hand back the ID they already have rather than a second
 		// entry pointing at one underlying torrent.
 		return existingID, nil
+	}
+
+	if queued {
+		return tr.id, nil
 	}
 
 	if err := e.attach(tr, spec, dest); err != nil {
@@ -611,18 +800,24 @@ func (e *Engine) untrackFailedSpec(tr *tracked) {
 // Exactly one of the two meaningful return values is set: a non-nil tr for
 // a freshly minted entry the caller must now attach, or a non-empty
 // existingID naming the entry already tracked for hex.
-func (e *Engine) findOrTrack(hex, dest, name string) (tr *tracked, existingID string, err error) {
+//
+// The same critical section decides whether the new entry starts now or
+// queues (queued true, spec held on the entry until promote attaches it), so
+// concurrent Adds can never together overshoot max_active_downloads.
+func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string) (tr *tracked, existingID string, queued bool, err error) {
+	hex, name := spec.InfoHash.HexString(), displayName(spec)
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if e.closed {
-		return nil, "", ErrClosed
+		return nil, "", false, ErrClosed
 	}
 
 	if hex != "" {
 		for _, id := range e.order {
 			if e.torrents[id].infoHash == hex {
-				return nil, id, nil
+				return nil, id, false, nil
 			}
 		}
 	}
@@ -637,10 +832,32 @@ func (e *Engine) findOrTrack(hex, dest, name string) (tr *tracked, existingID st
 		done:     make(chan struct{}),
 	}
 
+	if e.activeLocked() >= e.maxActive {
+		t.spec = spec
+		e.enqueueLocked(t)
+		queued = true
+	}
+
 	e.torrents[t.id] = t
 	e.order = append(e.order, t.id)
 
-	return t, "", nil
+	return t, "", queued, nil
+}
+
+// precheckSpec validates a spec's declared paths and its space requirement
+// when it already carries an info dictionary; a magnet carries none yet, and
+// is checked by awaitInfo when its dictionary arrives.
+func (e *Engine) precheckSpec(spec *torrent.TorrentSpec, dest string) error {
+	info, err := specInfo(spec)
+	if err != nil || info == nil {
+		return err
+	}
+
+	if err := validateInfoPaths(info, dest); err != nil {
+		return err
+	}
+
+	return e.checkSpace(dest, bytesNeeded(info, dest))
 }
 
 // addFromURL accepts a .torrent URL immediately and fetches it in the
@@ -650,12 +867,14 @@ func (e *Engine) findOrTrack(hex, dest, name string) (tr *tracked, existingID st
 // returned by the time the fetch runs, while the fetch's own lifetime is
 // governed by the metadata timeout instead.
 func (e *Engine) addFromURL(ctx context.Context, rawURL, dest string) (string, error) {
-	tr, err := e.track(dest, rawURL)
+	tr, queued, err := e.track(ctx, dest, rawURL)
 	if err != nil {
 		return "", err
 	}
 
-	e.wg.Add(1)
+	if queued {
+		return tr.id, nil
+	}
 
 	go func() {
 		defer e.wg.Done()
@@ -728,7 +947,7 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 	// disk or fetched over HTTP — check it here, so an unsafe torrent is
 	// refused with our own readable error instead of surfacing as whatever
 	// the library makes of a storage backend that said no.
-	if err := validateSpecPaths(spec, dest); err != nil {
+	if err := e.precheckSpec(spec, dest); err != nil {
 		return err
 	}
 
@@ -767,14 +986,23 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 	// record it here — otherwise a torrent added by URL would never be
 	// findable by infohash until its info dictionary arrives, well after
 	// attach.
+	if e.closed {
+		// Close began while this attach was in flight; Close's own
+		// client.Close reaps t, and no new goroutine may join e.wg now.
+		e.mu.Unlock()
+		return ErrClosed
+	}
+
 	tr.infoHash = t.InfoHash().HexString()
 	tr.t = t
 	if tr.state == engine.StateChecking {
 		tr.name = t.Name()
 	}
-	e.mu.Unlock()
 
+	// Counted under the same lock that saw the engine open, so it can
+	// never race Close's wg.Wait.
 	e.wg.Add(1)
+	e.mu.Unlock()
 
 	go func() {
 		defer e.wg.Done()
@@ -832,10 +1060,26 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 		return
 	}
 
+	// A magnet's size is unknown until now; this is its add-time
+	// free-space precheck. (A .torrent's already ran in addSpec/attach, and
+	// passes again here trivially unless the disk filled in between.)
+	if err := e.checkSpace(dest, bytesNeeded(info, dest)); err != nil {
+		e.fail(tr, err)
+		t.Drop()
+		e.logger.Warn("anacrolix: refused a torrent for lack of free space",
+			"id", tr.id, "destination", dest, "error", err)
+
+		return
+	}
+
 	e.mu.Lock()
 	tr.name = t.Name()
-	paused := tr.paused
+	// A queued torrent (resumed into the queue while its metadata was
+	// still pending) holds its transfers exactly like a paused one.
+	paused := tr.paused || tr.state == engine.StateQueued
 	switch {
+	case tr.state == engine.StateQueued:
+		// promote picks StateDownloading itself once Info is known.
 	case paused:
 		// The torrent is displaying engine.StatePaused and stays there;
 		// record what it would have become so Resume restores
@@ -859,20 +1103,21 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 	}
 }
 
-// validateSpecPaths validates the info dictionary a spec already carries, if
-// it carries one. A magnet has no info dictionary yet, so there is nothing to
-// check until it arrives — safeStorage is what catches that case.
-func validateSpecPaths(spec *torrent.TorrentSpec, dest string) error {
+// specInfo decodes the info dictionary a spec already carries, or returns nil
+// when it carries none. A magnet has no info dictionary yet, so there is
+// nothing to check until it arrives — awaitInfo and safeStorage catch that
+// case.
+func specInfo(spec *torrent.TorrentSpec) (*metainfo.Info, error) {
 	if len(spec.InfoBytes) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var info metainfo.Info
 	if err := bencode.Unmarshal(spec.InfoBytes, &info); err != nil {
-		return fmt.Errorf("anacrolix: read info dictionary: %w", err)
+		return nil, fmt.Errorf("anacrolix: read info dictionary: %w", err)
 	}
 
-	return validateInfoPaths(&info, dest)
+	return &info, nil
 }
 
 // validateInfoPaths checks every file an info dictionary declares, plus the
@@ -985,6 +1230,7 @@ func (e *Engine) statusLocked(tr *tracked) engine.TorrentStatus {
 		Origin:   tr.origin,
 		Err:      tr.err,
 		ETA:      -1,
+		InfoHash: tr.infoHash,
 	}
 
 	if tr.t == nil {
@@ -1066,13 +1312,23 @@ func (e *Engine) sampleRates(ticks <-chan time.Time, stop func()) {
 	defer e.wg.Done()
 	defer stop()
 
-	var last []engine.TorrentStatus
+	var (
+		last        []engine.TorrentStatus
+		lastSpaceAt time.Time
+	)
 
 	for {
 		select {
 		case <-e.done:
 			return
 		case now := <-ticks:
+			if lastSpaceAt.IsZero() || now.Sub(lastSpaceAt) >= e.spaceInterval {
+				e.recheckSpace()
+				lastSpaceAt = now
+			}
+
+			e.promote()
+
 			snap := e.sampleOnce(now)
 			if last == nil || !snapshotsEqual(last, snap) {
 				// The consumer owns what it receives and may sort or
@@ -1100,6 +1356,7 @@ func (e *Engine) sampleOnce(now time.Time) []engine.TorrentStatus {
 			stats := tr.t.Stats()
 			tr.down.observe(now, stats.BytesReadUsefulData.Int64())
 			tr.up.observe(now, stats.BytesWrittenData.Int64())
+			e.applyPolicyLocked(tr, now)
 		}
 
 		out = append(out, e.statusLocked(tr))
@@ -1207,6 +1464,7 @@ func (e *Engine) Pause(id string) error {
 	}
 
 	tr.paused = true
+	e.dequeueLocked(tr.id)
 
 	if tr.state != engine.StateErrored {
 		tr.prePauseState = tr.state
@@ -1220,6 +1478,14 @@ func (e *Engine) Pause(id string) error {
 		tr.t.DisallowDataDownload()
 		tr.t.DisallowDataUpload()
 	}
+
+	// A paused download frees its slot for the next queued torrent.
+	e.wg.Add(1)
+
+	go func() {
+		defer e.wg.Done()
+		e.promote()
+	}()
 
 	return nil
 }
@@ -1246,8 +1512,36 @@ func (e *Engine) Resume(id string) error {
 
 	tr.paused = false
 
-	if tr.state == engine.StatePaused {
+	switch {
+	case tr.spacePaused:
+		// Paused by the free-space re-check: clear the shortfall and
+		// try again; the next re-check pauses it again if it still
+		// does not fit.
+		tr.spacePaused = false
+		tr.err = nil
 		tr.state = tr.prePauseState
+	case tr.seedDone:
+		// Stopped by the seed policy: the user asked to keep seeding,
+		// which overrides the policy for this torrent from now on.
+		tr.seedDone = false
+		tr.seedOverride = true
+		tr.state = engine.StateSeeding
+	case tr.state == engine.StatePaused:
+		tr.state = tr.prePauseState
+	}
+
+	// A torrent that would take a download slot waits in the queue when
+	// every slot is taken, with its transfers still held — provided the
+	// queue has something to start it with (attached, or holding a spec or
+	// URL). One whose .torrent fetch is still in flight is not queued: its
+	// fetch is already running and attach picks it up from there.
+	startable := tr.t != nil || tr.spec != nil || tr.url != ""
+	wantsSlot := tr.state == engine.StateChecking || tr.state == engine.StateDownloading
+
+	if startable && (tr.state == engine.StateQueued || (wantsSlot && e.activeLocked() > e.maxActive)) {
+		e.enqueueLocked(tr)
+
+		return nil
 	}
 
 	if tr.t != nil {
@@ -1293,6 +1587,7 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 	close(tr.done)
 
 	delete(e.torrents, id)
+	e.dequeueLocked(id)
 
 	for i, existing := range e.order {
 		if existing == id {
@@ -1307,6 +1602,9 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 	if t != nil {
 		t.Drop()
 	}
+
+	// A removed download frees its slot for the next queued torrent.
+	e.promote()
 
 	if !deleteData {
 		return nil
