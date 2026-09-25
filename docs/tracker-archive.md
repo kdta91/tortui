@@ -3636,20 +3636,15 @@ tier: M
 - Changes apply live where the engine supports it; where they need a restart, say so explicitly.
 - Invalid values rejected inline with the reason, never silently clamped.
 
-**Notes:** New `internal/tui/preferences.go`: `PreferencesManager` interface (same composition-
-root seam as `SourceManager`; concrete wiring is Backlog, no composition root yet, T-950/T-975),
-a `p`-key panel beside the source list with a flat row list (fixed fields + saved-destination
-rows + an "add" row), inline `liveIssues` validation (never clamped), and the download dir's
-existence/writability/free-space check reusing `destination.go`'s `checkDestination` via its own
-`tea.Cmd`. Only `download_dir`/`saved_destinations`/`min_free_space` are TUI-owned state applied
-live on save; every other field (rate limits, peers, port, seed policy/ratio/duration, search
-timeout, theme, ASCII) has no live-reconfigure path against the frozen `Engine` interface or this
-package's existing rendering setup, so it is persisted and reported "restart to apply: ..." in the
-status bar rather than half-applied (DEC-122). Removing a saved destination warns via
-`destinationInUse` (`engine.ContainedIn` against tracked torrents) but the known-roots set was
-never at risk: `destinationRoots`/`destinationEntries` already always add every tracked torrent's
-own `SavePath` regardless of `SavedDestinations` (T-074), so this warning is purely informational.
-`make check`, `make race` (tui), `make cover` (tui 92.9%) green.
+**Notes:** `internal/tui/preferences.go`: `PreferencesManager` seam (like `SourceManager`; concrete
+wiring is Backlog T-950/T-975), a `p`-key panel beside the source list (fixed fields, saved-
+destination rows via `savedByRecency`, an "add" row), inline `liveIssues` validation, never clamped.
+The download dir reuses `checkDestination` in a `tea.Cmd`, keyed by path and margin so a stale result
+never satisfies ctrl+s, and must have at least `min_free_space` free; editing that margin re-runs it.
+Only `download_dir`/`saved_destinations`/`min_free_space` apply live (TUI-owned state); the rest has
+no live path against the frozen `Engine`, so it is saved and reported "restart to apply: ..."
+(DEC-122). Removing an in-use destination warns (`destinationInUse`); tracked torrents' own
+`SavePath`s keep it a known root (T-074). Escalated M→H after two review FAILs (PR #50).
 
 ---
 

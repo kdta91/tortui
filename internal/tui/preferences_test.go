@@ -59,26 +59,20 @@ func (f *fakePreferencesManager) saveCallCount() int {
 }
 
 // newPrefsTestModel builds a Model on ScreenSettings with the preferences
-// panel already open, wired to pm.
+// panel already open, wired to pm. Free space is scripted (1 TiB) so the
+// download directory's min_free_space check never depends on the host disk.
 func newPrefsTestModel(t *testing.T, eng engine.Engine, pm PreferencesManager) Model {
 	t.Helper()
 
-	m := New(eng, testTheme(), WithPreferencesManager(pm))
-	m.screen = ScreenSettings
-	m.width, m.height = 100, 40
-
-	updated, cmd := m.handlePreferencesOpen()
-	m = updated.(Model)
-	m, _ = runCmd(t, m, cmd)
-
-	return m
+	return newPrefsTestModelWithProbe(t, eng, pm, freeSpaceProbe(1<<40))
 }
 
 // typeText and sendPrefsKey drive the preferences panel through
 // handlePreferencesKey and immediately settle whatever tea.Cmd it returns —
 // checkPrefsDownloadDirCmd's validation and savePrefsCmd's save result each
-// produce exactly one message and never a further command, so a single
-// runCmd hop (download_actions_test.go's own helper) is always enough here.
+// produce exactly one message, so a single runCmd hop (download_actions_test.go's
+// own helper) is enough. The only follow-up Cmd that hop can return is the
+// status bar's clear timer, which no assertion here depends on.
 func typeText(t *testing.T, m *Model, s string) {
 	t.Helper()
 
@@ -290,11 +284,18 @@ func TestPreferencesDownloadDirCheckMustLandBeforeSave(t *testing.T) {
 		t.Fatalf("test setup invalid: the check must not have landed yet, checkedPath = %q", got)
 	}
 
-	updated, _ = m.handlePreferencesKey(tea.KeyMsg{Type: tea.KeyCtrlS})
-	m = updated.(Model)
+	// SaveConfig only ever runs inside the tea.Cmd ctrl+s returns
+	// (savePrefsCmd), so that Cmd must be run here or this assertion could
+	// never fail.
+	updated, cmd = m.handlePreferencesKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m, _ = runCmd(t, updated.(Model), cmd)
 
 	if pm.saveCallCount() != 0 {
 		t.Fatal("must not save while the download-dir check is still pending")
+	}
+
+	if m.settings.prefsForm == nil {
+		t.Fatal("a refused save must leave the panel open")
 	}
 }
 
@@ -373,24 +374,169 @@ func TestPreferencesDownloadDirNotWritable(t *testing.T) {
 	}
 }
 
-// TestPreferencesDownloadDirNotEnoughSpace exercises the "not enough space"
-// branch of destCheck.blockReason with a fake m.destProbe (QA finding 3 on
-// PR #50). The download-directory check itself never carries a candidate
-// torrent size (checkPrefsDownloadDirCmd always passes size 0), so
-// destCheck.need() — and therefore this branch — can only ever be reached
-// through the same checkDestination/blockReason machinery the download-dir
-// check shares with the add-destination picker (destination.go); this test
-// pins that shared behaviour using the probe wiring the preferences panel's
-// revalidatePrefsDownloadDir dispatches through.
-func TestPreferencesDownloadDirNotEnoughSpace(t *testing.T) {
-	probe := destProbe{
-		freeSpace: func(string) (uint64, error) { return 1 << 10, nil }, // 1 KiB free
-		writable:  func(string) error { return nil },
+// freeSpaceProbe reports free bytes for every path and a real writability
+// probe, so a test pins the free-space outcome without depending on the
+// host disk.
+func freeSpaceProbe(free uint64) destProbe {
+	return destProbe{
+		freeSpace: func(string) (uint64, error) { return free, nil },
+		writable:  probeWritable,
+	}
+}
+
+// hasIssue reports whether any of issues starts with prefix.
+func hasIssue(issues []string, prefix string) bool {
+	for _, issue := range issues {
+		if strings.HasPrefix(issue, prefix) {
+			return true
+		}
 	}
 
-	c := checkDestination(t.TempDir(), 1<<30, 0, probe) // needs 1 GiB
-	if reason := c.blockReason(); !strings.Contains(reason, "not enough space") {
-		t.Fatalf("blockReason() = %q, want a not-enough-space reason", reason)
+	return false
+}
+
+// TestPreferencesDownloadDirNotEnoughSpace drives the download directory's
+// free-space validation through the panel (QA finding 3 on PR #50, R2 on
+// its second review): the default directory has no torrent size to add, so
+// the bar is the minimum free space itself — a directory with less free
+// than that could never start a download (T-034 holds any download once
+// free space falls below remaining + min_free_space).
+func TestPreferencesDownloadDirNotEnoughSpace(t *testing.T) {
+	dir := t.TempDir()
+	cfg := newTestConfig(dir)
+	cfg.MinFreeSpace = "2GB"
+
+	pm := &fakePreferencesManager{cfg: cfg}
+	m := newPrefsTestModelWithProbe(t, fake.New(), pm, freeSpaceProbe(1<<30)) // 1 GiB free
+
+	issues := m.settings.prefsForm.liveIssues()
+	if !hasIssue(issues, "Download directory: not enough space") {
+		t.Fatalf("issues = %v, want the download directory refused for having less than min_free_space free", issues)
+	}
+
+	sendPrefsKey(t, &m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if pm.saveCallCount() != 0 {
+		t.Fatal("must not save a download directory with less than min_free_space free")
+	}
+}
+
+// TestPreferencesMinFreeSpaceEditRevalidatesDownloadDir pins R2 on PR #50's
+// second review: editing min_free_space alone must re-run the download
+// directory's check with the value being typed, so a stale check made
+// against the old margin never stays in force.
+func TestPreferencesMinFreeSpaceEditRevalidatesDownloadDir(t *testing.T) {
+	dir := t.TempDir()
+	cfg := newTestConfig(dir)
+	cfg.MinFreeSpace = "512MB"
+
+	pm := &fakePreferencesManager{cfg: cfg}
+	m := newPrefsTestModelWithProbe(t, fake.New(), pm, freeSpaceProbe(1<<30)) // 1 GiB free
+
+	if issues := m.settings.prefsForm.liveIssues(); len(issues) != 0 {
+		t.Fatalf("test setup invalid: issues = %v, want none with 1 GiB free and a 512MB margin", issues)
+	}
+
+	tabTo(t, &m, int(prefFieldMinFreeSpace))
+	if prefsFieldKind(m.settings.prefsForm.cursor) != prefFieldMinFreeSpace {
+		t.Fatalf("cursor = %d, want the min-free-space row", m.settings.prefsForm.cursor)
+	}
+
+	backspace(t, &m, len(cfg.MinFreeSpace))
+	typeText(t, &m, "2GB")
+
+	issues := m.settings.prefsForm.liveIssues()
+	if !hasIssue(issues, "Download directory: not enough space") {
+		t.Fatalf("issues = %v, want the download directory re-checked against the new 2GB margin", issues)
+	}
+
+	sendPrefsKey(t, &m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if pm.saveCallCount() != 0 {
+		t.Fatal("must not save once the raised margin no longer fits the download directory")
+	}
+
+	backspace(t, &m, len("2GB"))
+	typeText(t, &m, "256MB")
+
+	if issues := m.settings.prefsForm.liveIssues(); len(issues) != 0 {
+		t.Fatalf("issues = %v, want none once the margin is lowered back under the free space", issues)
+	}
+
+	sendPrefsKey(t, &m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if pm.saveCallCount() != 1 {
+		t.Fatalf("saveCalls = %d, want 1", pm.saveCallCount())
+	}
+
+	if got := pm.lastSaved.MinFreeSpace; got != "256MB" {
+		t.Fatalf("saved MinFreeSpace = %q, want \"256MB\"", got)
+	}
+}
+
+// TestPreferencesMinFreeSpaceCheckMustLandBeforeSave is the margin half of
+// TestPreferencesDownloadDirCheckMustLandBeforeSave: a check made against
+// the old min_free_space must not satisfy ctrl+s after the margin changed,
+// even though the download directory's path did not.
+func TestPreferencesMinFreeSpaceCheckMustLandBeforeSave(t *testing.T) {
+	dir := t.TempDir()
+	cfg := newTestConfig(dir)
+	cfg.MinFreeSpace = "512MB"
+
+	pm := &fakePreferencesManager{cfg: cfg}
+	m := newPrefsTestModelWithProbe(t, fake.New(), pm, freeSpaceProbe(1<<30)) // 1 GiB free
+
+	tabTo(t, &m, int(prefFieldMinFreeSpace))
+
+	// Edit the margin but deliberately never run the resulting tea.Cmds,
+	// simulating ctrl+s racing ahead of the re-check.
+	for range len(cfg.MinFreeSpace) {
+		updated, cmd := m.handlePreferencesKey(tea.KeyMsg{Type: tea.KeyBackspace})
+		m = updated.(Model)
+		_ = cmd
+	}
+
+	updated, cmd := m.handlePreferencesKey(keyRune("2GB"))
+	m = updated.(Model)
+	_ = cmd
+
+	updated, cmd = m.handlePreferencesKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m, _ = runCmd(t, updated.(Model), cmd)
+
+	if pm.saveCallCount() != 0 {
+		t.Fatal("must not save while the download-dir check for the new margin is still pending")
+	}
+
+	if m.settings.prefsForm == nil {
+		t.Fatal("a refused save must leave the panel open")
+	}
+}
+
+// TestPreferencesOpensFromSettingsThroughUpdate drives the panel through
+// Model.Update rather than its handlers: "p" on the settings screen opens
+// it, the opening check routes back through Update, and esc closes it.
+func TestPreferencesOpensFromSettingsThroughUpdate(t *testing.T) {
+	dir := t.TempDir()
+	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
+
+	m := New(fake.New(), testTheme(), WithPreferencesManager(pm))
+	m.screen = ScreenSettings
+	m.width, m.height = 100, 40
+	m.destProbe = freeSpaceProbe(1 << 40)
+
+	updated, cmd := m.Update(keyRune("p"))
+	m, _ = runCmd(t, updated.(Model), cmd)
+
+	if m.context() != ContextPreferences {
+		t.Fatalf("context = %q, want %q after p on the settings screen", m.context(), ContextPreferences)
+	}
+
+	if got := m.settings.prefsForm.checkedPath; got != dir {
+		t.Fatalf("checkedPath = %q, want the opening check for %q routed back through Update", got, dir)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+
+	if m.settings.prefsForm != nil || m.context() == ContextPreferences {
+		t.Fatal("esc on an untouched panel must close it")
 	}
 }
 
@@ -528,6 +674,64 @@ func TestPreferencesRemoveDestinationWarnsWhenActiveTorrentIsThere(t *testing.T)
 	rendered := m.renderPreferencesScreen()
 	if !strings.Contains(rendered, "active download is using this destination") {
 		t.Fatalf("rendered remove confirmation = %q, want the in-use warning", rendered)
+	}
+
+	// Confirm the removal and save: the destination leaves the saved list,
+	// but the in-use torrent's own path stays a known root (AGENT.md §6.12).
+	sendPrefsKey(t, &m, keyRune("k")) // off the default (Cancel) onto Remove
+	sendPrefsKey(t, &m, tea.KeyMsg{Type: tea.KeyEnter})
+	sendPrefsKey(t, &m, tea.KeyMsg{Type: tea.KeyCtrlS})
+
+	if pm.saveCallCount() != 1 {
+		t.Fatalf("saveCalls = %d, want 1", pm.saveCallCount())
+	}
+
+	for _, d := range m.savedDestinations {
+		if d == dest {
+			t.Fatalf("savedDestinations = %v, want %q removed", m.savedDestinations, dest)
+		}
+	}
+
+	inUse := filepath.Join(dest, "b")
+
+	found := false
+
+	for _, r := range m.destinationRoots() {
+		if r == inUse {
+			found = true
+		}
+	}
+
+	if !found {
+		t.Fatalf("destinationRoots = %v, want the in-use torrent's %q still a known root", m.destinationRoots(), inUse)
+	}
+}
+
+// TestPreferencesSavedDestinationsMostRecentFirst pins the panel's order:
+// saved destinations the user added into most recently come first, the
+// rest follow in their saved order (the destination picker's own order).
+func TestPreferencesSavedDestinationsMostRecentFirst(t *testing.T) {
+	root := t.TempDir()
+	a, b, c := filepath.Join(root, "a"), filepath.Join(root, "b"), filepath.Join(root, "c")
+
+	cfg := newTestConfig(t.TempDir())
+	cfg.SavedDestinations = []string{a, b, c}
+
+	pm := &fakePreferencesManager{cfg: cfg}
+
+	m := New(fake.New(), testTheme(), WithPreferencesManager(pm))
+	m.screen = ScreenSettings
+	m.destProbe = freeSpaceProbe(1 << 40)
+	m.usedDestinations = []string{c, a} // c used most recently, then a
+
+	updated, cmd := m.handlePreferencesOpen()
+	m, _ = runCmd(t, updated.(Model), cmd)
+
+	got := m.settings.prefsForm.destinations
+	want := []string{c, a, b}
+
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("destinations = %v, want %v (most recently used first)", got, want)
 	}
 }
 

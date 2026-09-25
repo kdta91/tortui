@@ -167,10 +167,17 @@ type prefsForm struct {
 	// downloadDirCheck is the most recent existence/writability/free-space
 	// validation for the download-dir field, run off a tea.Cmd
 	// (AGENT.md §6.1) the same way destination.go's own picker validates a
-	// candidate. checkedPath is which path it is for, so a stale result
-	// for a path the user has since typed past is dropped.
+	// candidate. checkedPath is which path it is for and
+	// downloadDirCheck.margin which min_free_space, so a stale result for a
+	// path or margin the user has since typed past is dropped.
 	downloadDirCheck destCheck
 	checkedPath      string
+
+	// fallbackMargin is the running min_free_space (Model.minFreeSpace) at
+	// open, used for the download-dir check while the form's own
+	// min_free_space text does not parse (that row reports its own issue,
+	// so a save is refused either way).
+	fallbackMargin int64
 
 	err  string
 	info string
@@ -234,6 +241,36 @@ func (f prefsForm) isDestRow(cursor int) (int, bool) {
 	}
 
 	return 0, false
+}
+
+// margin is the minimum free space the download-dir check validates
+// against: the value being edited when it parses, else fallbackMargin.
+func (f prefsForm) margin() int64 {
+	if n, err := config.ParseByteSize(strings.TrimSpace(f.minFreeSpace)); err == nil {
+		return n
+	}
+
+	return f.fallbackMargin
+}
+
+// revalidates reports whether editing row cursor changes the download-dir
+// check's inputs (its path or the free-space margin), so the check must
+// run again.
+func (f prefsForm) revalidates(cursor int) bool {
+	if f.isAddRow(cursor) {
+		return false
+	}
+
+	if _, ok := f.isDestRow(cursor); ok {
+		return false
+	}
+
+	switch prefsFieldKind(cursor) {
+	case prefFieldDownloadDir, prefFieldMinFreeSpace:
+		return true
+	default:
+		return false
+	}
 }
 
 // clampCursor keeps cursor in range after a destination is added or removed.
@@ -431,20 +468,17 @@ func (f prefsForm) fieldIssue(cursor int) string {
 			return strings.TrimPrefix(err.Error(), engine.ErrUnsafePath.Error()+": ")
 		}
 
-		if strings.TrimSpace(f.checkedPath) != strings.TrimSpace(f.downloadDir) {
+		if strings.TrimSpace(f.checkedPath) != strings.TrimSpace(f.downloadDir) ||
+			f.downloadDirCheck.margin != f.margin() {
 			// The existence/writability/free-space check is still pending
-			// (or stale) for the currently typed path: refuse to treat the
-			// field as valid until it lands, so ctrl+s can never race ahead
-			// of prefsDownloadDirCheckMsg and save a path that turns out to
-			// be a file, unwritable, or out of space.
+			// (or stale) for the currently typed path or min_free_space:
+			// refuse to treat the field as valid until it lands, so ctrl+s
+			// can never race ahead of prefsDownloadDirCheckMsg and save a
+			// path that turns out to be a file, unwritable, or out of space.
 			return "checking…"
 		}
 
-		if reason := f.downloadDirCheck.blockReason(); reason != "" {
-			return reason
-		}
-
-		return ""
+		return downloadDirIssue(f.downloadDirCheck)
 	case prefFieldMaxDownloadRate:
 		return byteRateIssue(f.maxDownloadRate)
 	case prefFieldMaxUploadRate:
@@ -518,6 +552,26 @@ func (f prefsForm) fieldIssue(cursor int) string {
 	default:
 		return ""
 	}
+}
+
+// downloadDirIssue is why c.path cannot be the default download directory,
+// or "". On top of destCheck.blockReason (a file in the way, not writable,
+// free space unreadable) it requires at least the minimum free space: the
+// default directory has no torrent size to check, and with less free than
+// the margin the download policy (T-034) would hold every download at
+// once. The add-flow picker's own rule — an unknown size never blocks on
+// space (DEC-117) — is about one torrent, so it is left unchanged.
+func downloadDirIssue(c destCheck) string {
+	if reason := c.blockReason(); reason != "" {
+		return reason
+	}
+
+	if c.margin > 0 && c.free < uint64(c.margin) {
+		return fmt.Sprintf("not enough space: %s free, below the %s minimum free space",
+			formatSize(freeBytes(c.free)), formatSize(c.margin))
+	}
+
+	return ""
 }
 
 // byteRateIssue validates a rate field: a plain non-negative byte count or
@@ -664,6 +718,7 @@ func (m Model) handlePreferencesOpen() (tea.Model, tea.Cmd) {
 	}
 
 	f := newPrefsForm(m.configSnapshot, m.usedDestinations)
+	f.fallbackMargin = m.minFreeSpace
 	m.settings.view = settingsViewPreferences
 	m.settings.prefsForm = &f
 
@@ -686,12 +741,7 @@ func (m Model) revalidatePrefsDownloadDir() (tea.Model, tea.Cmd) {
 	// Use the min-free-space value currently being edited in the form, not
 	// the running m.minFreeSpace: a change to that field must be reflected
 	// in the download-dir check without requiring a save first.
-	margin := m.minFreeSpace
-	if n, err := config.ParseByteSize(f.minFreeSpace); err == nil {
-		margin = n
-	}
-
-	return m, checkPrefsDownloadDirCmd(path, margin, m.destProbe)
+	return m, checkPrefsDownloadDirCmd(path, f.margin(), m.destProbe)
 }
 
 // prefsDownloadDirCheckMsg carries one download-dir validation outcome,
@@ -706,16 +756,16 @@ func checkPrefsDownloadDirCmd(path string, margin int64, probe destProbe) tea.Cm
 }
 
 // handlePrefsDownloadDirCheck records a validation outcome, provided it is
-// still for the path currently typed — a result for a path the user has
-// since edited past is stale and dropped, the same rule
-// handleDestCheck already applies to the add-flow picker.
+// still for the path and min_free_space currently typed — a result for
+// either one the user has since edited past is stale and dropped, the same
+// rule handleDestCheck already applies to the add-flow picker.
 func (m Model) handlePrefsDownloadDirCheck(msg prefsDownloadDirCheckMsg) (tea.Model, tea.Cmd) {
 	f := m.settings.prefsForm
 	if f == nil {
 		return m, nil
 	}
 
-	if strings.TrimSpace(f.downloadDir) == msg.check.path {
+	if strings.TrimSpace(f.downloadDir) == msg.check.path && f.margin() == msg.check.margin {
 		f.downloadDirCheck = msg.check
 		f.checkedPath = msg.check.path
 	}
@@ -864,7 +914,7 @@ func (m Model) handlePreferencesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		f.dirty = true
 		m.settings.prefsForm = &f
 
-		if prefsFieldKind(f.cursor) == prefFieldDownloadDir {
+		if f.revalidates(f.cursor) {
 			return m.revalidatePrefsDownloadDir()
 		}
 
@@ -875,7 +925,7 @@ func (m Model) handlePreferencesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		f.dirty = true
 		m.settings.prefsForm = &f
 
-		if prefsFieldKind(f.cursor) == prefFieldDownloadDir {
+		if f.revalidates(f.cursor) {
 			return m.revalidatePrefsDownloadDir()
 		}
 
