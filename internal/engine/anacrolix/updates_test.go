@@ -266,6 +266,39 @@ func TestUpdatesDropsStaleSnapshotsForASlowConsumer(t *testing.T) {
 	}
 }
 
+func TestUpdatesConsumerMayMutateWhatItReceives(t *testing.T) {
+	t.Parallel()
+
+	e, mt := newTickedEngine(t)
+	addMagnet(t, e, "mutating-consumer")
+	addMagnet(t, e, "mutating-consumer-2")
+
+	for round := range 5 {
+		mt.tick(t)
+
+		snap := recv(t, e)
+
+		// A consumer is free to edit or reorder its own snapshot. This
+		// must neither race the engine (run under -race) nor make the
+		// next, unchanged tick look like a change.
+		for i := range snap {
+			snap[i].Name = "edited by consumer"
+			snap[i].State = engine.StateErrored
+		}
+
+		snap[0], snap[1] = snap[1], snap[0]
+
+		mt.tick(t)
+
+		if n := pending(e); n != 0 {
+			t.Fatalf("round %d: %d snapshots after an unchanged tick, want 0 — consumer edits leaked into change detection",
+				round, n)
+		}
+
+		addMagnet(t, e, fmt.Sprintf("mutating-consumer-round-%d", round))
+	}
+}
+
 func TestUpdatesRealTickerDeliversSnapshots(t *testing.T) {
 	t.Parallel()
 

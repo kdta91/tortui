@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -949,7 +950,11 @@ func (e *Engine) sampleRates(ticks <-chan time.Time, stop func()) {
 		case now := <-ticks:
 			snap := e.sampleOnce(now)
 			if last == nil || !snapshotsEqual(last, snap) {
-				e.publish(snap)
+				// The consumer owns what it receives and may sort or
+				// edit it; hand it a copy so last stays private to
+				// this goroutine. A shared backing array would be a
+				// data race and would corrupt change detection.
+				e.publish(slices.Clone(snap))
 				last = snap
 			}
 		}
