@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/kdta91/tortui/internal/platform"
 )
 
 // withHome points HOME (and the Windows equivalents) at dir, so
@@ -51,7 +52,7 @@ func TestLoadFirstRunWritesDefaults(t *testing.T) {
 		t.Fatalf("stat config file: %v", err)
 	}
 
-	if runtime.GOOS != "windows" {
+	if !platform.IsWindows() {
 		if got := info.Mode().Perm(); got != configFileMode {
 			t.Fatalf("config file mode = %v, want %v", got, os.FileMode(configFileMode))
 		}
@@ -339,7 +340,7 @@ func TestLoadConfigFlagOverridesConfigFileOnly(t *testing.T) {
 }
 
 func TestLoadWarnsOnWorldReadableConfig(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if platform.IsWindows() {
 		t.Skip("POSIX permission bits do not apply on Windows")
 	}
 
@@ -436,7 +437,7 @@ func TestSaveIsAtomicAndReloadable(t *testing.T) {
 		t.Fatalf("Save() error = %v", err)
 	}
 
-	if runtime.GOOS != "windows" {
+	if !platform.IsWindows() {
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Fatalf("stat saved config: %v", err)

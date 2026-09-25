@@ -134,7 +134,7 @@ type Options struct {
 // unreachable.
 func Build(ctx context.Context, opts Options) Report {
 	r := Report{
-		OS:   runtime.GOOS,
+		OS:   platform.OS(),
 		Arch: runtime.GOARCH,
 
 		Term:      opts.Term,
