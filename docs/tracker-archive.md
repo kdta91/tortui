@@ -3586,6 +3586,30 @@ supported for people who prefer it, but it is never the documented path.
 
 ---
 
+### T-081 · Connection test
+```
+status: done
+depends: T-080
+tier: M
+```
+**Acceptance**
+- `t` runs a probe search against the selected indexer with a short timeout.
+- Reports reachable / auth failed / parse failed / timeout as distinct outcomes with the
+  underlying error available in details.
+- Runs as a `tea.Cmd`; the UI stays responsive and the probe is cancellable.
+
+**Notes:** `handleSourceTest` (`t`) dispatches a cancellable, 15s-bounded `testSourceCmd`;
+`classifyProbeError` sorts the result into reachable/timeout/auth failed/parse failed/unreachable
+via `errors.Is(context.DeadlineExceeded)` and two duck-typed marker interfaces
+(`probeAuthFailure`/`probeParseFailure`, matched with `errors.As`) since `internal/tui` cannot
+import a concrete adapter (AGENT.md §4). A second `t` while one is in flight is refused (DEC-115's
+discipline); `esc` cancels it via its own `context.CancelFunc`. `lastProbe` keeps the last
+classified outcome + underlying error per source id; `d` opens a new `ContextSourceTestDetail`
+panel showing it, word-wrapped. No adapter today implements the marker interfaces (Backlog
+`T-981`) since no composition root calls `TestSource` with a real one yet (`T-975`).
+
+---
+
 ## Blocked — Resolved
 
 

@@ -38,6 +38,14 @@ type fakeSourceManager struct {
 	testCalls  int
 	reloadCall int
 
+	// testDelay, when set, makes TestSource block until either it elapses
+	// (returning testErr, the "reachable" case when testErr is nil) or ctx
+	// is done first (returning ctx.Err() and recording ctxCancelled) — this
+	// is what TestListTestKeyRefusesSecondProbeWhileInFlight and
+	// TestListTestKeyCancellable (T-081) need an in-flight probe for.
+	testDelay    time.Duration
+	ctxCancelled bool
+
 	// registrySync, when set, is called by SaveSources with the newly
 	// saved set — standing in for "reloads the registry live" (the real
 	// contract's own job), so a test can wire it to update a matching
@@ -74,13 +82,53 @@ func (f *fakeSourceManager) SaveSources(sources []config.Indexer) error {
 	return nil
 }
 
-func (f *fakeSourceManager) TestSource(_ context.Context, _ config.Indexer) error {
+func (f *fakeSourceManager) TestSource(ctx context.Context, _ config.Indexer) error {
+	f.mu.Lock()
+	f.testCalls++
+	delay := f.testDelay
+	err := f.testErr
+	f.mu.Unlock()
+
+	if delay <= 0 {
+		return err
+	}
+
+	select {
+	case <-time.After(delay):
+		return err
+	case <-ctx.Done():
+		f.mu.Lock()
+		f.ctxCancelled = true
+		f.mu.Unlock()
+
+		return ctx.Err()
+	}
+}
+
+// sawCtxCancelled reports whether some TestSource call so far observed its
+// ctx done before testDelay elapsed.
+func (f *fakeSourceManager) sawCtxCancelled() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	f.testCalls++
+	return f.ctxCancelled
+}
 
-	return f.testErr
+// waitCtxCancelled polls sawCtxCancelled up to timeout — a bounded wait for
+// the async TestSource goroutine to observe cancellation, not a fixed sleep.
+func (f *fakeSourceManager) waitCtxCancelled(t *testing.T, timeout time.Duration) bool {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if f.sawCtxCancelled() {
+			return true
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	return f.sawCtxCancelled()
 }
 
 func (f *fakeSourceManager) ImportDefinition(_ context.Context, _ string) (string, error) {
@@ -575,12 +623,12 @@ func TestListTestKeyProbesTheSelectedSource(t *testing.T) {
 	tm.Send(keyRune("t"))
 
 	// "testing My Tracker…" shows first and stays queued for
-	// components.DefaultTransientTimeout (4s) before "test ok" takes its
-	// place, so this one wait needs a longer budget than the package's
-	// usual 3s helper.
+	// components.DefaultTransientTimeout (4s) before "My Tracker: reachable"
+	// takes its place, so this one wait needs a longer budget than the
+	// package's usual 3s helper.
 	teatest.WaitFor(
 		t, tm.Output(),
-		func(bts []byte) bool { return strings.Contains(string(bts), "test ok") },
+		func(bts []byte) bool { return strings.Contains(string(bts), "My Tracker: reachable") },
 		teatest.WithCheckInterval(10*time.Millisecond),
 		teatest.WithDuration(6*time.Second),
 	)
@@ -588,6 +636,160 @@ func TestListTestKeyProbesTheSelectedSource(t *testing.T) {
 	if sm.testCallCount() == 0 {
 		t.Fatal("expected TestSource to have been called")
 	}
+}
+
+// TestListTestKeyClassifiesOutcomes proves T-081's acceptance: a probe
+// error is reported as one of the distinct outcomes (timeout, auth failed,
+// parse failed), not just a generic failure, with the underlying error
+// still available afterwards via the `d` detail panel.
+func TestListTestKeyClassifiesOutcomes(t *testing.T) {
+	cases := []struct {
+		name    string
+		testErr error
+		want    string
+	}{
+		{name: "timeout", testErr: context.DeadlineExceeded, want: "My Tracker: timeout"},
+		{name: "auth failed", testErr: authFailureErr{}, want: "My Tracker: auth failed"},
+		{name: "parse failed", testErr: parseFailureErr{}, want: "My Tracker: parse failed"},
+		{name: "unreachable", testErr: errors.New("connection refused"), want: "My Tracker: unreachable"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sm := &fakeSourceManager{
+				sources: []config.Indexer{
+					{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+				},
+				testErr: tc.testErr,
+			}
+			tm := newSettingsTestModel(t, sm)
+
+			waitForOutput(t, tm, "My Tracker")
+
+			tm.Send(keyRune("t"))
+			teatest.WaitFor(
+				t, tm.Output(),
+				func(bts []byte) bool { return strings.Contains(string(bts), tc.want) },
+				teatest.WithCheckInterval(10*time.Millisecond),
+				teatest.WithDuration(6*time.Second),
+			)
+
+			// The underlying error stays available in the `d` detail panel
+			// even after the transient status bar message would have
+			// cleared on its own.
+			tm.Send(keyRune("d"))
+			waitForOutput(t, tm, tc.testErr.Error())
+		})
+	}
+}
+
+// authFailureErr and parseFailureErr are minimal test doubles implementing
+// settings.go's duck-typed probeAuthFailure/probeParseFailure marker
+// interfaces — this package cannot import a concrete adapter's own error
+// type (AGENT.md §4), so this is exactly the shape any real adapter error
+// would need to implement for its own failures to classify correctly.
+type authFailureErr struct{}
+
+func (authFailureErr) Error() string    { return "bad credentials" }
+func (authFailureErr) AuthFailed() bool { return true }
+
+type parseFailureErr struct{}
+
+func (parseFailureErr) Error() string     { return "malformed response" }
+func (parseFailureErr) ParseFailed() bool { return true }
+
+// TestListTestKeyRefusesSecondProbeWhileInFlight proves a second `t` while
+// one is already running is refused rather than racing it (DEC-115's same
+// discipline, applied here). The assertion is functional (testCallCount),
+// not text-matched: the status bar serialises transient messages one at a
+// time (components.StatusBar.Push queues behind whatever is still showing),
+// so the refusal notice can take components.DefaultTransientTimeout (4s) to
+// actually render — testCalls, by contrast, increments synchronously at
+// TestSource's own entry, well before the fake's testDelay elapses, so a
+// short bounded poll proves the refusal without waiting on that queue.
+func TestListTestKeyRefusesSecondProbeWhileInFlight(t *testing.T) {
+	sm := &fakeSourceManager{
+		sources: []config.Indexer{
+			{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+		},
+		testDelay: 300 * time.Millisecond,
+	}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "My Tracker")
+
+	tm.Send(keyRune("t"))
+	waitForOutput(t, tm, "testing My Tracker")
+
+	tm.Send(keyRune("t"))
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && sm.testCallCount() < 2 {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if got := sm.testCallCount(); got != 1 {
+		t.Fatalf("testCallCount = %d, want 1 (second t refused)", got)
+	}
+}
+
+// TestListTestKeyCancellable proves esc cancels an in-flight probe (T-081):
+// its context is actually cancelled (not just abandoned in the UI), and a
+// fresh `t` right after is not refused as "already running". See
+// TestListTestKeyRefusesSecondProbeWhileInFlight's doc comment for why this
+// checks testCallCount rather than waiting on the status bar's own queued
+// text.
+func TestListTestKeyCancellable(t *testing.T) {
+	sm := &fakeSourceManager{
+		sources: []config.Indexer{
+			{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+		},
+		testDelay: 2 * time.Second,
+	}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "My Tracker")
+
+	tm.Send(keyRune("t"))
+	waitForOutput(t, tm, "testing My Tracker")
+
+	if got := sm.testCallCount(); got != 1 {
+		t.Fatalf("testCallCount = %d, want 1 before cancelling", got)
+	}
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if !sm.waitCtxCancelled(t, time.Second) {
+		t.Fatal("expected the probe's context to be cancelled")
+	}
+
+	// A fresh `t` right after is not refused: a second TestSource call
+	// starts immediately rather than being blocked by leftover in-flight
+	// state.
+	tm.Send(keyRune("t"))
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && sm.testCallCount() < 2 {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if got := sm.testCallCount(); got != 2 {
+		t.Fatalf("testCallCount = %d, want 2 (esc allowed a fresh probe)", got)
+	}
+}
+
+// TestSourceTestDetailBeforeAnyTestShowsHint proves `d` on a source that has
+// never been tested reports a hint instead of opening an empty panel.
+func TestSourceTestDetailBeforeAnyTestShowsHint(t *testing.T) {
+	sm := &fakeSourceManager{sources: []config.Indexer{
+		{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+	}}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "My Tracker")
+
+	tm.Send(keyRune("d"))
+	waitForOutput(t, tm, "no test result for this source yet")
 }
 
 // TestReloadDefinitionsKey proves `r` re-reads scraper definitions from disk

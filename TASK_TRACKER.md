@@ -79,21 +79,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 8 — Settings
 
-**Done (archived in `docs/tracker-archive.md`):** `T-080` Indexer management.
-
----
-
-### T-081 · Connection test
-```
-status: todo
-depends: T-080
-tier: M
-```
-**Acceptance**
-- `t` runs a probe search against the selected indexer with a short timeout.
-- Reports reachable / auth failed / parse failed / timeout as distinct outcomes with the
-  underlying error available in details.
-- Runs as a `tea.Cmd`; the UI stays responsive and the probe is cancellable.
+**Done (archived in `docs/tracker-archive.md`):** `T-080` Indexer management · `T-081` Connection test.
 
 ---
 
@@ -649,6 +635,31 @@ when it reaches it and does not start backlog items on its own.
   existing comments and key order where practical" acceptance is satisfied only in the sense that
   key order follows the (stable) struct field order and no separate writer was invented; genuine
   comment/order preservation would need a TOML AST editor. Found in T-080.
+- `T-977` T-080/PR #48 review: the settings save-failure revert path
+  (`m.sourcesSnapshot = msg.previous` in `handleSourcesSaveResult`) has no test — no existing test
+  sets `fakeSourceManager.saveErr` for the toggle/remove paths, only for the add/edit form's own
+  save. Found in review of T-080.
+- `T-978` T-080/PR #48 review: concurrent `SaveSources` calls from toggle/remove are unordered —
+  two `tea.Cmd`s racing the same optimistic-then-revert state have no ordering guarantee, so an
+  earlier save can overwrite a later one on disk, and a failed earlier save's revert can wipe a
+  later change that already landed. Refuse a second action while one is in flight, the same
+  discipline DEC-115 already applies to pause/resume, or serialise the saves. Found in review of
+  T-080.
+- `T-979` T-080/PR #48 review: during an add's in-flight save, `sourcesSnapshot` already holds the
+  new row (optimistic update), so the live duplicate-id warning (`sourceForm.liveIssues`) flashes
+  for a second, unrelated add against the same id, and a second `ctrl+s` on that second add is
+  rejected as a duplicate even though the first save has not actually landed yet. Found in review
+  of T-080.
+- `T-980` T-080/PR #48 review: `TestFormLiveValidationAppearsAndClearsAsYouType` never asserts that
+  the live-issue hints actually clear once the field is fixed — it only proves they appear. Found
+  in review of T-080.
+- `T-981` T-081 leaves `classifyProbeError`'s auth-failed/parse-failed buckets exercisable only by
+  a test double: no adapter error implements the `probeAuthFailure`/`probeParseFailure` marker
+  interfaces yet (`internal/tui/settings.go`), and no composition root calls `TestSource` with a
+  real adapter at all (Backlog `T-975`). Once T-975 wires a concrete `SourceManager`, `httpx.StatusError`
+  (401/403) and torznab's `APIError.IsAuth`/the scraper and torznab document-malformed sentinels
+  should implement those two methods so real probes classify as more than "unreachable". Found in
+  T-081.
 
 ---
 
@@ -778,6 +789,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-117 | 2026-09-26 | T-074: destination picker as a modal step of the add flow; validation in a Cmd keyed by path; known roots grow only via new optional engine.RootAdder + store.TouchDestination, re-admitted by Session.Resume; / and \\ both separators, Windows drive/UNC paths accepted only where filepath gives them a volume; relative paths resolve against the default only |
 | DEC-118 | 2026-09-26 | T-080: import runs on enter (ctrl+i is literally tab's keycode); the list's own keys are handled directly in root.go rather than as Bindings to keep the `?` overlay inside the 80×24 budget, with a one-line legend instead; SourceManager mirrors Searcher/TorrentStore, concrete wiring deferred to Backlog T-975 |
 | DEC-119 | 2026-09-26 | T-080 review remediation: model-side sourcesSnapshot replaces every synchronous SourceManager.Sources() call from Update/View, updated optimistically and reverted on failure; refreshSearchSources re-reads Searcher.Enabled() after every successful save so Settings changes are visible on the Search screen live |
+| DEC-120 | 2026-09-26 | T-081: classifyProbeError sorts a TestSource error via errors.Is(context.DeadlineExceeded) plus two duck-typed marker interfaces (no adapter import, AGENT.md §4); t refuses a second in-flight probe (DEC-115), esc cancels via its own CancelFunc; d opens a new ContextSourceTestDetail panel from lastProbe |
 
 ## Blocked
 

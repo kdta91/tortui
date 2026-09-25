@@ -20,6 +20,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -412,10 +413,28 @@ type settingsModel struct {
 	form          *sourceForm
 	removeConfirm components.Dialog
 	removeID      string
+
+	// T-081 connection test. lastProbe holds the most recent classified
+	// outcome per source id, kept until the next test for that id so the
+	// `d` detail panel can show it even after the status bar's own
+	// transient message has cleared. testingID/probeCancel/probeGen track
+	// whichever probe (if any) is currently in flight; probeGen guards a
+	// cancelled or superseded probe's eventual result the same way
+	// search.go's own generation counter guards a stale search.
+	lastProbe   map[string]probeResult
+	testingID   string
+	probeCancel context.CancelFunc
+	probeGen    int
+	// detailOpen is true while the `d` connection-test detail panel
+	// (ContextSourceTestDetail) is open.
+	detailOpen bool
 }
 
 func newSettingsModel() settingsModel {
-	return settingsModel{removeConfirm: newSourceRemoveDialog()}
+	return settingsModel{
+		removeConfirm: newSourceRemoveDialog(),
+		lastProbe:     map[string]probeResult{},
+	}
 }
 
 func newSourceRemoveDialog() components.Dialog {
@@ -634,17 +653,161 @@ func (m Model) handleReloadResult(msg reloadResultMsg) (tea.Model, tea.Cmd) {
 	return m.pushStatus("definitions reloaded")
 }
 
-// handleSourceTest implements `t` on the list: a quick probe against the
-// already-saved selected source.
+// probeOutcome classifies a TestSource result into the fixed set of
+// outcomes T-081 requires the settings screen to distinguish: reachable
+// (nil error), timeout, auth failed, parse failed, or a generic
+// unreachable/other failure.
+type probeOutcome int
+
+const (
+	probeReachable probeOutcome = iota
+	probeTimeout
+	probeAuthFailed
+	probeParseFailed
+	probeUnreachable
+)
+
+// label is the word the settings screen shows for this outcome.
+func (o probeOutcome) label() string {
+	switch o {
+	case probeReachable:
+		return "reachable"
+	case probeTimeout:
+		return "timeout"
+	case probeAuthFailed:
+		return "auth failed"
+	case probeParseFailed:
+		return "parse failed"
+	default:
+		return "unreachable"
+	}
+}
+
+// probeResult is one source's most recent classified connection-test
+// outcome, kept in settingsModel.lastProbe for the `d` detail panel. err is
+// nil exactly when outcome is probeReachable.
+type probeResult struct {
+	outcome probeOutcome
+	err     error
+}
+
+// probeAuthFailure is implemented by an error that means the source
+// rejected the request over the user's own credentials — a missing or
+// wrong api key, cookie, or passkey — never a report on whether tortui
+// could get around that (AGENT.md §2: it never tries). This package cannot
+// import a concrete indexer adapter (AGENT.md §4 — only the registry may),
+// so classification is duck-typed via errors.As against this small marker
+// interface rather than a concrete adapter error type: any current or
+// future adapter error participates just by implementing it.
+type probeAuthFailure interface {
+	AuthFailed() bool
+}
+
+// probeParseFailure is implemented by an error that means a response
+// arrived but could not be parsed as the source's expected feed shape —
+// see probeAuthFailure's doc comment for why this is duck-typed too.
+type probeParseFailure interface {
+	ParseFailed() bool
+}
+
+// classifyProbeError sorts a TestSource error into one of the outcomes
+// above. A context deadline always wins over the marker interfaces below —
+// an error can plausibly implement one of them *and* have been produced
+// only because the context expired — since showing a probe that was cut
+// short by its own timeout as some other failure would be misleading.
+func classifyProbeError(err error) probeOutcome {
+	if err == nil {
+		return probeReachable
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		return probeTimeout
+	}
+
+	var auth probeAuthFailure
+	if errors.As(err, &auth) && auth.AuthFailed() {
+		return probeAuthFailed
+	}
+
+	var parse probeParseFailure
+	if errors.As(err, &parse) && parse.ParseFailed() {
+		return probeParseFailed
+	}
+
+	return probeUnreachable
+}
+
+// handleSourceTest implements `t` on the list: a cancellable probe against
+// the already-saved selected source, bounded by sourceTestTimeout. Refuses
+// a second probe while one is already in flight — two tea.Cmds racing the
+// same in-flight state would have no ordering guarantee (the same
+// discipline download_actions.go's pause/resume already applies, DEC-115).
 func (m Model) handleSourceTest() (tea.Model, tea.Cmd) {
 	src, ok := m.selectedSource()
 	if !ok || m.sources == nil {
 		return m.pushStatus("no source selected")
 	}
 
+	if m.settings.testingID != "" {
+		return m.pushStatus("a test is already running — esc cancels it")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), sourceTestTimeout)
+
+	m.settings.testingID = src.ID
+	m.settings.probeCancel = cancel
+	m.settings.probeGen++
+	gen := m.settings.probeGen
+
 	updated, cmd := m.pushStatus("testing " + src.Name + "…")
 
-	return updated, tea.Batch(cmd, testSourceCmd(m.sources, src, m.settings.cursor))
+	return updated, tea.Batch(cmd, testSourceCmd(m.sources, src, ctx, cancel, gen))
+}
+
+// handleSourceTestCancel implements esc while a probe is in flight on the
+// settings list: stops it via its own context and clears the in-flight
+// state, so a new `t` (or the `d` detail panel for whatever the last
+// *completed* probe found) is immediately available again. A no-op when
+// nothing is in flight — esc has no other meaning on this screen's list.
+func (m Model) handleSourceTestCancel() (tea.Model, tea.Cmd) {
+	if m.settings.testingID == "" {
+		return m, nil
+	}
+
+	if m.settings.probeCancel != nil {
+		m.settings.probeCancel()
+	}
+
+	name := m.settings.testingID
+
+	for _, s := range m.sourceRows() {
+		if s.ID == m.settings.testingID {
+			name = s.Name
+			break
+		}
+	}
+
+	m.settings.testingID = ""
+	m.settings.probeCancel = nil
+
+	return m.pushStatus(name + ": test cancelled")
+}
+
+// handleSourceTestDetailOpen implements `d` on the settings list: opens the
+// connection-test detail panel for the selected source, if it has one.
+func (m Model) handleSourceTestDetailOpen() (tea.Model, tea.Cmd) {
+	src, ok := m.selectedSource()
+	if !ok {
+		return m.pushStatus("no source selected")
+	}
+
+	if _, ok := m.settings.lastProbe[src.ID]; !ok {
+		return m.pushStatus("no test result for this source yet — press t first")
+	}
+
+	m.settings.detailOpen = true
+
+	return m, nil
 }
 
 // sourcesSaveResultMsg reports SaveSources' outcome for the list's own
@@ -680,20 +843,31 @@ func saveFormCmd(sm SourceManager, sources, previous []config.Indexer) tea.Cmd {
 	}
 }
 
-// sourceTestResultMsg reports one `t` probe's outcome. gen ties it to
-// whichever list row was selected when it was dispatched, in the list
-// context; the form uses formTestResultMsg instead.
-type sourceTestResultMsg struct {
+// sourceProbeResultMsg reports one `t` probe's outcome (T-081). id and gen
+// tie it to whichever dispatch started it, in the list context; the form
+// uses formTestResultMsg instead. A superseded or cancelled probe's result
+// is recognised as stale by comparing both against the current
+// settingsModel state (handleSourceProbeResult) rather than gen alone,
+// since a cancelled probe's testingID is cleared immediately but its
+// eventual result — dispatched before the cancel — could otherwise still
+// match a later gen that a *different* source's test bumped to.
+type sourceProbeResultMsg struct {
+	id   string
 	name string
+	gen  int
 	err  error
 }
 
-func testSourceCmd(sm SourceManager, src config.Indexer, _ int) tea.Cmd {
+// testSourceCmd runs sm.TestSource(ctx, src) off Update's own goroutine
+// (AGENT.md §6.1) and always releases ctx's resources via cancel once it
+// returns — whether that is a real completion, the timeout firing, or an
+// esc-triggered cancel calling the same cancel func early (context's
+// CancelFunc is idempotent, so calling it twice here is harmless).
+func testSourceCmd(sm SourceManager, src config.Indexer, ctx context.Context, cancel context.CancelFunc, gen int) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), sourceTestTimeout)
 		defer cancel()
 
-		return sourceTestResultMsg{name: src.Name, err: sm.TestSource(ctx, src)}
+		return sourceProbeResultMsg{id: src.ID, name: src.Name, gen: gen, err: sm.TestSource(ctx, src)}
 	}
 }
 
@@ -785,13 +959,36 @@ func (m Model) handleFormSaveResult(msg formSaveResultMsg) (tea.Model, tea.Cmd) 
 	return m.pushStatus("source saved")
 }
 
-// handleSourceTestResult applies the list's own `t` probe outcome.
-func (m Model) handleSourceTestResult(msg sourceTestResultMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		return m.pushStatus(fmt.Sprintf("%s: test failed: %v", msg.name, msg.err))
+// handleSourceProbeResult applies the list's own `t` probe outcome (T-081):
+// classifies the error, records it in lastProbe for the `d` detail panel,
+// and reports the classified label via the status bar. A stale result — one
+// whose gen no longer matches the in-flight probe, whether superseded by a
+// newer `t` or dropped by esc's cancel — is discarded, the same generation-
+// guard pattern search.go and the form's own formTestResultMsg already use.
+func (m Model) handleSourceProbeResult(msg sourceProbeResultMsg) (tea.Model, tea.Cmd) {
+	if msg.gen != m.settings.probeGen || m.settings.testingID != msg.id {
+		return m, nil
 	}
 
-	return m.pushStatus(msg.name + ": test ok")
+	m.settings.testingID = ""
+	m.settings.probeCancel = nil
+
+	outcome := classifyProbeError(msg.err)
+
+	next := make(map[string]probeResult, len(m.settings.lastProbe)+1)
+	for k, v := range m.settings.lastProbe {
+		next[k] = v
+	}
+
+	next[msg.id] = probeResult{outcome: outcome, err: msg.err}
+	m.settings.lastProbe = next
+
+	label := msg.name + ": " + outcome.label()
+	if msg.err != nil {
+		label += " (d for details)"
+	}
+
+	return m.pushStatus(label)
 }
 
 // handleFormTestResult applies the form's test-before-save outcome. Stale
@@ -1092,7 +1289,7 @@ func maskSecret(v string, reveal bool) string {
 // settingsScreenLegend documents the list-view keys keymap.go deliberately
 // keeps out of the `?` overlay (the 80×24 budget) — shown here instead so
 // they stay discoverable without ever needing the config file.
-const settingsScreenLegend = "a add · e edit · t test · space enable/disable · x remove · r reload definitions"
+const settingsScreenLegend = "a add · e edit · t test (esc cancels) · d test detail · space enable/disable · x remove · r reload definitions"
 
 // renderSettingsScreen draws ScreenSettings' real body: the source list, or
 // the open add/edit form on top of it. Pure (AGENT.md §6.8).
@@ -1225,4 +1422,48 @@ func (m Model) renderSourceForm() string {
 // renderSourceRemoveConfirm draws the `x` confirmation dialog.
 func (m Model) renderSourceRemoveConfirm() string {
 	return m.settings.removeConfirm.View(m.theme, m.width)
+}
+
+// renderSourceTestDetail draws the `d` connection-test detail panel
+// (T-081): the selected source's most recent classified outcome, plus the
+// full underlying error text, word-wrapped, when it failed.
+func (m Model) renderSourceTestDetail() string {
+	th := m.theme
+
+	var b strings.Builder
+
+	src, ok := m.selectedSource()
+
+	name := "source"
+	if ok {
+		name = src.Name
+	}
+
+	result, ok := m.settings.lastProbe[src.ID]
+	if !ok {
+		b.WriteString(th.Muted.Render("no test result for this source"))
+		return truncateLines(b.String(), m.width)
+	}
+
+	b.WriteString(th.Accent.Render(name + ": " + result.outcome.label()))
+	b.WriteString("\n\n")
+
+	if result.err != nil {
+		for _, line := range theme.Wrap(result.err.Error(), max(m.width-2, 20)) {
+			b.WriteString(th.Foreground.Render(line))
+			b.WriteString("\n")
+		}
+	} else {
+		b.WriteString(th.Foreground.Render("the probe search succeeded."))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+
+	for _, line := range m.keys.HelpFor(ContextSourceTestDetail) {
+		b.WriteString(th.Muted.Render(line))
+		b.WriteString("\n")
+	}
+
+	return truncateLines(strings.TrimRight(b.String(), "\n"), m.width)
 }

@@ -568,8 +568,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case formSaveResultMsg:
 		return m.handleFormSaveResult(msg)
 
-	case sourceTestResultMsg:
-		return m.handleSourceTestResult(msg)
+	case sourceProbeResultMsg:
+		return m.handleSourceProbeResult(msg)
 
 	case formTestResultMsg:
 		return m.handleFormTestResult(msg)
@@ -601,6 +601,8 @@ func (m Model) context() Context {
 		return ContextSourceForm
 	case m.settings.removeConfirm.IsOpen():
 		return ContextSourceRemoveConfirm
+	case m.settings.detailOpen:
+		return ContextSourceTestDetail
 	case m.showHelp:
 		return ContextHelp
 	case m.errorDetail:
@@ -678,7 +680,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// explains why they are not declarative Bindings (the `?` overlay's
 	// 80×24 budget, AGENT.md §7). Gated on no modal being open, the same
 	// way the search-screen block above is.
-	if m.screen == ScreenSettings && m.settings.form == nil && !m.settings.removeConfirm.IsOpen() && !m.showHelp {
+	if m.screen == ScreenSettings && m.settings.form == nil && !m.settings.removeConfirm.IsOpen() &&
+		!m.settings.detailOpen && !m.showHelp {
 		switch msg.String() {
 		case "a":
 			return m.handleSourceAdd()
@@ -692,6 +695,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handleSourceRemove()
 		case "r":
 			return m.handleSourceReload()
+		case "d":
+			// T-081: show the selected source's most recent connection-test
+			// outcome, underlying error included. Distinct from the global
+			// "d" (ActionDetails), which this screen has no use for.
+			return m.handleSourceTestDetailOpen()
+		case "esc":
+			// T-081: esc cancels an in-flight probe. A no-op otherwise —
+			// nothing else on this screen's list view binds esc.
+			return m.handleSourceTestCancel()
 		}
 	}
 
@@ -731,6 +743,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.quitConfirm = m.quitConfirm.Cancel()
 		m.showHelp = false
 		m.errorDetail = false
+		m.settings.detailOpen = false
 
 		return m, nil
 	case ActionHelp:
@@ -953,6 +966,8 @@ func (m Model) View() string {
 		body = m.renderSourceForm()
 	case ContextSourceRemoveConfirm:
 		body = m.renderSourceRemoveConfirm()
+	case ContextSourceTestDetail:
+		body = m.renderSourceTestDetail()
 	case ContextErrorDetail:
 		body = m.renderErrorDetail()
 	default:

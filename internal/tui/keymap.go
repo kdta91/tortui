@@ -225,6 +225,10 @@ const (
 	// ContextSourceRemoveConfirm is the settings screen's `x` remove
 	// confirmation (T-080).
 	ContextSourceRemoveConfirm Context = "modal:source-remove-confirm"
+	// ContextSourceTestDetail is the settings screen's `d` panel showing the
+	// selected source's most recent connection-test outcome and, when it
+	// failed, the full underlying error (T-081).
+	ContextSourceTestDetail Context = "modal:source-test-detail"
 )
 
 // screenContext names the Context a given Screen's keymap lookups use.
@@ -419,6 +423,18 @@ func errorDetailBindings() []Binding {
 	}
 }
 
+// sourceTestDetailBindings are the bindings live while the settings
+// screen's connection-test detail panel (ContextSourceTestDetail, T-081) is
+// open: either key that opened or closes it works to dismiss it, the same
+// "d toggles" convention the results screen's own details view uses.
+func sourceTestDetailBindings() []Binding {
+	ctx := []Context{ContextSourceTestDetail}
+
+	return []Binding{
+		{Keys: []string{"esc", "d"}, Action: ActionCancel, Help: "close", Contexts: ctx},
+	}
+}
+
 // helpOverlayBindings are the bindings live while the ? overlay itself is
 // open: only escape (and ? again) close it. They are declared separately
 // from GlobalBindings, which never itself lists ContextHelp, so the overlay
@@ -482,6 +498,7 @@ func AllBindings() []Binding {
 	all = append(all, destinationBindings()...)
 	all = append(all, sourceFormBindings()...)
 	all = append(all, sourceRemoveConfirmBindings()...)
+	all = append(all, sourceTestDetailBindings()...)
 
 	return all
 }
