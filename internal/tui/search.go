@@ -695,7 +695,13 @@ func (m Model) renderSearchScreen() string {
 	b.WriteString("\n")
 
 	if len(s.sourceIDs) == 0 {
-		b.WriteString(th.Muted.Render("  (none configured)"))
+		// T-080's empty-state acceptance: every source disabled or removed
+		// must show an explicit, actionable prompt rather than silently
+		// returning zero results later. root.go's search-screen key block
+		// claims "a" here (jumps straight to the settings add form) —
+		// unreachable on a default install, since the bundled sources
+		// (T-024) start enabled.
+		b.WriteString(th.Muted.Render("  No sources configured. Press 'a' to add one."))
 		b.WriteString("\n")
 	}
 

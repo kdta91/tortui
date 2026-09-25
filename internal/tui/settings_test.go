@@ -1,0 +1,609 @@
+package tui
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/exp/teatest"
+
+	"github.com/kdta91/tortui/internal/config"
+	"github.com/kdta91/tortui/internal/engine/fake"
+)
+
+// fakeSourceManager is an in-memory SourceManager double: it never touches
+// disk or the network (AGENT.md §6.7's unit-test rule applies here too),
+// and every method can be scripted to fail so a test drives the settings
+// screen's error paths without a real composition root. Every SaveSources
+// call runs inside its own tea.Cmd goroutine (AGENT.md §6.1) while View()
+// keeps reading Sources() on the bubbletea event-loop goroutine, so — the
+// same as any real SourceManager — this double must be safe for
+// concurrent use; mu is what makes it so.
+type fakeSourceManager struct {
+	mu      sync.Mutex
+	sources []config.Indexer
+
+	saveErr    error
+	testErr    error
+	importErr  error
+	importID   string
+	reloadErr  error
+	saveCalls  int
+	testCalls  int
+	reloadCall int
+}
+
+func (f *fakeSourceManager) Sources() []config.Indexer {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]config.Indexer(nil), f.sources...)
+}
+
+func (f *fakeSourceManager) SaveSources(sources []config.Indexer) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.saveCalls++
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+
+	f.sources = append([]config.Indexer(nil), sources...)
+
+	return nil
+}
+
+func (f *fakeSourceManager) TestSource(_ context.Context, _ config.Indexer) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.testCalls++
+
+	return f.testErr
+}
+
+func (f *fakeSourceManager) ImportDefinition(_ context.Context, _ string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.importErr != nil {
+		return "", f.importErr
+	}
+
+	return f.importID, nil
+}
+
+func (f *fakeSourceManager) ReloadDefinitions() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.reloadCall++
+
+	return f.reloadErr
+}
+
+// saveCallCount and savedSources read the double's state under the same
+// lock its methods use, so a test checking the outcome after a
+// waitForOutput never races the goroutine that just called SaveSources.
+func (f *fakeSourceManager) saveCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.saveCalls
+}
+
+func (f *fakeSourceManager) testCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.testCalls
+}
+
+func (f *fakeSourceManager) savedSources() []config.Indexer {
+	return f.Sources()
+}
+
+func (f *fakeSourceManager) reloadCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.reloadCall
+}
+
+func newSettingsTestModel(t *testing.T, sm SourceManager) *teatest.TestModel {
+	t.Helper()
+
+	m := New(fake.New(), testTheme(), WithSourceManager(sm))
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	t.Cleanup(func() { _ = tm.Quit() })
+
+	tm.Send(keyRune("5")) // jump to settings
+
+	return tm
+}
+
+// --- pure helpers ----------------------------------------------------------
+
+func TestSlugifyLowercasesAndDashesPunctuation(t *testing.T) {
+	cases := map[string]string{
+		"My Great Source!":  "my-great-source",
+		"  spaced  out  ":   "spaced-out",
+		"already-slug":      "already-slug",
+		"###":               "source",
+		"":                  "source",
+		"Über Cool":         "ber-cool",
+		"Multiple---Dashes": "multiple-dashes",
+	}
+
+	for in, want := range cases {
+		if got := slugify(in); got != want {
+			t.Errorf("slugify(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSplitTorznabURLExtractsEmbeddedAPIKey(t *testing.T) {
+	stripped, key, ok := splitTorznabURL("https://example.org/api?t=search&apikey=SECRET123")
+	if !ok {
+		t.Fatal("expected ok=true for a URL with an embedded apikey")
+	}
+	if key != "SECRET123" {
+		t.Errorf("key = %q, want SECRET123", key)
+	}
+	if strings.Contains(stripped, "apikey") {
+		t.Errorf("stripped URL %q still contains apikey", stripped)
+	}
+}
+
+func TestSplitTorznabURLLeavesPlainURLUnchanged(t *testing.T) {
+	_, _, ok := splitTorznabURL("https://example.org/api?t=search")
+	if ok {
+		t.Fatal("expected ok=false for a URL with no apikey parameter")
+	}
+}
+
+func TestMaskSecretHidesUnlessRevealed(t *testing.T) {
+	if got := maskSecret("hunter2", false); got == "hunter2" {
+		t.Fatal("expected the raw secret not to appear when reveal is false")
+	}
+	if got := maskSecret("hunter2", true); got != "hunter2" {
+		t.Errorf("revealed secret = %q, want hunter2", got)
+	}
+	if got := maskSecret("", false); got != "" {
+		t.Errorf("empty secret should render empty even unmasked, got %q", got)
+	}
+}
+
+// --- end-to-end (teatest) ---------------------------------------------------
+
+// TestAddTorznabSourceEndToEnd drives the full add flow for a torznab
+// source: open the form, type into name/URL/API key, save, and see it in
+// the list.
+func TestAddTorznabSourceEndToEnd(t *testing.T) {
+	sm := &fakeSourceManager{}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "No sources configured")
+
+	tm.Send(keyRune("a"))
+	waitForOutput(t, tm, "Add source")
+
+	tm.Send(keyRune("My Tracker"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> type (leave as torznab)
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> url
+	tm.Send(keyRune("https://example.org/feed"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlS})
+
+	waitForPredicate(t, func() bool { return sm.saveCallCount() > 0 })
+
+	if sm.saveCallCount() == 0 {
+		t.Fatal("expected SaveSources to have been called")
+	}
+	if len(sm.savedSources()) != 1 || sm.savedSources()[0].Type != "torznab" || sm.savedSources()[0].ID != "my-tracker" {
+		t.Fatalf("unexpected saved sources: %#v", sm.savedSources())
+	}
+}
+
+// TestAddScraperSourceEndToEnd drives the add flow for a scraper source,
+// which needs a Definition file and shows the extra fields the torznab form
+// doesn't.
+func TestAddScraperSourceEndToEnd(t *testing.T) {
+	sm := &fakeSourceManager{}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "No sources configured")
+
+	tm.Send(keyRune("a"))
+	waitForOutput(t, tm, "Add source")
+
+	tm.Send(keyRune("Scrape Site"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	tm.Send(tea.KeyMsg{Type: tea.KeyLeft}) // torznab -> scraper
+	waitForOutput(t, tm, "Definition file")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> url
+	tm.Send(keyRune("https://example.org/scrape"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> apikey
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> cookie
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> definition
+	tm.Send(keyRune("scrape-site.yml"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlS})
+
+	waitForPredicate(t, func() bool { return sm.saveCallCount() > 0 })
+
+	if len(sm.savedSources()) != 1 || sm.savedSources()[0].Type != "scraper" || sm.savedSources()[0].Definition != "scrape-site.yml" {
+		t.Fatalf("unexpected saved sources: %#v", sm.savedSources())
+	}
+}
+
+// TestPasteURLWithEmbeddedKeySplitsAutomatically simulates a bracketed
+// paste — one KeyRunes event carrying the whole string — landing on the URL
+// field with an apikey query parameter already in it.
+func TestPasteURLWithEmbeddedKeySplitsAutomatically(t *testing.T) {
+	sm := &fakeSourceManager{}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "No sources configured")
+
+	tm.Send(keyRune("a"))
+	waitForOutput(t, tm, "Add source")
+
+	tm.Send(keyRune("Feed"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> type
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> url
+	tm.Send(keyRune("https://example.org/api?t=search&apikey=ABC123"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlR}) // reveal, so the split key is checkable on screen
+
+	waitForOutput(t, tm, "ABC123")
+
+	if err := tm.Quit(); err != nil {
+		t.Fatal(err)
+	}
+
+	final := tm.FinalModel(t, teatest.WithFinalTimeout(3*time.Second)).(Model)
+	if strings.Contains(final.settings.form.sourceURL, "apikey") {
+		t.Errorf("URL field %q still carries the apikey query parameter", final.settings.form.sourceURL)
+	}
+	if final.settings.form.apiKey != "ABC123" {
+		t.Errorf("API key field = %q, want ABC123", final.settings.form.apiKey)
+	}
+}
+
+// TestDuplicateIDIsRejected proves a save whose derived id collides with an
+// existing source is refused with the form left open and the error shown,
+// rather than silently overwriting or renaming.
+func TestDuplicateIDIsRejected(t *testing.T) {
+	sm := &fakeSourceManager{sources: []config.Indexer{
+		{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+	}}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "My Tracker")
+
+	tm.Send(keyRune("a"))
+	waitForOutput(t, tm, "Add source")
+
+	tm.Send(keyRune("My Tracker")) // same name -> same slug -> same id
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	tm.Send(keyRune("https://example.org/b"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlS})
+
+	waitForOutput(t, tm, "already used by another source")
+
+	if len(sm.savedSources()) != 1 {
+		t.Fatalf("expected the duplicate save to be rejected, got %d sources", len(sm.savedSources()))
+	}
+}
+
+// TestEditSourceUpdatesInPlace opens an existing source, changes its URL,
+// and saves — the same id, updated fields.
+func TestEditSourceUpdatesInPlace(t *testing.T) {
+	sm := &fakeSourceManager{sources: []config.Indexer{
+		{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/old", Enabled: true},
+	}}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "My Tracker")
+
+	tm.Send(keyRune("e"))
+	waitForOutput(t, tm, "Edit source")
+
+	// Move to the URL field and append text (simplest edit: append, since
+	// this test only proves the edit path updates the existing id in
+	// place rather than creating a second row).
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	tm.Send(keyRune("2"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlS})
+
+	waitForPredicate(t, func() bool { return sm.saveCallCount() > 0 })
+
+	if len(sm.savedSources()) != 1 {
+		t.Fatalf("expected exactly one source after edit, got %d", len(sm.savedSources()))
+	}
+	if sm.savedSources()[0].URL != "https://example.org/old2" {
+		t.Errorf("URL = %q, want the old URL with 2 appended", sm.savedSources()[0].URL)
+	}
+}
+
+// TestSpaceTogglesEnabled proves the list's space key flips Enabled and
+// saves immediately, with no form involved.
+func TestSpaceTogglesEnabled(t *testing.T) {
+	sm := &fakeSourceManager{sources: []config.Indexer{
+		{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+	}}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "My Tracker")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeySpace})
+
+	waitForOutput(t, tm, "off")
+
+	if len(sm.savedSources()) != 1 || sm.savedSources()[0].Enabled {
+		t.Fatalf("expected the source to be disabled, got %#v", sm.savedSources())
+	}
+}
+
+// TestRemoveWithConfirm proves `x` opens a confirmation and only removes
+// once Remove is confirmed.
+func TestRemoveWithConfirm(t *testing.T) {
+	sm := &fakeSourceManager{sources: []config.Indexer{
+		{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+	}}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "My Tracker")
+
+	tm.Send(keyRune("x"))
+	waitForOutput(t, tm, "Remove source?")
+
+	// Default highlight is Cancel; move up to Remove and confirm.
+	tm.Send(tea.KeyMsg{Type: tea.KeyUp})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	waitForOutput(t, tm, "No sources configured")
+
+	if len(sm.savedSources()) != 0 {
+		t.Fatalf("expected the source to be removed, got %#v", sm.savedSources())
+	}
+}
+
+// TestRemoveCancelKeepsSource proves cancelling the confirmation leaves the
+// source untouched.
+func TestRemoveCancelKeepsSource(t *testing.T) {
+	sm := &fakeSourceManager{sources: []config.Indexer{
+		{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+	}}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "My Tracker")
+
+	tm.Send(keyRune("x"))
+	waitForOutput(t, tm, "Remove source?")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // default is Cancel
+
+	waitForOutput(t, tm, "My Tracker")
+
+	if len(sm.savedSources()) != 1 {
+		t.Fatalf("expected the source to still be present, got %#v", sm.savedSources())
+	}
+}
+
+// TestCancelDirtyFormAsksToConfirm proves esc on a form with unsaved edits
+// opens a discard confirmation rather than closing immediately, and that
+// confirming it discards the form with no save.
+func TestCancelDirtyFormAsksToConfirm(t *testing.T) {
+	sm := &fakeSourceManager{}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "No sources configured")
+
+	tm.Send(keyRune("a"))
+	waitForOutput(t, tm, "Add source")
+
+	tm.Send(keyRune("x")) // dirties the Name field
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
+
+	waitForOutput(t, tm, "Discard changes?")
+
+	tm.Send(keyRune("y"))
+
+	waitForOutput(t, tm, "No sources configured")
+
+	if sm.saveCallCount() != 0 {
+		t.Fatalf("expected no save to have happened, got %d calls", sm.saveCallCount())
+	}
+}
+
+// TestDiscardConfirmNoKeepsTheFormAndItsContent drives Model.Update
+// directly (not through teatest) so it can inspect intermediate state a
+// terminal-diffing renderer may not re-draw: declining the discard
+// confirmation ("n"/esc) must reopen the exact same form, dirty content
+// intact, rather than losing it.
+func TestDiscardConfirmNoKeepsTheFormAndItsContent(t *testing.T) {
+	sm := &fakeSourceManager{}
+	m := New(fake.New(), testTheme(), WithSourceManager(sm))
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(Model)
+
+	updated, _ = m.Update(keyRune("5"))
+	m = updated.(Model)
+	updated, _ = m.Update(keyRune("a"))
+	m = updated.(Model)
+	updated, _ = m.Update(keyRune("x"))
+	m = updated.(Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.settings.form == nil || !m.settings.form.confirmDiscard {
+		t.Fatalf("expected the discard confirmation to be open, got %+v", m.settings.form)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.settings.form == nil {
+		t.Fatal("expected the form to still be open after declining discard")
+	}
+	if m.settings.form.confirmDiscard {
+		t.Fatal("expected the discard confirmation to have closed")
+	}
+	if m.settings.form.name != "x" {
+		t.Fatalf("expected the dirty content to survive, name = %q", m.settings.form.name)
+	}
+}
+
+// TestCancelCleanFormClosesImmediately proves esc on a form nobody typed
+// into closes with no confirmation.
+func TestCancelCleanFormClosesImmediately(t *testing.T) {
+	sm := &fakeSourceManager{}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "No sources configured")
+
+	tm.Send(keyRune("a"))
+	waitForOutput(t, tm, "Add source")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
+
+	waitForOutput(t, tm, "No sources configured")
+}
+
+// TestFormTestBeforeSaveShowsFailure proves ctrl+t runs a probe against the
+// draft form (not yet saved) and shows its outcome inline.
+func TestFormTestBeforeSaveShowsFailure(t *testing.T) {
+	sm := &fakeSourceManager{testErr: errors.New("connection refused")}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "No sources configured")
+
+	tm.Send(keyRune("a"))
+	waitForOutput(t, tm, "Add source")
+
+	tm.Send(keyRune("My Tracker"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	tm.Send(keyRune("https://example.org/feed"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlT})
+
+	waitForOutput(t, tm, "test failed: connection refused")
+
+	if sm.saveCallCount() != 0 {
+		t.Fatal("expected ctrl+t not to save")
+	}
+	if sm.testCallCount() == 0 {
+		t.Fatal("expected TestSource to have been called")
+	}
+}
+
+// TestListTestKeyProbesTheSelectedSource proves `t` on the list runs a
+// probe against the already-saved selected source and reports the outcome
+// via the status bar.
+func TestListTestKeyProbesTheSelectedSource(t *testing.T) {
+	sm := &fakeSourceManager{sources: []config.Indexer{
+		{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+	}}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "My Tracker")
+
+	tm.Send(keyRune("t"))
+
+	// "testing My Tracker…" shows first and stays queued for
+	// components.DefaultTransientTimeout (4s) before "test ok" takes its
+	// place, so this one wait needs a longer budget than the package's
+	// usual 3s helper.
+	teatest.WaitFor(
+		t, tm.Output(),
+		func(bts []byte) bool { return strings.Contains(string(bts), "test ok") },
+		teatest.WithCheckInterval(10*time.Millisecond),
+		teatest.WithDuration(6*time.Second),
+	)
+
+	if sm.testCallCount() == 0 {
+		t.Fatal("expected TestSource to have been called")
+	}
+}
+
+// TestReloadDefinitionsKey proves `r` re-reads scraper definitions from disk
+// (T-023) and reports the outcome.
+func TestReloadDefinitionsKey(t *testing.T) {
+	sm := &fakeSourceManager{}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "No sources configured")
+
+	tm.Send(keyRune("r"))
+	waitForOutput(t, tm, "definitions reloaded")
+
+	if sm.reloadCallCount() == 0 {
+		t.Fatal("expected ReloadDefinitions to have been called")
+	}
+}
+
+// TestImportDefinitionPrefillsForm proves the scraper form's import field
+// (enter, once it has focus) imports a definition and pre-fills
+// Definition/ID/Name from it, alongside manual entry (T-080: "the add form
+// offers 'import a definition' alongside manual entry").
+func TestImportDefinitionPrefillsForm(t *testing.T) {
+	sm := &fakeSourceManager{importID: "imported-source"}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "No sources configured")
+
+	tm.Send(keyRune("a"))
+	waitForOutput(t, tm, "Add source")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	tm.Send(tea.KeyMsg{Type: tea.KeyLeft}) // torznab -> scraper
+	waitForOutput(t, tm, "Import from")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> url
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> apikey
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> cookie
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> definition
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab}) // -> import
+
+	tm.Send(keyRune("https://example.org/def.yml"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	waitForOutput(t, tm, "imported: imported-source")
+
+	if err := tm.Quit(); err != nil {
+		t.Fatal(err)
+	}
+
+	final := tm.FinalModel(t, teatest.WithFinalTimeout(3*time.Second)).(Model)
+	if final.settings.form == nil {
+		t.Fatal("expected the form to still be open after a successful import")
+	}
+	if final.settings.form.definition != "imported-source.yml" {
+		t.Errorf("definition = %q, want imported-source.yml", final.settings.form.definition)
+	}
+	if final.settings.form.idOverride != "imported-source" {
+		t.Errorf("idOverride = %q, want imported-source", final.settings.form.idOverride)
+	}
+}
+
+// TestSearchScreenEmptyStateJumpsToAddForm proves the search screen's own
+// empty-state prompt (T-080 acceptance) — no sources configured at all —
+// names the way out and "a" jumps straight into the settings add form.
+func TestSearchScreenEmptyStateJumpsToAddForm(t *testing.T) {
+	sm := &fakeSourceManager{}
+	m := New(fake.New(), testTheme(), WithSourceManager(sm))
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	t.Cleanup(func() { _ = tm.Quit() })
+
+	waitForOutput(t, tm, "No sources configured. Press 'a' to add one.")
+
+	tm.Send(keyRune("a"))
+
+	waitForOutput(t, tm, "Add source")
+}

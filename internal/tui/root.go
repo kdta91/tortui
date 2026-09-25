@@ -216,6 +216,15 @@ type Model struct {
 	// actually asked, in dispatch order — results.go's empty state names
 	// them (T-061 acceptance: "naming which sources were queried").
 	lastQueriedIDs []string
+
+	// sources is the settings screen's (T-080, settings.go) source of
+	// truth for indexer configuration. nil is valid: the screen renders
+	// an empty list and every action reports "no source manager
+	// configured" via the status bar rather than panicking.
+	sources SourceManager
+	// settings is the settings screen's own state: the list cursor, an
+	// open add/edit form, and the remove confirmation.
+	settings settingsModel
 }
 
 // Option configures optional Model wiring not every caller needs. Adding
@@ -353,6 +362,7 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 	m.results = newResultsModel()
 	m.details = newDetailsModel()
 	m.downloads = newDownloadsModel()
+	m.settings = newSettingsModel()
 
 	return m
 }
@@ -534,6 +544,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case removeResultMsg:
 		return m.handleRemoveResult(msg)
 
+	case sourcesSaveResultMsg:
+		return m.handleSourcesSaveResult(msg)
+
+	case formSaveResultMsg:
+		return m.handleFormSaveResult(msg)
+
+	case sourceTestResultMsg:
+		return m.handleSourceTestResult(msg)
+
+	case formTestResultMsg:
+		return m.handleFormTestResult(msg)
+
+	case formImportResultMsg:
+		return m.handleFormImportResult(msg)
+
+	case reloadResultMsg:
+		return m.handleReloadResult(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -551,6 +579,10 @@ func (m Model) context() Context {
 		return ContextRemoveConfirm
 	case m.dest.open:
 		return ContextDestination
+	case m.settings.form != nil:
+		return ContextSourceForm
+	case m.settings.removeConfirm.IsOpen():
+		return ContextSourceRemoveConfirm
 	case m.showHelp:
 		return ContextHelp
 	case m.errorDetail:
@@ -570,6 +602,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// is open, including typing into its path field.
 	if m.dest.open {
 		return m.handleDestinationKey(msg)
+	}
+
+	// The settings add/edit form (T-080) is modal and owns every key while
+	// it is open, the same reason the destination picker does above.
+	if m.settings.form != nil {
+		return m.handleSourceFormKey(msg)
 	}
 
 	// While the search screen has a field in text-edit mode, most keys —
@@ -601,6 +639,41 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case " ":
 			m.search = m.search.toggleAtCursor()
 			return m, nil
+		case "a":
+			// T-080's empty-state acceptance: "a" jumps straight into the
+			// settings add form when there is nothing to search — but only
+			// then, so it never shadows typing the letter "a" into the
+			// query field (handleSearchTyping above already claims every
+			// key while editing == editQuery, so this is unreachable then
+			// anyway) or steal a hotkey a configured search screen has no
+			// other use for.
+			if len(m.search.sourceIDs) == 0 {
+				m.screen = ScreenSettings
+				return m.handleSourceAdd()
+			}
+		}
+	}
+
+	// The settings screen's own list-view keys (a, e, t, space, x, r) are
+	// claimed directly here, the same reason search's esc/space are above:
+	// keymap.go's comment by "The settings screen's own list-view keys"
+	// explains why they are not declarative Bindings (the `?` overlay's
+	// 80×24 budget, AGENT.md §7). Gated on no modal being open, the same
+	// way the search-screen block above is.
+	if m.screen == ScreenSettings && m.settings.form == nil && !m.settings.removeConfirm.IsOpen() && !m.showHelp {
+		switch msg.String() {
+		case "a":
+			return m.handleSourceAdd()
+		case "e":
+			return m.handleSourceEdit()
+		case "t":
+			return m.handleSourceTest()
+		case " ":
+			return m.handleSourceToggleEnabled()
+		case "x":
+			return m.handleSourceRemove()
+		case "r":
+			return m.handleSourceReload()
 		}
 	}
 
@@ -616,6 +689,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// that context is routed on its own.
 	if m.context() == ContextRemoveConfirm {
 		return m.handleRemoveConfirmAction(action)
+	}
+
+	if m.context() == ContextSourceRemoveConfirm {
+		return m.handleSourceRemoveConfirmAction(action)
 	}
 
 	switch action {
@@ -660,6 +737,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.screen == ScreenSettings {
+			return m.handleSettingsMoveCursor(1)
+		}
+
 		m.selection++
 		return m, nil
 	case ActionMoveUp:
@@ -676,6 +757,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == ScreenDownloads {
 			m.downloads = m.downloads.moveCursor(-1, len(m.downloadRows()))
 			return m, nil
+		}
+
+		if m.screen == ScreenSettings {
+			return m.handleSettingsMoveCursor(-1)
 		}
 
 		if m.selection > 0 {
@@ -726,6 +811,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ActionOpenFolder:
 		// Bound only on ScreenDownloads (keymap.go).
 		return m.handleOpenDownloadFile(true)
+	case ActionSourceAdd:
+		return m.handleSourceAdd()
+	case ActionSourceEdit:
+		return m.handleSourceEdit()
+	case ActionSourceTest:
+		return m.handleSourceTest()
+	case ActionSourceToggleEnabled:
+		return m.handleSourceToggleEnabled()
+	case ActionSourceRemove:
+		return m.handleSourceRemove()
+	case ActionSourceReloadDefs:
+		return m.handleSourceReload()
 	case ActionRefresh:
 		// AGENT.md §7: "R | Refresh current results" — re-runs the exact
 		// query that produced what's on screen (m.lastQuery/
@@ -834,6 +931,10 @@ func (m Model) View() string {
 		body = m.renderRemoveConfirm()
 	case ContextDestination:
 		body = m.renderDestinationPicker()
+	case ContextSourceForm:
+		body = m.renderSourceForm()
+	case ContextSourceRemoveConfirm:
+		body = m.renderSourceRemoveConfirm()
 	case ContextErrorDetail:
 		body = m.renderErrorDetail()
 	default:
@@ -942,6 +1043,8 @@ func (m Model) renderScreenBody() string {
 		return m.renderDetailsScreen()
 	case ScreenDownloads:
 		return m.renderDownloadsScreen()
+	case ScreenSettings:
+		return m.renderSettingsScreen()
 	}
 
 	body := m.screen.String() + " screen — placeholder, see " + m.screen.placeholderTask()

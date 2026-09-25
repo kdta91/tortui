@@ -79,45 +79,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 8 — Settings
 
-
-### T-080 · Indexer management
-```
-status: todo
-depends: T-051, T-023, T-054
-tier: M
-```
-**Acceptance**
-
-**Principle: a user must never have to open the config file.** Everything about a source is
-addable, editable, testable, and removable from inside the TUI. Hand-editing TOML stays
-supported for people who prefer it, but it is never the documented path.
-
-- List view: one row per source with name, type, enabled toggle, and last-search outcome.
-  Keys: `a` add, `e` edit, `t` test (T-081), `space` enable/disable, `x` remove (confirm),
-  `r` reload definitions (T-023).
-- **Add form** with typed fields, arrow/tab navigation, and inline validation as you type:
-  name, type (torznab | scraper), URL, API key, cookie, definition file. Fields irrelevant to
-  the selected type are hidden, not greyed out.
-- **Paste handling.** Bracketed paste must work — API keys are long and nobody types them.
-  Pasting a complete Torznab feed URL that already contains `?apikey=...` splits it
-  automatically into the URL and key fields rather than storing the whole string as the URL.
-- `id` is derived from the name, slugified, and uniqueness-checked. The user never types an id
-  unless they want to override it.
-- Credential fields masked by default with a reveal toggle; never written to the log, never
-  shown in `doctor` output.
-- `t` tests the source **before** saving, so a bad URL or key is caught in the form rather than
-  discovered at the next search.
-- Save writes back to the config file, preserving existing comments and key order where
-  practical, and reloads the registry live — no restart.
-- The add form offers "import a definition" (T-025) alongside manual entry, so a user with a
-  definition file does not have to hand-place it and then wire it up separately.
-- Cancel discards cleanly with no partial write. Confirm before discarding a dirty form.
-- **Empty state.** If every source has been disabled or removed, the search screen shows an
-  explicit prompt that jumps straight into the add form rather than returning zero results with
-  no explanation. On a default install this state should be unreachable — bundled sources are
-  active and the first screen shows Latest (T-024, T-060).
-- `teatest` covers: add a torznab source end-to-end, add a scraper source, paste a URL with an
-  embedded key, duplicate id rejection, edit, disable, remove, and cancel-with-dirty-form.
+**Done (archived in `docs/tracker-archive.md`):** `T-080` Indexer management.
 
 ---
 
@@ -658,8 +620,33 @@ when it reaches it and does not start backlog items on its own.
   `tui.WithDestinationStore(store)` and `tui.WithMinFreeSpace(<parsed min_free_space>)` into
   `tui.New`, and T-082 must call `engine.RootAdder.AddRoot` when a saved destination is added at
   runtime (config's saved destinations are engine roots only at construction). Found in T-074.
-
-
+- `T-971` ctrl+c does nothing while the destination picker (T-074, `ContextDestination`) is open —
+  add a quit binding to that context. Found in review of T-074 (PR #47).
+- `T-972` The destination picker's write probe (`probeWritable`) runs on every keystroke in the
+  path field, not debounced — a fast typist fires a filesystem write-then-remove per character.
+  Found in review of T-074 (PR #47).
+- `T-973` `expandDestination` (destination.go, T-074) has two edge cases: an environment variable
+  whose value itself starts with `~` is not home-expanded after substitution (expansion order is
+  env-vars-then-`~`, so a value produced by a var never gets the second pass), and there is no way
+  to type a literal `$NAME`/`%NAME%` into a folder name — no escape syntax. Found in review of
+  T-074 (PR #47).
+- `T-974` The TUI's add flow calls `engine.RootAdder.AddRoot` (destination.go's `prepareDestination`)
+  before `engine.Add`, so a destination that gets admitted as a known root but then fails the
+  actual `Add` call leaves that root admitted for the rest of the session without ever being
+  recorded to `store.Destinations` — a harmless but unrecorded permanent widening of the known-root
+  set for one process lifetime. Found in review of T-074 (PR #47).
+- `T-975` Production wiring for T-080: the composition root (T-950/T-967/T-970) needs a concrete
+  `tui.SourceManager` — built over `internal/config` (load/`Save`), `internal/indexer.Registry`
+  (add/remove/enable/disable at runtime), `internal/indexer/scraper.Loader`/`Importer`, and
+  `internal/indexer/torznab.New`/`internal/indexer/scraper.New` to actually run a `TestSource`
+  probe — passed via `tui.WithSourceManager` into `tui.New`. `cmd/tortui/main.go` itself has no
+  composition root yet (T-950's own scope), so this stays a Backlog item rather than this task's
+  work. Found in T-080.
+- `T-976` `config.Save` (T-002) round-trips through `toml.Encoder` over the whole `Config` struct,
+  so it does not preserve a hand-edited file's comments or original key order — T-080's "preserving
+  existing comments and key order where practical" acceptance is satisfied only in the sense that
+  key order follows the (stable) struct field order and no separate writer was invented; genuine
+  comment/order preservation would need a TOML AST editor. Found in T-080.
 
 ---
 
@@ -787,6 +774,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-115 | 2026-09-26 | T-072: optimistic pause/resume overlays snapshots only while the engine call is in flight, the next snapshot wins once it returns, failure reverts; a second p in flight is refused; remove dialog targets the ID captured at open and has no one-key delete |
 | DEC-116 | 2026-09-26 | T-073: containment enforced inside platform.OpenFile/RevealFile (symlink-resolved, strictly inside a root, logged refusal); roots = download dir + saved destinations + every torrent SavePath; f reveals the largest file o opens, both refuse below 100%; Windows quotes via SysProcAttr.CmdLine and ignores explorer exit 1; Linux reveals the parent dir |
 | DEC-117 | 2026-09-26 | T-074: destination picker as a modal step of the add flow; validation in a Cmd keyed by path; known roots grow only via new optional engine.RootAdder + store.TouchDestination, re-admitted by Session.Resume; / and \\ both separators, Windows drive/UNC paths accepted only where filepath gives them a volume; relative paths resolve against the default only |
+| DEC-118 | 2026-09-26 | T-080: import runs on enter (ctrl+i is literally tab's keycode); the list's own keys are handled directly in root.go rather than as Bindings to keep the `?` overlay inside the 80×24 budget, with a one-line legend instead; SourceManager mirrors Searcher/TorrentStore, concrete wiring deferred to Backlog T-975 |
 
 ## Blocked
 
