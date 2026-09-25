@@ -106,7 +106,7 @@ ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
 ALLOWED_MPL_MODULES := github.com/anacrolix/torrent,github.com/anacrolix/dht/v2,github.com/anacrolix/generics,github.com/anacrolix/log,github.com/anacrolix/mmsg,github.com/anacrolix/multiless,github.com/anacrolix/sync,github.com/anacrolix/upnp,github.com/anacrolix/utp,github.com/go-llsqlite/adapter
 NOTICE_TMP := .notice.tmp
 
-.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames test-scripts race lint-cross vuln next
+.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames check-goos-scope test-scripts race lint-cross vuln next
 
 # T-945: `go install`ed tools (go-licenses, govulncheck) land in $(go env GOPATH)/bin, which is
 # not always on an agent shell's PATH. Prepend it so every target finds them. Skipped on Windows,
@@ -143,7 +143,7 @@ fmt-check:
 	@set -eu; test -z "$$(gofumpt -l .)" || (echo "gofumpt: the following files are not formatted:"; gofumpt -l .; exit 1)
 	@set -eu; test -z "$$(goimports -l .)" || (echo "goimports: the following files are not formatted:"; goimports -l .; exit 1)
 
-check: fmt-check lint test scan test-scripts
+check: fmt-check lint test scan test-scripts check-goos-scope
 	set -eu; go vet $(PKG)
 
 scan:
@@ -211,6 +211,13 @@ HOSTNAME_BASE_REF ?= origin/main
 check-hostnames:
 	set -eu; scripts/check-indexer-hostnames.sh $(HOSTNAME_BASE_REF)
 
+# T-944: enforces AGENT.md section 14 -- runtime.GOOS may appear only inside
+# internal/platform -- on the current tree, unconditionally, every
+# `make check`. See scripts/check-goos-scope.sh's own header for why this
+# exists and what it scans.
+check-goos-scope:
+	set -eu; scripts/check-goos-scope.sh
+
 # T-007 QA remediation: regression test for scripts/check-indexer-hostnames.sh
 # itself (see that test script's own header). Unlike check-hostnames above,
 # this needs no base ref from the ambient repo -- it builds its own disposable
@@ -221,9 +228,16 @@ check-hostnames:
 # scripts/check-license-scope.sh -- its own test builds disposable CSV
 # fixtures rather than depending on go-licenses or go.mod, so it also runs
 # unconditionally in the commit gate.
+#
+# T-944: scripts/check-goos-scope_test.sh is this same self-test convention
+# applied to check-goos-scope.sh. Unlike check-goos-scope itself (a `check`
+# prerequisite that scans the real tree, since AGENT.md section 14 applies
+# on every commit, not only when a dependency changes), this only proves the
+# script's own logic against scratch fixtures.
 test-scripts:
 	set -eu; scripts/check-indexer-hostnames_test.sh
 	set -eu; scripts/check-license-scope_test.sh
+	set -eu; scripts/check-goos-scope_test.sh
 	set -eu; scripts/next-task_test.sh
 
 # T-945: gates wrapped as targets so they need no env-prefixed command (which the agent

@@ -49,37 +49,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 3 — Torrent engine
 
-**Done (archived in `docs/tracker-archive.md`):** `T-030` Engine contracts and fake · `T-942` Admit MPL-2.0 for the torrent engine · `T-943` Extend the MPL-2.0 exception to the engine's named module set · `T-031` anacrolix engine — add and list · `T-032` Engine lifecycle operations · `T-033` Update stream.
-
----
-
-### T-944 · Engine review follow-ups from T-031/T-032 QA
-
-```
-status: todo
-depends: T-033
-tier: M
-```
-**Files:** `internal/engine/anacrolix/engine.go`, `internal/engine/anacrolix/engine_test.go`,
-`internal/config/load_test.go`, `internal/doctor/doctor.go`
-
-**Why this exists.** Three independent reviewers (PRs #31 and #32) passed the engine with these
-NON-BLOCKING observations. None affects shipped behaviour today; each is a gap a future change
-could silently widen, so they are tracked here rather than fixed ad hoc.
-
-**Acceptance**
-- `Add` for the same infohash is idempotent under **concurrent** calls: the `findByInfoHash` →
-  `track` sequence in `addSpec` runs under one critical section (or an equivalent), and a test
-  fires N concurrent `Add`s of one magnet and asserts exactly one tracked entry.
-- The `tr.removed` guard in `attach` is exercised by a test that would fail if the guard were
-  deleted: after `Remove` during an in-flight `.torrent` URL fetch resolves, the underlying
-  `torrent.Client` holds no torrent for that infohash (assert via `client.Torrents()` count or a
-  package-internal hook), not merely that `List()`/`Files()` no longer see it.
-- `runtime.GOOS` appears nowhere outside `internal/platform` (AGENT.md §14): the pre-existing
-  uses in `internal/config/load_test.go` and `internal/doctor/doctor.go` are moved behind
-  `internal/platform` or build tags, and a lint rule or script test fails `make check` on any
-  future occurrence.
-- `make check` green; coverage floors hold.
+**Done (archived in `docs/tracker-archive.md`):** `T-030` Engine contracts and fake · `T-942` Admit MPL-2.0 for the torrent engine · `T-943` Extend the MPL-2.0 exception to the engine's named module set · `T-031` anacrolix engine — add and list · `T-032` Engine lifecycle operations · `T-033` Update stream · `T-944` Engine review follow-ups from T-031/T-032 QA.
 
 ---
 
@@ -895,6 +865,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-102 | 2026-09-23 | T-032 (Pause/Resume/Remove/Files) judgement calls. (1) engine.FileStatus (AGENT.md §5, frozen) carries no Priority field — only Path, SizeBytes, Down… |
 | DEC-103 | 2026-09-25 | Owner-authorised rework of the task loop for pace (T-945): slim tracker/AGENT.md, tiers, PR-carried status, single-party gates, faster CI, autonomy |
 | DEC-104 | 2026-09-25 | T-033: Updates sends on the sample tick only when the snapshot changed; ETA from a 10-sample rolling average; test-only injectable ticker |
+| DEC-105 | 2026-09-25 | T-944: findOrTrack (one critical section) fixes concurrent Add; a beforeAttach test hook and untrackFailedSpec fix two pre-merge review findings in the fix itself; check-goos-scope gates runtime.GOOS |
 
 ## Blocked
 

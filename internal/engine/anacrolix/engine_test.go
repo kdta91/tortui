@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -168,6 +169,53 @@ func TestAddIsIdempotentForTheSameInfoHash(t *testing.T) {
 	}
 }
 
+// TestAddIsIdempotentUnderConcurrentCalls fires many concurrent Adds of one
+// magnet and asserts they all land on exactly one tracked torrent. Before
+// T-944, addSpec's findByInfoHash lookup and its track() call ran as two
+// separate critical sections: two goroutines could both see "not found"
+// between those two locks and each mint their own tracked entry for the
+// same infohash, so this failed intermittently under -race/-count without
+// the fix (findOrTrack, a single critical section for the whole
+// check-then-track sequence).
+func TestAddIsIdempotentUnderConcurrentCalls(t *testing.T) {
+	t.Parallel()
+
+	e := newTestEngine(t, nil)
+	src := engine.AddSource{Magnet: magnetURI("concurrent-idempotent")}
+
+	const n = 20
+
+	ids := make([]string, n)
+	errs := make([]error, n)
+
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := range n {
+		go func(i int) {
+			defer wg.Done()
+			ids[i], errs[i] = e.Add(context.Background(), src)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Add #%d: %v", i, err)
+		}
+	}
+
+	want := ids[0]
+	for i, id := range ids {
+		if id != want {
+			t.Errorf("Add #%d returned %q, want the same id every call returned (%q)", i, id, want)
+		}
+	}
+
+	if got := len(e.List()); got != 1 {
+		t.Errorf("List() has %d entries after %d concurrent Adds of the same magnet, want 1", got, n)
+	}
+}
+
 func TestAddRespectsACancelledContext(t *testing.T) {
 	t.Parallel()
 
@@ -267,6 +315,40 @@ func TestAddRefusesATorrentWhoseOwnNameEscapes(t *testing.T) {
 	st := waitForState(t, e, id, engine.StateErrored)
 	if !errors.Is(st.Err, ErrUnsafePath) {
 		t.Fatalf("Err = %v, want it to wrap ErrUnsafePath", st.Err)
+	}
+}
+
+// TestAddRefusesARepeatedlyAddedUnsafeTorrentEveryTime is the T-944 QA
+// remediation regression test for a retry silently losing its error.
+// findOrTrack (added by this task for concurrent-Add idempotency) matches
+// an existing tracked entry by infohash regardless of whether it was ever
+// successfully attached — so without also untracking a spec whose attach
+// call failed, the first Add's stale, never-attached entry stayed
+// findByInfoHash-visible forever. A second Add of the exact same unsafe
+// file would then match it and return (that stale id, nil error) instead
+// of refusing again, in violation of AGENT.md §6.11 ("refused with a clear
+// reason, not silently rewritten" applies just as much to a retry as to
+// the first attempt).
+func TestAddRefusesARepeatedlyAddedUnsafeTorrentEveryTime(t *testing.T) {
+	t.Parallel()
+
+	e := newTestEngine(t, nil)
+	path := writeTorrentFile(t, buildInfo("../escaped-retry", [][]string{{"a.bin"}}))
+	src := engine.AddSource{FilePath: path}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		id, err := e.Add(context.Background(), src)
+		if err == nil {
+			t.Fatalf("Add attempt %d returned id %q with no error, want ErrUnsafePath every time", attempt, id)
+		}
+
+		if !errors.Is(err, ErrUnsafePath) {
+			t.Fatalf("Add attempt %d error = %v, want it to wrap ErrUnsafePath", attempt, err)
+		}
+	}
+
+	if n := len(e.List()); n != 0 {
+		t.Errorf("List() has %d entries after two refused Adds, want 0 (a refused Add must not leave a stuck entry behind)", n)
 	}
 }
 
@@ -1110,25 +1192,50 @@ func TestRemoveOfAPendingMetadataTorrentLeavesNoGoroutine(t *testing.T) {
 // get a real *torrent.Torrent, it must see the torrent was already removed,
 // drop it immediately, and never spawn awaitInfo or leave it reachable from
 // List/Files — not resurrect it into an active, untracked swarm.
+//
+// T-944 QA remediation: an earlier version of this test tried to land the
+// race by blocking the HTTP handler's response and calling Remove while the
+// fetch was still waiting on it. That never actually reached attach:
+// closing tr.done (which Remove does) also cancels fetchAndAttach's own
+// request context via its cancel-on-shutdown watcher, so a Remove during
+// the network wait makes e.http.Get fail with a cancellation error first —
+// fetchAndAttach returns via e.fail before attach is ever called, and the
+// tr.removed guard inside attach never runs. A mutation deleting that guard
+// entirely still passed. The window the guard actually protects is after
+// the fetch has already succeeded and the metainfo has been parsed, but
+// before attach runs — landing Remove there deterministically needs
+// Options.beforeAttach, a package-test-only hook called at exactly that
+// point.
+//
+// This also asserts directly on the underlying torrent.Client's own
+// Torrents() count, not merely that List()/Files() no longer see the
+// torrent — List/Files read tortui's own bookkeeping (e.torrents), which
+// Remove already clears unconditionally before attach ever runs, so those
+// two alone would still pass even if the tr.removed guard in attach were
+// deleted and it resurrected the torrent straight into the client's active
+// swarm. Only client.Torrents() (or client.Torrent(hash)) can tell the
+// two cases apart.
 func TestRemoveDuringAnInFlightTorrentURLFetchDoesNotLeakOrReattach(t *testing.T) {
 	ignore := goleak.IgnoreCurrent()
 
-	release := make(chan struct{})
 	body := encodeTorrent(t, buildInfo("remove-during-fetch-fixture", [][]string{{"a.bin"}}))
+	url, stopServer := serveTorrentUntil(t, body)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		<-release
-		w.Header().Set("Content-Type", "application/x-bittorrent")
-		_, _ = w.Write(body)
-	}))
-	t.Cleanup(srv.Close) // idempotent; closed explicitly below before the leak check
+	reachedHook := make(chan struct{})
+	proceed := make(chan struct{})
 
-	e, err := New(Options{
+	opts := Options{
 		Config:          config.Config{DownloadDir: t.TempDir()},
 		Logger:          discardLogger(),
 		MetadataTimeout: time.Hour,
 		Offline:         true,
-	})
+	}
+	opts.beforeAttach = func() {
+		close(reachedHook)
+		<-proceed
+	}
+
+	e, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1139,37 +1246,54 @@ func TestRemoveDuringAnInFlightTorrentURLFetchDoesNotLeakOrReattach(t *testing.T
 		}
 	})
 
-	id, err := e.Add(context.Background(), engine.AddSource{TorrentURL: srv.URL + "/fixture.torrent"})
+	id, err := e.Add(context.Background(), engine.AddSource{TorrentURL: url})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
+	select {
+	case <-reachedHook:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fetchAndAttach never reached the pre-attach hook — the fetch and metainfo parse should both have succeeded by then")
+	}
+
 	if st := statusOf(t, e, id); st.State != engine.StateChecking {
-		t.Fatalf("State before the fetch completes = %s, want %s", st.State, engine.StateChecking)
+		t.Fatalf("State just before attach = %s, want %s", st.State, engine.StateChecking)
 	}
 
 	if err := e.Remove(id, false); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 
-	// Let the deferred HTTP handler respond now that the torrent has
-	// already been removed, giving fetchAndAttach/attach every chance to
-	// resurrect it if the removed-check were missing.
-	close(release)
+	// Let fetchAndAttach proceed into attach now that the torrent has
+	// already been removed, giving attach every chance to resurrect it if
+	// the tr.removed guard were missing.
+	close(proceed)
 
 	if _, err := e.Files(id); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Files after Remove during an in-flight fetch = %v, want ErrNotFound", err)
 	}
 
 	// Close the test server itself before the leak check: its accept
-	// loop is this test's own goroutine to account for, not the engine's,
-	// and it is no longer needed once the (possibly cancelled) fetch has
-	// settled one way or the other.
-	srv.Close()
+	// loop is this test's own goroutine to account for, not the engine's.
+	stopServer()
 
 	waitForNoLeaks(t, ignore)
 
 	if n := len(e.List()); n != 0 {
 		t.Errorf("List() = %d entries after Remove during an in-flight fetch, want 0", n)
+	}
+
+	// waitForNoLeaks already proved fetchAndAttach's goroutine — and with
+	// it, attach()'s synchronous t.Drop() call in the tr.removed branch —
+	// has finished, so the underlying client.Torrents() count is settled
+	// here, not merely "not yet caught up." This is the assertion that
+	// would fail if the tr.removed guard in attach were deleted: attach
+	// would instead set tr.t and hand the real *torrent.Torrent to the
+	// client's active swarm, which List()/Files() alone cannot detect
+	// because Remove already dropped tr from e.torrents before attach
+	// ever ran.
+	if got := e.client.Torrents(); len(got) != 0 {
+		t.Errorf("client.Torrents() = %d entries after Remove during an in-flight fetch, want 0 (%v)", len(got), got)
 	}
 }

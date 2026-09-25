@@ -2523,6 +2523,62 @@ coverage 90.4%.
 
 ---
 
+### T-944 · Engine review follow-ups from T-031/T-032 QA
+
+```
+status: done
+depends: T-033
+tier: M
+```
+**Files:** `internal/engine/anacrolix/engine.go`, `internal/engine/anacrolix/engine_test.go`,
+`internal/config/load_test.go`, `internal/doctor/doctor.go`
+
+**Why this exists.** Three independent reviewers (PRs #31 and #32) passed the engine with these
+NON-BLOCKING observations. None affects shipped behaviour today; each is a gap a future change
+could silently widen, so they are tracked here rather than fixed ad hoc.
+
+**Acceptance**
+- `Add` for the same infohash is idempotent under **concurrent** calls: the `findByInfoHash` →
+  `track` sequence in `addSpec` runs under one critical section (or an equivalent), and a test
+  fires N concurrent `Add`s of one magnet and asserts exactly one tracked entry.
+- The `tr.removed` guard in `attach` is exercised by a test that would fail if the guard were
+  deleted: after `Remove` during an in-flight `.torrent` URL fetch resolves, the underlying
+  `torrent.Client` holds no torrent for that infohash (assert via `client.Torrents()` count or a
+  package-internal hook), not merely that `List()`/`Files()` no longer see it.
+- `runtime.GOOS` appears nowhere outside `internal/platform` (AGENT.md §14): the pre-existing
+  uses in `internal/config/load_test.go` and `internal/doctor/doctor.go` are moved behind
+  `internal/platform` or build tags, and a lint rule or script test fails `make check` on any
+  future occurrence.
+- `make check` green; coverage floors hold.
+
+**Notes:** `addSpec` now calls a new `findOrTrack` that does the infohash lookup and the mint under
+one `Engine.mu` critical section (DEC-105); `tracked.infoHash` is set at track time for a
+magnet/file and at `attach` time for a URL source, so `findByInfoHash` matches a pending entry too.
+Added `TestAddIsIdempotentUnderConcurrentCalls` (20 goroutines) and a `client.Torrents()` assertion
+in the existing in-flight-fetch-removal test. Added `internal/platform.OS()`/`IsWindows()`;
+`load_test.go` and `doctor.go` now call those instead of `runtime.GOOS`.
+`scripts/check-goos-scope.sh` (+ `_test.sh`) scans tracked `*.go` files outside `internal/platform`
+for the literal `runtime.GOOS` and fails; wired into `make check` via a new `check-goos-scope`
+target. `make check` green; `anacrolix` coverage 90.5%.
+
+**QA remediation (2026-09-25, same PR/branch, pre-merge).** Review found two problems in the fix
+above, both now corrected (DEC-105 has the full account). First, the `client.Torrents()` test never
+actually exercised the `tr.removed` guard: closing `tr.done` on `Remove` cancels `fetchAndAttach`'s
+own HTTP request context, so a `Remove` landed during the network wait fails the fetch before
+`attach` is ever called — a mutation deleting the guard entirely still passed. Fixed with
+`Options.beforeAttach`, a package-test-only hook `fetchAndAttach` calls right after a successful
+metainfo parse and before `attach`, letting the test land `Remove` in the window the guard actually
+protects; the guard-deletion mutation now fails. Second, `findOrTrack` matching a not-yet-attached
+entry by infohash also matched one whose `attach` call had already *failed* (e.g. an unsafe path
+refused by `validateSpecPaths`) and was never removed, so a retried `Add` of the same refused file
+returned the stale id with a nil error instead of refusing again — a regression from this task's own
+concurrency fix, against AGENT.md §6.11. Fixed with `untrackFailedSpec`, called on any `attach`
+failure in `addSpec`; `TestAddRefusesARepeatedlyAddedUnsafeTorrentEveryTime` is the regression test.
+Re-verified: `make check`, `make race` (`engine/anacrolix`, `config`, `doctor`, `platform`),
+`make cover` (`anacrolix` 91.0%).
+
+---
+
 ## Phase 4 — Persistence
 
 ### T-040 · bbolt store
