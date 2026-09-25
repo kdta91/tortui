@@ -4,19 +4,22 @@
 // §4) — never a concrete implementation — so it can be developed and tested
 // end-to-end against internal/engine/fake with no network and no swarm.
 //
-// Two of the five screens (downloads, settings) are still placeholders
-// here: this package only routes to them. Their real content belongs to
-// later tasks (T-071 downloads, T-080 settings), as does the shared
-// modal/confirm component's use on those screens. Search (T-060), results
-// (T-061), and details (T-063) are real: search.go owns the query input,
-// mode selector, source multi-select, and category/min-seeders filters;
+// One of the five screens (settings) is still a placeholder here: this
+// package only routes to it. Its real content belongs to a later task
+// (T-080 settings), as does the shared modal/confirm component's use on
+// that screen. Search (T-060), results (T-061), details (T-063), and
+// downloads (T-071) are real: search.go owns the query input, mode
+// selector, source multi-select, and category/min-seeders filters;
 // results.go owns the sortable results table; details.go owns a single
 // result's full information, the `u` open-source-in-browser action, and the
 // basic add-to-engine path enter drives from there (T-070 builds resolve,
-// dedup, and destination selection on top of it). The responsive table
-// (T-053) is implemented in internal/tui/components. The status bar (T-052)
-// is also implemented in internal/tui/components and wired in here as
-// root.go's bottom line and ContextErrorDetail modal.
+// dedup, and destination selection on top of it); downloads.go owns the
+// active/completed torrent list, its progress rows, and its own cursor
+// (T-071; T-072/T-073 give it pause/resume/remove/open/folder behaviour on
+// top of the same rows). The responsive table (T-053) is implemented in
+// internal/tui/components. The status bar (T-052) is also implemented in
+// internal/tui/components and wired in here as root.go's bottom line and
+// ContextErrorDetail modal.
 //
 // details.go also owns the add flow (T-070): Resolve, duplicate-infohash
 // detection, Origin persistence, and destination resolution, reachable from

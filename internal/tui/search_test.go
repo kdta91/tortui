@@ -625,7 +625,7 @@ func TestLatestFromAnotherScreenDispatchesAndJumpsToResults(t *testing.T) {
 	waitForOutput(t, tm, "Query:")
 
 	tm.Send(keyRune("4")) // jump to downloads
-	waitForOutput(t, tm, "downloads screen")
+	waitForOutput(t, tm, "No downloads yet")
 
 	tm.Send(keyRune("L"))
 	waitForOutput(t, tm, "Sources queried")
