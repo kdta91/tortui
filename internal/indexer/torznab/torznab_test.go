@@ -616,6 +616,12 @@ func TestAPIErrorReportsCodeAndFamily(t *testing.T) {
 		if err.IsAuth() != want.auth {
 			t.Errorf("APIError(%d).IsAuth() = %t, want %t", code, err.IsAuth(), want.auth)
 		}
+
+		// AuthFailed (T-081) is IsAuth under the name the settings screen's
+		// classifyProbeError matches via errors.As.
+		if err.AuthFailed() != want.auth {
+			t.Errorf("APIError(%d).AuthFailed() = %t, want %t", code, err.AuthFailed(), want.auth)
+		}
 	}
 
 	t.Run("an unreadable code", func(t *testing.T) {

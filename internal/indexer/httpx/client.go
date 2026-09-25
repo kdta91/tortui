@@ -523,6 +523,16 @@ func (e *StatusError) Error() string {
 // any 5xx. Every other 4xx is permanent, 408 included (DEC-058).
 func (e *StatusError) Retryable() bool { return isRetryableStatus(e.StatusCode) }
 
+// AuthFailed reports whether the status means the request was rejected over
+// credentials — 401 Unauthorized or 403 Forbidden — rather than being
+// unreachable or erroring for some other reason. It implements the
+// duck-typed shape internal/tui's settings screen matches via errors.As to
+// classify a connection-test outcome (T-081) without importing this
+// package's concrete type directly (AGENT.md §4).
+func (e *StatusError) AuthFailed() bool {
+	return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
+}
+
 // Get issues a GET request for rawURL with the given extra query
 // parameters, which may be nil.
 func (c *Client) Get(ctx context.Context, rawURL string, query url.Values) (*Response, error) {

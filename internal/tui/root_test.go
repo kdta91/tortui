@@ -325,6 +325,59 @@ func TestQuitConfirmEscRestoresScreenAndSelection(t *testing.T) {
 	}
 }
 
+// TestQuitConfirmEscOnSettingsScreenClosesDialog is a regression test found
+// in review of T-081: the settings list's own hand-claimed keys
+// (a/e/t/space/x/r/d/esc) are checked ahead of the declarative Lookup the
+// same way the search screen's own esc/space are, but that block's esc case
+// (added for T-081's cancellable probe) originally had no guard against a
+// modal already owning esc — so with the quit-confirm dialog open *over*
+// the settings screen, esc called handleSourceTestCancel (a no-op with
+// nothing in flight) instead of closing the dialog. Confirms esc closes
+// quit-confirm from ScreenSettings exactly as it does from every other
+// screen.
+func TestQuitConfirmEscOnSettingsScreenClosesDialog(t *testing.T) {
+	eng := fake.New()
+	if _, err := eng.Add(context.Background(), engine.AddSource{Magnet: "magnet:?xt=urn:btih:deadbeef"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	m := New(eng, testTheme())
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(Model)
+	updated, _ = m.Update(engineUpdateMsg{statuses: eng.List()})
+	m = updated.(Model)
+
+	if m.activeDownloads == 0 {
+		t.Fatal("setup: expected the added torrent to count as an active download")
+	}
+
+	updated, _ = m.Update(keyRune("5")) // jump to settings
+	m = updated.(Model)
+
+	if m.screen != ScreenSettings {
+		t.Fatalf("setup: screen = %v, want ScreenSettings", m.screen)
+	}
+
+	updated, _ = m.Update(keyRune("q"))
+	m = updated.(Model)
+
+	if !m.quitConfirm.IsOpen() {
+		t.Fatal("expected q with an active download to open the quit-confirm dialog from Settings too")
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+
+	if m.quitConfirm.IsOpen() {
+		t.Fatal("expected esc to close the quit-confirm dialog even from ScreenSettings")
+	}
+
+	if m.screen != ScreenSettings {
+		t.Fatalf("screen after esc = %v, want ScreenSettings (esc must not navigate away)", m.screen)
+	}
+}
+
 // TestQuitConfirmRendersInsideAModalBorder confirms the quit prompt draws
 // through the shared Dialog component's bordered box (AGENT.md §7: modals
 // are one of the two places a box border is allowed) rather than a

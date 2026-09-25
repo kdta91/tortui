@@ -595,3 +595,24 @@ func TestStatusErrorMessage(t *testing.T) {
 		t.Fatal("408 must not report as retryable")
 	}
 }
+
+// TestStatusErrorAuthFailed proves the T-081 classification hook: only 401
+// and 403 report as an auth failure, nothing else.
+func TestStatusErrorAuthFailed(t *testing.T) {
+	cases := []struct {
+		status int
+		want   bool
+	}{
+		{status: 401, want: true},
+		{status: 403, want: true},
+		{status: 404, want: false},
+		{status: 429, want: false},
+		{status: 500, want: false},
+	}
+
+	for _, tc := range cases {
+		if got := (&StatusError{StatusCode: tc.status}).AuthFailed(); got != tc.want {
+			t.Errorf("StatusCode %d: AuthFailed() = %v, want %v", tc.status, got, tc.want)
+		}
+	}
+}
