@@ -131,6 +131,16 @@ type tracked struct {
 	savePath string
 	origin   engine.Origin
 
+	// infoHash is the torrent's infohash, hex-encoded, as soon as it is
+	// known: at track time for addSpec (a magnet or a local .torrent file
+	// both already carry it before tracking begins), or set by attach
+	// once a fetched .torrent's metainfo is parsed for a URL source.
+	// findOrTrack and findByInfoHash match against this field rather than
+	// tr.t.InfoHash() precisely so a torrent that is tracked but not yet
+	// attach()ed to the underlying client — the exact window a concurrent
+	// Add for the same infohash can land in — is still found (T-944).
+	infoHash string
+
 	// t is the underlying torrent, nil until the source has been accepted
 	// into the client (a .torrent fetched over HTTP is attached
 	// asynchronously, so there is a window where this is nil).
@@ -484,7 +494,10 @@ func specFromFile(path string) (*torrent.TorrentSpec, error) {
 }
 
 // track registers a new tracked torrent in engine.StateChecking and returns
-// it. It is the one place an ID is minted.
+// it, with no infohash recorded yet — used only by addFromURL, where the
+// infohash is not known until the fetch completes. addSpec uses
+// findOrTrack instead, which mints under the same critical section as its
+// existing-infohash lookup (T-944).
 func (e *Engine) track(dest, name string) (*tracked, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -510,16 +523,16 @@ func (e *Engine) track(dest, name string) (*tracked, error) {
 
 // addSpec attaches a spec whose infohash is already known.
 func (e *Engine) addSpec(spec *torrent.TorrentSpec, dest string) (string, error) {
-	if existing, ok := e.findByInfoHash(spec.InfoHash.HexString()); ok {
+	tr, existingID, err := e.findOrTrack(spec.InfoHash.HexString(), dest, displayName(spec))
+	if err != nil {
+		return "", err
+	}
+
+	if tr == nil {
 		// Adding the same torrent twice is a user double-tap, not an
 		// error: hand back the ID they already have rather than a second
 		// entry pointing at one underlying torrent.
-		return existing, nil
-	}
-
-	tr, err := e.track(dest, displayName(spec))
-	if err != nil {
-		return "", err
+		return existingID, nil
 	}
 
 	if err := e.attach(tr, spec, dest); err != nil {
@@ -527,6 +540,50 @@ func (e *Engine) addSpec(spec *torrent.TorrentSpec, dest string) (string, error)
 	}
 
 	return tr.id, nil
+}
+
+// findOrTrack looks up a tracked torrent by infohash and, if none is found,
+// mints and registers a new one — as a single critical section under
+// Engine.mu, so concurrent Add calls for the same infohash can never both
+// pass the lookup and each mint their own tracked entry. Before T-944,
+// addSpec called findByInfoHash and track as two separate calls, each
+// taking and releasing e.mu on its own; two goroutines racing Add for the
+// same magnet could both see "not found" between those calls and both
+// track (and later attach) their own entry for one infohash.
+//
+// Exactly one of the two meaningful return values is set: a non-nil tr for
+// a freshly minted entry the caller must now attach, or a non-empty
+// existingID naming the entry already tracked for hex.
+func (e *Engine) findOrTrack(hex, dest, name string) (tr *tracked, existingID string, err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.closed {
+		return nil, "", ErrClosed
+	}
+
+	if hex != "" {
+		for _, id := range e.order {
+			if e.torrents[id].infoHash == hex {
+				return nil, id, nil
+			}
+		}
+	}
+
+	e.nextID++
+	t := &tracked{
+		id:       fmt.Sprintf("an-%d", e.nextID),
+		savePath: dest,
+		name:     name,
+		infoHash: hex,
+		state:    engine.StateChecking,
+		done:     make(chan struct{}),
+	}
+
+	e.torrents[t.id] = t
+	e.order = append(e.order, t.id)
+
+	return t, "", nil
 }
 
 // addFromURL accepts a .torrent URL immediately and fetches it in the
@@ -644,6 +701,12 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 		return nil
 	}
 
+	// Set for a magnet or local file at track time already (findOrTrack);
+	// for a URL source, this is the first point the infohash is known, so
+	// record it here — otherwise a torrent added by URL would never be
+	// findable by infohash until its info dictionary arrives, well after
+	// attach.
+	tr.infoHash = t.InfoHash().HexString()
 	tr.t = t
 	if tr.state == engine.StateChecking {
 		tr.name = t.Name()
@@ -814,7 +877,9 @@ func (e *Engine) fail(tr *tracked, err error) {
 	tr.up.reset()
 }
 
-// findByInfoHash returns the ID of a tracked torrent with the given infohash.
+// findByInfoHash returns the ID of a tracked torrent with the given
+// infohash, matching whether or not that torrent has been attach()ed to the
+// underlying client yet (see tracked.infoHash).
 func (e *Engine) findByInfoHash(hex string) (string, bool) {
 	if hex == "" {
 		return "", false
@@ -824,8 +889,7 @@ func (e *Engine) findByInfoHash(hex string) (string, bool) {
 	defer e.mu.Unlock()
 
 	for _, id := range e.order {
-		tr := e.torrents[id]
-		if tr.t != nil && tr.t.InfoHash().HexString() == hex {
+		if e.torrents[id].infoHash == hex {
 			return id, true
 		}
 	}

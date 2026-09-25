@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -165,6 +166,53 @@ func TestAddIsIdempotentForTheSameInfoHash(t *testing.T) {
 
 	if n := len(e.List()); n != 1 {
 		t.Errorf("List() has %d entries, want 1", n)
+	}
+}
+
+// TestAddIsIdempotentUnderConcurrentCalls fires many concurrent Adds of one
+// magnet and asserts they all land on exactly one tracked torrent. Before
+// T-944, addSpec's findByInfoHash lookup and its track() call ran as two
+// separate critical sections: two goroutines could both see "not found"
+// between those two locks and each mint their own tracked entry for the
+// same infohash, so this failed intermittently under -race/-count without
+// the fix (findOrTrack, a single critical section for the whole
+// check-then-track sequence).
+func TestAddIsIdempotentUnderConcurrentCalls(t *testing.T) {
+	t.Parallel()
+
+	e := newTestEngine(t, nil)
+	src := engine.AddSource{Magnet: magnetURI("concurrent-idempotent")}
+
+	const n = 20
+
+	ids := make([]string, n)
+	errs := make([]error, n)
+
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := range n {
+		go func(i int) {
+			defer wg.Done()
+			ids[i], errs[i] = e.Add(context.Background(), src)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Add #%d: %v", i, err)
+		}
+	}
+
+	want := ids[0]
+	for i, id := range ids {
+		if id != want {
+			t.Errorf("Add #%d returned %q, want the same id every call returned (%q)", i, id, want)
+		}
+	}
+
+	if got := len(e.List()); got != 1 {
+		t.Errorf("List() has %d entries after %d concurrent Adds of the same magnet, want 1", got, n)
 	}
 }
 
@@ -1110,6 +1158,15 @@ func TestRemoveOfAPendingMetadataTorrentLeavesNoGoroutine(t *testing.T) {
 // get a real *torrent.Torrent, it must see the torrent was already removed,
 // drop it immediately, and never spawn awaitInfo or leave it reachable from
 // List/Files — not resurrect it into an active, untracked swarm.
+//
+// T-944: this also asserts directly on the underlying torrent.Client's own
+// Torrents() count, not merely that List()/Files() no longer see the
+// torrent — List/Files read tortui's own bookkeeping (e.torrents), which
+// Remove already clears unconditionally before attach ever runs, so those
+// two alone would still pass even if the tr.removed guard in attach were
+// deleted and it resurrected the torrent straight into the client's active
+// swarm. Only client.Torrents() (or client.Torrent(hash)) can tell the
+// two cases apart.
 func TestRemoveDuringAnInFlightTorrentURLFetchDoesNotLeakOrReattach(t *testing.T) {
 	ignore := goleak.IgnoreCurrent()
 
@@ -1171,5 +1228,18 @@ func TestRemoveDuringAnInFlightTorrentURLFetchDoesNotLeakOrReattach(t *testing.T
 
 	if n := len(e.List()); n != 0 {
 		t.Errorf("List() = %d entries after Remove during an in-flight fetch, want 0", n)
+	}
+
+	// waitForNoLeaks already proved fetchAndAttach's goroutine — and with
+	// it, attach()'s synchronous t.Drop() call in the tr.removed branch —
+	// has finished, so the underlying client.Torrents() count is settled
+	// here, not merely "not yet caught up." This is the assertion that
+	// would fail if the tr.removed guard in attach were deleted: attach
+	// would instead set tr.t and hand the real *torrent.Torrent to the
+	// client's active swarm, which List()/Files() alone cannot detect
+	// because Remove already dropped tr from e.torrents before attach
+	// ever ran.
+	if got := e.client.Torrents(); len(got) != 0 {
+		t.Errorf("client.Torrents() = %d entries after Remove during an in-flight fetch, want 0 (%v)", len(got), got)
 	}
 }
