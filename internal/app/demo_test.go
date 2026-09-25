@@ -90,7 +90,8 @@ func TestSandboxDirIsUnderTheSystemTempDir(t *testing.T) {
 // TestCloseRemovesTheSandboxAndLeavesNothingBehind is T-056's direct proof
 // of "nothing to clean up afterwards": every seeded torrent's SavePath
 // lives under the sandbox, at least one has a real file on disk before
-// Close, and the whole sandbox directory is gone after it.
+// Close — at SavePath/<name>, where `o` (T-073) looks for it — and the
+// whole sandbox directory is gone after it.
 func TestCloseRemovesTheSandboxAndLeavesNothingBehind(t *testing.T) {
 	d, err := NewDemo(DemoOptions{})
 	if err != nil {
@@ -113,12 +114,12 @@ func TestCloseRemovesTheSandboxAndLeavesNothingBehind(t *testing.T) {
 		if !strings.HasPrefix(s.SavePath, dir) {
 			t.Errorf("torrent %q SavePath %q is outside the sandbox %q", s.Name, s.SavePath, dir)
 		}
-		if _, err := os.Stat(s.SavePath); err == nil {
+		if fi, err := os.Stat(filepath.Join(s.SavePath, s.Name)); err == nil && fi.Mode().IsRegular() {
 			sawExistingSavePath = true
 		}
 	}
 	if !sawExistingSavePath {
-		t.Fatal("no seeded torrent has a real file on disk at its SavePath")
+		t.Fatal("no seeded torrent has a real file on disk at SavePath/<name>")
 	}
 
 	if err := d.Close(); err != nil {

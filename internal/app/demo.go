@@ -37,14 +37,12 @@
 // render a full row per hit is still T-061's job, so a completed query
 // lands on Results' placeholder body for now.
 //
-// Likewise, `o` (open file) and `f` (open folder) on the downloads screen
-// are bound in the keymap but handled as a no-op by internal/tui's root
-// Update today (T-073 gives them real behaviour). Demo's side of that is
-// still done here: every seeded torrent's SavePath sits inside this
+// `o` (open file) and `f` (open folder) on the downloads screen (T-073)
+// work here too: every seeded torrent's SavePath is a directory inside this
 // sandbox's downloads directory, and the one that finishes immediately
-// (StateSeeding from t=0) has a real, readable placeholder file already
-// sitting at that path — ready for T-073 to open the moment it exists, with
-// no change to this file.
+// (StateSeeding from t=0) has a real, readable placeholder file at
+// SavePath/<name> — exactly where a real engine writes a single-file
+// torrent, and where the TUI looks for it.
 package app
 
 import (
@@ -313,8 +311,8 @@ func (d *Demo) Close() error {
 // demoTorrentSpec is one seeded torrent: its stable key (carried in the
 // magnet's own "x.demo" query parameter so ScriptFor can recover it
 // without a second lookup structure), its display name, the Script driving
-// it, and whether a real placeholder file should exist at its SavePath
-// from the start (T-056's open-file/open-folder demo-side support — see
+// it, and whether a real placeholder file should exist inside its
+// SavePath from the start (T-056's open-file/open-folder demo-side support — see
 // package doc).
 type demoTorrentSpec struct {
 	key      string
@@ -369,7 +367,7 @@ const demoMagnetKey = "x.demo"
 
 // seedDemoTorrents wires eng.ScriptFor to dispatch on demoMagnetKey and
 // then adds every demoTorrentSpecs() entry, creating a real placeholder
-// file at SavePath for the one spec that asks for it. All work is local:
+// file at SavePath/<title> for the one spec that asks for it. All work is local:
 // no network call, no write outside downloadsDir.
 func seedDemoTorrents(eng *fakeengine.Engine, downloadsDir string) error {
 	specs := demoTorrentSpecs()
@@ -395,7 +393,7 @@ func seedDemoTorrents(eng *fakeengine.Engine, downloadsDir string) error {
 		savePath := filepath.Join(downloadsDir, s.title)
 
 		if s.seedFile {
-			if err := writeDemoPlaceholderFile(savePath); err != nil {
+			if err := writeDemoPlaceholderFile(filepath.Join(savePath, s.title)); err != nil {
 				return fmt.Errorf("app: seed demo placeholder file for %q: %w", s.key, err)
 			}
 		}

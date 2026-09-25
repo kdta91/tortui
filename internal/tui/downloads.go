@@ -6,8 +6,8 @@
 // the engine's own coalesced snapshots (Updates(), never polled — AGENT.md
 // §6.5) so this file's only job is turning that snapshot into rows and a
 // render, the same split every other screen in this package already
-// follows. download_actions.go (T-072) gives the rows pause/resume, remove,
-// and open-source behaviour; T-073 adds open file/folder.
+// follows. download_actions.go gives the rows pause/resume, remove, and
+// open-source behaviour (T-072) and open file/folder (T-073).
 package tui
 
 import (

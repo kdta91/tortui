@@ -1,6 +1,7 @@
-// Download actions (T-072): the downloads screen's `p` pause/resume, `x`
-// remove-with-confirm, and `u` open-source-page keys, acting on whichever
-// row downloads.go's cursor currently selects.
+// Download actions (T-072, T-073): the downloads screen's `p` pause/resume,
+// `x` remove-with-confirm, `u` open-source-page, and `o`/`f` open-file/
+// open-folder keys, acting on whichever row downloads.go's cursor currently
+// selects.
 //
 // Every engine call runs inside a tea.Cmd, never in Update itself (AGENT.md
 // §6.1) — anacrolix's Pause/Resume/Remove take the engine's own lock and
@@ -14,6 +15,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -398,4 +400,139 @@ func (m Model) renderRemoveConfirm() string {
 	}
 
 	return b.String()
+}
+
+// destinationRoots is the known destination root set `o`/`f` check a path
+// against (AGENT.md §6.12): the default download directory, every saved
+// destination, and the destination of every torrent in the current
+// snapshot. Empty entries are dropped; platform.OpenFile resolves and
+// validates the rest itself.
+func (m Model) destinationRoots() []string {
+	roots := make([]string, 0, 1+len(m.savedDestinations)+len(m.torrentStatuses))
+
+	add := func(p string) {
+		if strings.TrimSpace(p) != "" {
+			roots = append(roots, p)
+		}
+	}
+
+	add(m.downloadDir)
+
+	for _, d := range m.savedDestinations {
+		add(d)
+	}
+
+	for _, s := range m.torrentStatuses {
+		add(s.SavePath)
+	}
+
+	return roots
+}
+
+// largestFile returns the biggest file in files (the first one on a tie),
+// or false when there are none.
+func largestFile(files []engine.FileStatus) (engine.FileStatus, bool) {
+	if len(files) == 0 {
+		return engine.FileStatus{}, false
+	}
+
+	best := files[0]
+	for _, f := range files[1:] {
+		if f.SizeBytes > best.SizeBytes {
+			best = f
+		}
+	}
+
+	return best, true
+}
+
+// downloadFilePath turns a torrent file's declared path — attacker-
+// controlled, '/'-separated, starting with the torrent's own name — into the
+// absolute path it was written to under savePath, rejecting any component
+// that could traverse out (engine.CheckTorrentPath, the same rules the
+// engine applied when it wrote the file; AGENT.md §6.11 — a check at one
+// call site is not a check at another).
+func downloadFilePath(savePath, declared string) (string, error) {
+	dest, err := engine.CleanAbsPath(savePath)
+	if err != nil {
+		return "", err
+	}
+
+	parts := strings.Split(declared, "/")
+
+	return engine.CheckTorrentPath(dest, parts[0], parts[1:])
+}
+
+// openDownloadFileCmd performs `o`/`f` off Update's goroutine: it asks the
+// engine for the torrent's files, picks the largest, builds its on-disk
+// path, and hands that to launch (platform.OpenFile / RevealFile by
+// default), which resolves symlinks and refuses anything outside roots
+// before starting a process. Any failure becomes a status-bar message;
+// success reports nothing, since the effect happened outside this process.
+func openDownloadFileCmd(eng engine.Engine, launch openPathFunc, id, name, savePath string, roots []string, reveal bool) tea.Cmd {
+	return func() tea.Msg {
+		verb := "open"
+		if reveal {
+			verb = "open the folder of"
+		}
+
+		fail := func(err error) tea.Msg {
+			return transientMessageMsg{text: fmt.Sprintf("couldn't %s %s: %v", verb, name, err)}
+		}
+
+		files, err := eng.Files(id)
+		if err != nil {
+			return fail(err)
+		}
+
+		f, ok := largestFile(files)
+		if !ok {
+			return fail(errors.New("no files reported yet"))
+		}
+
+		target, err := downloadFilePath(savePath, f.Path)
+		if err != nil {
+			return fail(err)
+		}
+
+		if err := launch(target, roots); err != nil {
+			return fail(err)
+		}
+
+		return nil
+	}
+}
+
+// handleOpenDownloadFile implements `o` (reveal false: open the torrent's
+// largest file) and `f` (reveal true: open the folder containing it) on the
+// downloads screen. An incomplete torrent gets a status-bar message and no
+// launch: its largest file may be sparse, partially written, or not yet on
+// disk at all.
+func (m Model) handleOpenDownloadFile(reveal bool) (tea.Model, tea.Cmd) {
+	s, ok := m.selectedDownload()
+	if !ok {
+		return m, nil
+	}
+
+	if s.Progress < 1 {
+		return m.pushStatus(fmt.Sprintf("%s is still downloading (%d%%) — nothing to open yet", s.Name, int(s.Progress*100)))
+	}
+
+	savePath := s.SavePath
+	if strings.TrimSpace(savePath) == "" {
+		// engine.AddSource.SavePath: empty means the engine's configured
+		// default, which is this Model's downloadDir.
+		savePath = m.downloadDir
+	}
+
+	if strings.TrimSpace(savePath) == "" {
+		return m.pushStatus(fmt.Sprintf("no known location for %s", s.Name))
+	}
+
+	launch := m.openFile
+	if reveal {
+		launch = m.revealFile
+	}
+
+	return m, openDownloadFileCmd(m.eng, launch, s.ID, s.Name, savePath, m.destinationRoots(), reveal)
 }

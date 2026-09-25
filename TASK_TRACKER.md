@@ -73,30 +73,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 7 — Downloads
 
-**Done (archived in `docs/tracker-archive.md`):** `T-070` Add flow · `T-071` Downloads screen · `T-072` Download actions.
-
----
-
-### T-073 · Open file and folder
-```
-status: todo
-depends: T-071
-tier: H
-```
-**Files:** `internal/platform/`
-
-**Acceptance**
-- `o` opens the largest file in the torrent; `f` opens the containing folder.
-- Per-OS via build tags in `internal/platform`, no `runtime.GOOS` switches (AGENT.md §14):
-  macOS `open` / `open -R`; Linux `xdg-open`; Windows `explorer` / `explorer /select,`.
-- Each implementation has a unit test asserting the exact argv it would exec, without
-  actually launching anything. CI runs all three via `GOOS` cross-compilation of the tests.
-- Path is resolved, symlink-checked, and asserted to be **inside the known destination roots**
-  before launching (AGENT.md §6.12) — not against a single directory, since destinations are
-  per-torrent. Outside → refuse and log.
-- `exec.Command` with an argument slice, never a shell string. Test asserts a path containing
-  shell metacharacters is passed through inertly.
-- Incomplete torrent → status-bar message, no launch.
+**Done (archived in `docs/tracker-archive.md`):** `T-070` Add flow · `T-071` Downloads screen · `T-072` Download actions · `T-073` Open file and folder.
 
 ---
 
@@ -825,6 +802,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-113 | 2026-09-26 | T-070: resolves the T-070/T-074 mutual dependency — SavePath defaults via WithDownloadDir only, T-074 adds the real picker; dedup matches only on Result.InfoHash; Resolve triggers on an empty Magnet via new Searcher.Get; Origin persists via new optional TorrentStore; duplicate selects the existing row via m.selection; results-screen enter now also adds |
 | DEC-114 | 2026-09-26 | T-071: active/completed split treats StatePaused-at-Progress-1 as complete too (seed-policy-satisfied torrents have no distinct state); queue position and seed-policy text read new optional queueProvider/seedPolicyProvider assertions, fake implements neither; TorrentStore gained GetTorrent so Source/added-at fall back to the store record for a torrent added this session (live Origin is zero until a restart); enter toggles an errored row's reason in place rather than reusing ScreenDetails |
 | DEC-115 | 2026-09-26 | T-072: optimistic pause/resume overlays snapshots only while the engine call is in flight, the next snapshot wins once it returns, failure reverts; a second p in flight is refused; remove dialog targets the ID captured at open and has no one-key delete |
+| DEC-116 | 2026-09-26 | T-073: containment enforced inside platform.OpenFile/RevealFile (symlink-resolved, strictly inside a root, logged refusal); roots = download dir + saved destinations + every torrent SavePath; f reveals the largest file o opens, both refuse below 100%; Windows quotes via SysProcAttr.CmdLine and ignores explorer exit 1; Linux reveals the parent dir |
 
 ## Blocked
 

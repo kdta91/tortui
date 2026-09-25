@@ -284,8 +284,8 @@ commit it anywhere.
 | `d` | Details |
 | `s` / `S` | Cycle sort column / reverse |
 | `t` | Toggle trust filter — restrict results to Trusted and above |
-| `o` | Open downloaded file |
-| `f` | Open containing folder |
+| `o` | Open the torrent's largest file (once complete) |
+| `f` | Open the folder containing it (once complete) |
 | `u` | Open source page in browser |
 | `p` | Pause / resume |
 | `x` | Remove (asks whether to keep or delete data) |
