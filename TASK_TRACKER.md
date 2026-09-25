@@ -73,26 +73,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 7 — Downloads
 
-**Done (archived in `docs/tracker-archive.md`):** `T-070` Add flow.
-
----
-
-### T-071 · Downloads screen
-```
-status: todo
-depends: T-070, T-033, T-053
-tier: M
-```
-**Acceptance**
-- Row layout per AGENT.md §7: name, block progress bar with percentage, transferred/total,
-  down/up rate, peers, ETA, source, added-at, and the action hint line.
-- Subscribes to `Updates()`; no polling of `List()`.
-- Completed torrents move to a distinct section and keep their actions; the row states the
-  seeding policy in effect so continued upload is never a surprise (T-034).
-- Queued torrents show their position and why they are waiting (T-034).
-- Each row shows its destination, since destinations are per-torrent (T-074).
-- Errored torrents show the reason inline, truncated, expandable in details.
-- `teatest` runs the whole screen against `engine/fake` through download → complete → error.
+**Done (archived in `docs/tracker-archive.md`):** `T-070` Add flow · `T-071` Downloads screen.
 
 ---
 
@@ -715,6 +696,23 @@ when it reaches it and does not start backlog items on its own.
   scrolling or cap: a long `indexer.ExtraKeyFiles` list can overflow the 80×24 floor with no way
   to see the rest. Needs the same kind of viewport `components.Table` already has, or a hard cap
   with a "+N more" line. Found by QA on T-063 (PR #42).
+- `T-966` `resolveCmd`/`addTorrentCmd` in `internal/tui/details.go` call `Indexer.Resolve`/
+  `Engine.Add` with `context.Background()` and no deadline, which AGENT.md §6.2 requires ("every
+  network call takes a `context.Context` with a deadline"). Neither call site currently bounds how
+  long a hung source or engine call can block the goroutine the returned `tea.Cmd` runs on. Found
+  in review of T-070 (PR #43).
+- `T-967` Extend T-950 (composition-root wiring) to also pass `tui.WithTorrentStore(store)` and
+  `tui.WithDownloadDir(cfg.Paths.DownloadDir)` into the production `tui.New` call. Both options
+  exist and are exercised by tests since T-070, but no production call site passes either yet, so
+  the add flow's Origin persistence and configured download directory are inert outside tests
+  until this wiring exists — the same gap T-950 already documents for `tui.WithHistory`. Found in
+  review of T-070 (PR #43).
+- `T-968` `details.go`'s `resolveSavePath` never checks that `m.downloadDir` is an absolute path
+  before cleaning and returning it — it trusts `WithDownloadDir`'s caller-side contract
+  ("expected to already be an absolute path") rather than verifying it. T-074 (per-torrent
+  destination picker) should enforce this when it replaces this default-only answer, per
+  `engine.TorrentStatus.SavePath`'s own documented invariant ("always ... absolute"). Found in
+  review of T-070 (PR #43).
 
 
 
@@ -840,6 +838,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-111 | 2026-09-25 | T-062: components.Table gains Row.SortKey, Column.SortMissingLast, and Column.Accent (all generic, no Trust-specific logic); Trust's sort key comes from the real Trust value since Badge() renders Unknown/None identically; Unknown pins last in both sort directions; the "t" filter toggle re-derives rows from resultsModel.allRows |
 | DEC-112 | 2026-09-25 | T-063: indexer.ExtraKeyFiles is a new well-known, optional Extra convention for the details screen's file list; internal/platform.OpenURL (open/xdg-open/rundll32, http(s)-only) backs `u`; results-screen j/k now move the table's own cursor instead of the unused generic m.selection |
 | DEC-113 | 2026-09-26 | T-070: resolves the T-070/T-074 mutual dependency — SavePath defaults via WithDownloadDir only, T-074 adds the real picker; dedup matches only on Result.InfoHash; Resolve triggers on an empty Magnet via new Searcher.Get; Origin persists via new optional TorrentStore; duplicate selects the existing row via m.selection; results-screen enter now also adds |
+| DEC-114 | 2026-09-26 | T-071: active/completed split treats StatePaused-at-Progress-1 as complete too (seed-policy-satisfied torrents have no distinct state); queue position and seed-policy text read new optional queueProvider/seedPolicyProvider assertions, fake implements neither; TorrentStore gained GetTorrent so Source/added-at fall back to the store record for a torrent added this session (live Origin is zero until a restart); enter toggles an errored row's reason in place rather than reusing ScreenDetails |
 
 ## Blocked
 

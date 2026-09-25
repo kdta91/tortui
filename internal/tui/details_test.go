@@ -587,6 +587,18 @@ func (s *stubTorrentStore) SetTorrent(rec store.TorrentRecord) error {
 	return nil
 }
 
+// GetTorrent implements the read half of TorrentStore (root.go, T-071):
+// the last record SetTorrent recorded for id, if any.
+func (s *stubTorrentStore) GetTorrent(id string) (store.TorrentRecord, bool) {
+	for i := len(s.records) - 1; i >= 0; i-- {
+		if s.records[i].ID == id {
+			return s.records[i], true
+		}
+	}
+
+	return store.TorrentRecord{}, false
+}
+
 // stubDedupEngine is a minimal engine.Engine test double whose List()
 // returns a fixed set of statuses (including an InfoHash — something
 // internal/engine/fake never populates from AddSource, since a real

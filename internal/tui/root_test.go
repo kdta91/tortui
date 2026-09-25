@@ -48,14 +48,15 @@ func TestNavigationAllScreensViaNumberKeys(t *testing.T) {
 		key  string
 		want string
 	}{
-		// ScreenSearch (T-060), ScreenResults (T-061), and ScreenDetails
-		// (T-063) are real now: "Query:", "No search yet", and "No result
-		// selected" are their own stable markers, not the generic
-		// placeholder text the remaining screens still render.
+		// ScreenSearch (T-060), ScreenResults (T-061), ScreenDetails
+		// (T-063), and ScreenDownloads (T-071) are real now: "Query:", "No
+		// search yet", "No result selected", and "No downloads yet" are
+		// their own stable markers, not the generic placeholder text
+		// ScreenSettings still renders.
 		{"1", "Query:"},
 		{"2", "No search yet"},
 		{"3", "No result selected"},
-		{"4", ScreenDownloads.String() + " screen"},
+		{"4", "No downloads yet"},
 		{"5", ScreenSettings.String() + " screen"},
 	}
 
@@ -74,15 +75,15 @@ func TestNavigationTabCyclesForwardAndBack(t *testing.T) {
 	t.Cleanup(func() { _ = tm.Quit() })
 
 	// Starts on ScreenSearch. tab -> results -> details -> downloads ->
-	// settings -> (wrap) search. ScreenSearch, ScreenResults, and
-	// ScreenDetails have real content now (T-060, T-061, T-063), so they are
-	// checked by their own "Query:"/"No search yet"/"No result selected"
-	// markers rather than the generic placeholder text the remaining
-	// screens still render.
+	// settings -> (wrap) search. ScreenSearch, ScreenResults, ScreenDetails,
+	// and ScreenDownloads have real content now (T-060, T-061, T-063,
+	// T-071), so they are checked by their own "Query:"/"No search yet"/"No
+	// result selected"/"No downloads yet" markers rather than the generic
+	// placeholder text ScreenSettings still renders.
 	forward := []string{
 		"No search yet",
 		"No result selected",
-		ScreenDownloads.String() + " screen",
+		"No downloads yet",
 		ScreenSettings.String() + " screen",
 		"Query:",
 	}
@@ -109,13 +110,13 @@ func TestHelpOverlayTogglesAndShowsScreenBindings(t *testing.T) {
 	// Move to downloads first so downloads-only bindings (pause/resume) are
 	// expected in the overlay.
 	tm.Send(keyRune("4"))
-	waitForOutput(t, tm, "downloads screen")
+	waitForOutput(t, tm, "No downloads yet")
 
 	tm.Send(keyRune("?"))
 	waitForOutput(t, tm, "pause/resume")
 
 	tm.Send(keyRune("?"))
-	waitForOutput(t, tm, "downloads screen")
+	waitForOutput(t, tm, "No downloads yet")
 }
 
 // TestHelpOverlayClosesWithEscape confirms esc, not just ?, closes the

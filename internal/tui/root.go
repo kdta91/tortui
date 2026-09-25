@@ -19,8 +19,19 @@ import (
 // Resumer (internal/engine, T-041) can rehydrate them. nil is valid: an
 // added torrent's engine tracking still works, it just is not recorded for
 // the next restart to pick up.
+//
+// GetTorrent is the read half the downloads screen (T-071, downloads.go)
+// needs for its Source/added-at columns: engine.AddSource is a frozen §5
+// contract with no Origin field, so Engine.Add itself never populates
+// engine.TorrentStatus.Origin — only a real engine's Resumer does, from a
+// ResumeData persisted at a *previous* restart (internal/engine/resume.go).
+// A torrent added this session therefore has a zero live Origin until the
+// process restarts; the store record this same interface's SetTorrent wrote
+// at add time (handleAddResult) is the only place that provenance lives in
+// the meantime. Found in review of T-070 (PR #43).
 type TorrentStore interface {
 	SetTorrent(rec store.TorrentRecord) error
+	GetTorrent(id string) (store.TorrentRecord, bool)
 }
 
 // Model is the top-level bubbletea program: it owns which Screen is
@@ -99,6 +110,18 @@ type Model struct {
 	// the results table, resolved back to the real Result via
 	// m.lastResults. See details.go.
 	details detailsModel
+
+	// downloads is the T-071 downloads screen's own state: its cursor over
+	// downloadRows() and which errored torrent's reason (if any) is
+	// expanded. See downloads.go.
+	downloads downloadsModel
+
+	// torrentStatuses is the most recent coalesced snapshot from the
+	// engine's Updates() stream (engineUpdateMsg) — captured here the same
+	// hand-off pattern lastResults already uses for search, so downloads.go
+	// has real data to render instead of polling eng.List() itself
+	// (AGENT.md §6.5).
+	torrentStatuses []engine.TorrentStatus
 
 	// openURL opens a URL in the system's default browser — `u`
 	// (ActionOpenSource) on the details screen. It defaults to
@@ -235,6 +258,7 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 	m.search = newSearchModel(m.searcher, m.history)
 	m.results = newResultsModel()
 	m.details = newDetailsModel()
+	m.downloads = newDownloadsModel()
 
 	return m
 }
@@ -364,6 +388,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeDownloads = countActive(msg.statuses)
 		m.statusBar.ActiveDownloads = m.activeDownloads
 		m.statusBar.DownRate, m.statusBar.UpRate = aggregateRates(msg.statuses)
+
+		m.torrentStatuses = msg.statuses
+		m.downloads = m.downloads.clampCursor(len(m.downloadRows()))
 
 		return m, waitForEngineUpdate(m.eng)
 
@@ -505,6 +532,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.screen == ScreenDownloads {
+			m.downloads = m.downloads.moveCursor(1, len(m.downloadRows()))
+			return m, nil
+		}
+
 		m.selection++
 		return m, nil
 	case ActionMoveUp:
@@ -515,6 +547,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		if m.screen == ScreenResults {
 			m.results.table = m.results.table.MoveUp()
+			return m, nil
+		}
+
+		if m.screen == ScreenDownloads {
+			m.downloads = m.downloads.moveCursor(-1, len(m.downloadRows()))
 			return m, nil
 		}
 
@@ -533,8 +570,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == ScreenResults {
 			return m.handleAddFromResults()
 		}
-		// Downloads' own meaning of enter (open details) belongs to T-071.
-		// No-op here.
+		if m.screen == ScreenDownloads {
+			// AGENT.md §7: "enter | ... open details (downloads)" — T-071
+			// gives this an in-place meaning (toggling an errored row's
+			// full reason) rather than a second, torrent-status-shaped
+			// details screen; see downloads.go's handleToggleDownloadDetail.
+			return m.handleToggleDownloadDetail()
+		}
 		return m, nil
 	case ActionDetails:
 		if m.screen == ScreenResults {
@@ -759,6 +801,8 @@ func (m Model) renderScreenBody() string {
 		return m.renderResultsScreen()
 	case ScreenDetails:
 		return m.renderDetailsScreen()
+	case ScreenDownloads:
+		return m.renderDownloadsScreen()
 	}
 
 	body := m.screen.String() + " screen — placeholder, see " + m.screen.placeholderTask()

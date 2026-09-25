@@ -3398,6 +3398,35 @@ own picker is deferred rather than built ahead of schedule here). `make check`, 
 
 ---
 
+### T-071 · Downloads screen
+```
+status: done
+depends: T-070, T-033, T-053
+tier: M
+```
+**Notes:** `downloads.go`: three-line rows (name; bar/%/transferred/rates/peers/ETA; source ·
+added · dest), active/completed split by `isDownloadComplete` (Progress 1 — a seed-satisfied
+torrent reports `StatePaused`, not a distinct state — DEC-114). Queue position and seed-policy
+text use new optional `queueProvider`/`seedPolicyProvider` assertions (`engine/fake` implements
+neither, falls back to a snapshot-derived position and a "not reported" line). `TorrentStore`
+gained `GetTorrent`: Source/added-at fall back to the T-070-persisted store record, since a
+torrent added this session has a zero live `Origin` until a restart. `enter` toggles an errored
+row's reason to its full text; `j`/`k` drive the screen's own cursor. `make check`, `make race`,
+`make cover` (93.7%) green; `teatest` covers download → complete → error against `engine/fake`.
+
+**Acceptance**
+- Row layout per AGENT.md §7: name, block progress bar with percentage, transferred/total,
+  down/up rate, peers, ETA, source, added-at, and the action hint line.
+- Subscribes to `Updates()`; no polling of `List()`.
+- Completed torrents move to a distinct section and keep their actions; the row states the
+  seeding policy in effect so continued upload is never a surprise (T-034).
+- Queued torrents show their position and why they are waiting (T-034).
+- Each row shows its destination, since destinations are per-torrent (T-074).
+- Errored torrents show the reason inline, truncated, expandable in details.
+- `teatest` runs the whole screen against `engine/fake` through download → complete → error.
+
+---
+
 ## Blocked — Resolved
 
 
