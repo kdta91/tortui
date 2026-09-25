@@ -726,6 +726,11 @@ when it reaches it and does not start backlog items on its own.
 - `T-952` A user-paused torrent comes back running after a restart. `Shutdown` pauses everything
   before `Session.Save`, so pause state cannot be read from `State` there; needs a
   user-pause flag in `engine.ResumeData` read before the shutdown pause. From T-041.
+- `T-953` `Session.Resume` re-keys a record onto whatever ID `Restore` returns. Two store records
+  sharing an infohash make `Restore` return the first's ID for the second, and the
+  `DeleteTorrent`/`SetTorrent` pair then overwrites the first record's data (and the re-key can
+  delete a record already re-keyed onto that ID; the next `Save` repairs it). Detect an ID already
+  restored this pass and drop the duplicate record instead. Found in review of T-041 (PR #38).
 
 
 

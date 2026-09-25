@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	g "github.com/anacrolix/generics"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
 )
@@ -39,11 +40,13 @@ type safeStorage struct {
 // TUI owns the terminal).
 //
 // Piece completion is opened explicitly as the library's persistent default
-// for dest. Left to itself, the library picks an in-memory record whenever
-// part files are in use (its default), so every restart would forget every
-// verified piece. Where no persistent record can be opened the in-memory one
-// is the fallback, logged: the torrent still works, it just re-downloads
-// after a restart.
+// for dest (a hidden ".torrent.db" or ".torrent.bolt.db" file there), and part
+// files are turned off. With the library's defaults — part files on, an
+// in-memory record — a restart forgets every verified piece of an unfinished
+// file. Instead, data is written straight to its final name and the record
+// says which pieces of it are good. Where no persistent record can be opened
+// the in-memory one is the fallback, logged: the torrent still works, it just
+// re-downloads after a restart.
 func newSafeStorage(dest string, logger *slog.Logger) safeStorage {
 	completion, err := storage.NewDefaultPieceCompletionForDir(dest)
 	if err != nil {
@@ -59,6 +62,11 @@ func newSafeStorage(dest string, logger *slog.Logger) safeStorage {
 			ClientBaseDir:   dest,
 			Logger:          logger,
 			PieceCompletion: completion,
+			// Part files off: with them on, every open re-derives
+			// completion from file names and marks every piece of a
+			// still-".part" file incomplete, discarding the persistent
+			// record for exactly the partial downloads it exists for.
+			UsePartFiles: g.Some(false),
 		}),
 		completion: completion,
 	}

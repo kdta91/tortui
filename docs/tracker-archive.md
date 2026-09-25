@@ -2797,9 +2797,9 @@ tier: H
 ```
 **Notes:** Resume goes through a new optional `engine.Resumer` (`ResumeData`, `Restore`) in
 `internal/engine/resume.go`, found by type assertion like `Queuer`, since frozen `AddSource` has no
-origin or ID (DEC-108). `anacrolix` now opens a persistent piece-completion record per destination
-(the library's default is in-memory whenever part files are on), so completed pieces survive a
-restart; `Restore` re-validates destination roots and every metainfo path, keeps the saved ID, and
+origin or ID (DEC-108). `anacrolix` opens a persistent piece-completion record per destination and
+turns part files off (with them on, each open marked every piece of a `.part` file incomplete), so
+verified pieces of a partial download survive a restart; `Restore` re-validates destination roots and every metainfo path, keeps the saved ID, and
 tracks anything unresumable as `StateErrored` — data recorded complete but gone from disk is
 `engine.ErrDataMissing` ("remove this entry, or put the files back"). `lifecycle.Session` does
 Resume at startup / Save (prunes, merges origin + added-at) and `Shutdown` saves it before the

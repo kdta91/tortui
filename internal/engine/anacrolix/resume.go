@@ -241,19 +241,14 @@ func (e *Engine) checkDataPresent(ih metainfo.Hash, info *metainfo.Info, dest st
 		return nil
 	}
 
-	// validateInfoPaths already confirmed this resolves inside dest. The
-	// library writes an incomplete file as "<name>.part" and renames it
-	// once complete, so either form counts as present.
+	// validateInfoPaths already confirmed this resolves inside dest. Part
+	// files are off (see newSafeStorage), so data only ever lives under its
+	// final name.
 	root := filepath.Join(dest, info.BestName())
-	for _, p := range []string{root, root + ".part"} {
-		_, err := os.Lstat(p)
-		if err == nil {
-			return nil
-		}
-
-		if !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("check data %s: %w", p, err)
-		}
+	if _, err := os.Lstat(root); err == nil {
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("check data %s: %w", root, err)
 	}
 
 	return fmt.Errorf("%w: nothing at %s — remove this entry, or put the files back and restart",

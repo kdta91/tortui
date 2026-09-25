@@ -51,16 +51,36 @@ func sessionOne(t *testing.T, dir string) engine.ResumeData {
 	return d
 }
 
+// flipFirstByte corrupts a verified piece without changing the file's size.
+// Only the persistent piece record can still report that piece complete; an
+// engine that re-hashed the data instead (what the library does when it has
+// no record) would find it bad. That is what lets a test prove a resume came
+// from the record, not from a re-hash.
+func flipFirstByte(t *testing.T, path string) {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	data[0] ^= 0xff
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("rewrite %s: %v", path, err)
+	}
+}
+
 // TestRestoreResumesFromExistingDataWithoutDownloading is the T-041 core
 // criterion. The second engine is offline — it can reach no peer — and is
 // never asked to re-hash, so the only way the torrent can read complete is
-// by resuming from the piece record and data the first session left on
-// disk.
+// from the piece record and data the first session left on disk (see
+// flipFirstByte for why a re-hash cannot fake it).
 func TestRestoreResumesFromExistingDataWithoutDownloading(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	d := sessionOne(t, dir)
+	flipFirstByte(t, filepath.Join(dir, "payload.bin"))
 
 	e := newTestEngine(t, func(o *Options) { o.Config.DownloadDir = dir })
 
@@ -85,6 +105,70 @@ func TestRestoreResumesFromExistingDataWithoutDownloading(t *testing.T) {
 
 	if st.Err != nil || st.Name != "payload.bin" || st.SavePath != dir {
 		t.Fatalf("restored status = %+v", st)
+	}
+}
+
+// TestRestoreResumesAPartialDownloadFromItsVerifiedPieces is the half-way
+// case: session one has verified only the first half of the pieces. Session
+// two — offline, never asked to re-hash — must come back at that progress
+// from the persistent piece record. (With the library's default part files,
+// every open marked a ".part" file's pieces incomplete and this came back at
+// 0.)
+func TestRestoreResumesAPartialDownloadFromItsVerifiedPieces(t *testing.T) {
+	t.Parallel()
+
+	const pieces, size = 8, 8 * testPieceLength
+
+	dir := t.TempDir()
+	e := newTestEngine(t, func(o *Options) { o.Config.DownloadDir = dir })
+
+	// Build the whole payload's piece table, then leave only the first
+	// half of it on disk.
+	path := completeTorrent(t, dir, "payload.bin", size)
+	full, err := os.ReadFile(filepath.Join(dir, "payload.bin"))
+	if err != nil {
+		t.Fatalf("read payload: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "payload.bin"), full[:size/2], 0o600); err != nil {
+		t.Fatalf("truncate payload: %v", err)
+	}
+
+	id, err := e.Add(context.Background(), engine.AddSource{FilePath: path})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	waitForStarted(t, e, id)
+	verify(t, e, id)
+	waitUntil(t, "session one half verified", func() bool { return statusOf(t, e, id).Progress == 0.5 })
+
+	d, err := e.ResumeData(id)
+	if err != nil {
+		t.Fatalf("ResumeData: %v", err)
+	}
+
+	if err := e.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// A re-hash would report 3/8 here, not 4/8 (see flipFirstByte).
+	flipFirstByte(t, filepath.Join(dir, "payload.bin"))
+
+	e2 := newTestEngine(t, func(o *Options) { o.Config.DownloadDir = dir })
+
+	rid, err := e2.Restore(context.Background(), d)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	waitUntil(t, "restored partial download at its verified progress", func() bool {
+		st := statusOf(t, e2, rid)
+		return st.State == engine.StateDownloading && st.Progress == 0.5
+	})
+
+	if st := statusOf(t, e2, rid); st.DownloadedBytes != int64(pieces/2*testPieceLength) {
+		t.Fatalf("restored downloaded bytes = %d, want %d", st.DownloadedBytes, pieces/2*testPieceLength)
 	}
 }
 
@@ -119,8 +203,8 @@ func TestRestoreSurfacesMissingDataAsErroredNotDropped(t *testing.T) {
 	}
 
 	// It must not quietly start the download over.
-	if _, err := os.Stat(filepath.Join(dir, "payload.bin.part")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("missing torrent started re-downloading: stat .part = %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "payload.bin")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing torrent started re-downloading: stat = %v", err)
 	}
 
 	// The entry survives another restart until the user removes it.
