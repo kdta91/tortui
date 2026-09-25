@@ -865,7 +865,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-102 | 2026-09-23 | T-032 (Pause/Resume/Remove/Files) judgement calls. (1) engine.FileStatus (AGENT.md §5, frozen) carries no Priority field — only Path, SizeBytes, Down… |
 | DEC-103 | 2026-09-25 | Owner-authorised rework of the task loop for pace (T-945): slim tracker/AGENT.md, tiers, PR-carried status, single-party gates, faster CI, autonomy |
 | DEC-104 | 2026-09-25 | T-033: Updates sends on the sample tick only when the snapshot changed; ETA from a 10-sample rolling average; test-only injectable ticker |
-| DEC-105 | 2026-09-25 | T-944: findOrTrack replaces the two-lock findByInfoHash-then-track sequence in addSpec with one critical section; a script gate (check-goos-scope) enforces runtime.GOOS stays inside internal/platform |
+| DEC-105 | 2026-09-25 | T-944: findOrTrack (one critical section) fixes concurrent Add; a beforeAttach test hook and untrackFailedSpec fix two pre-merge review findings in the fix itself; check-goos-scope gates runtime.GOOS |
 
 ## Blocked
 

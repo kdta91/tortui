@@ -2561,6 +2561,22 @@ in the existing in-flight-fetch-removal test. Added `internal/platform.OS()`/`Is
 for the literal `runtime.GOOS` and fails; wired into `make check` via a new `check-goos-scope`
 target. `make check` green; `anacrolix` coverage 90.5%.
 
+**QA remediation (2026-09-25, same PR/branch, pre-merge).** Review found two problems in the fix
+above, both now corrected (DEC-105 has the full account). First, the `client.Torrents()` test never
+actually exercised the `tr.removed` guard: closing `tr.done` on `Remove` cancels `fetchAndAttach`'s
+own HTTP request context, so a `Remove` landed during the network wait fails the fetch before
+`attach` is ever called — a mutation deleting the guard entirely still passed. Fixed with
+`Options.beforeAttach`, a package-test-only hook `fetchAndAttach` calls right after a successful
+metainfo parse and before `attach`, letting the test land `Remove` in the window the guard actually
+protects; the guard-deletion mutation now fails. Second, `findOrTrack` matching a not-yet-attached
+entry by infohash also matched one whose `attach` call had already *failed* (e.g. an unsafe path
+refused by `validateSpecPaths`) and was never removed, so a retried `Add` of the same refused file
+returned the stale id with a nil error instead of refusing again — a regression from this task's own
+concurrency fix, against AGENT.md §6.11. Fixed with `untrackFailedSpec`, called on any `attach`
+failure in `addSpec`; `TestAddRefusesARepeatedlyAddedUnsafeTorrentEveryTime` is the regression test.
+Re-verified: `make check`, `make race` (`engine/anacrolix`, `config`, `doctor`, `platform`),
+`make cover` (`anacrolix` 91.0%).
+
 ---
 
 ## Phase 4 — Persistence
