@@ -45,19 +45,22 @@ func TestNavigationAllScreensViaNumberKeys(t *testing.T) {
 	t.Cleanup(func() { _ = tm.Quit() })
 
 	cases := []struct {
-		key    string
-		screen Screen
+		key  string
+		want string
 	}{
-		{"1", ScreenSearch},
-		{"2", ScreenResults},
-		{"3", ScreenDetails},
-		{"4", ScreenDownloads},
-		{"5", ScreenSettings},
+		// ScreenSearch is real now (T-060): "Query:" is the search
+		// screen's own stable marker, not the generic placeholder text
+		// every other screen still renders.
+		{"1", "Query:"},
+		{"2", ScreenResults.String() + " screen"},
+		{"3", ScreenDetails.String() + " screen"},
+		{"4", ScreenDownloads.String() + " screen"},
+		{"5", ScreenSettings.String() + " screen"},
 	}
 
 	for _, c := range cases {
 		tm.Send(keyRune(c.key))
-		waitForOutput(t, tm, c.screen.String()+" screen")
+		waitForOutput(t, tm, c.want)
 	}
 }
 
@@ -70,11 +73,19 @@ func TestNavigationTabCyclesForwardAndBack(t *testing.T) {
 	t.Cleanup(func() { _ = tm.Quit() })
 
 	// Starts on ScreenSearch. tab -> results -> details -> downloads ->
-	// settings -> (wrap) search.
-	forward := []Screen{ScreenResults, ScreenDetails, ScreenDownloads, ScreenSettings, ScreenSearch}
+	// settings -> (wrap) search. ScreenSearch has real content now
+	// (T-060), so it is checked by its own "Query:" marker rather than
+	// the generic placeholder text the other screens still render.
+	forward := []string{
+		ScreenResults.String() + " screen",
+		ScreenDetails.String() + " screen",
+		ScreenDownloads.String() + " screen",
+		ScreenSettings.String() + " screen",
+		"Query:",
+	}
 	for _, want := range forward {
 		tm.Send(tea.KeyMsg{Type: tea.KeyTab})
-		waitForOutput(t, tm, want.String()+" screen")
+		waitForOutput(t, tm, want)
 	}
 
 	// shift+tab from search wraps back to settings.
@@ -116,7 +127,7 @@ func TestHelpOverlayClosesWithEscape(t *testing.T) {
 	waitForOutput(t, tm, "Keys")
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
-	waitForOutput(t, tm, "search screen")
+	waitForOutput(t, tm, "Query:")
 }
 
 // TestQuitWithNoActiveDownloadsIsImmediate confirms q exits the program
@@ -143,13 +154,13 @@ func TestQuitWithActiveDownloadPromptsThenConfirms(t *testing.T) {
 
 	// Give Init's subscription a chance to deliver the queued/downloading
 	// status before quitting.
-	waitForOutput(t, tm, "search screen")
+	waitForOutput(t, tm, "Query:")
 
 	tm.Send(keyRune("q"))
 	waitForOutput(t, tm, "Quit tortui?")
 
 	tm.Send(keyRune("n"))
-	waitForOutput(t, tm, "search screen")
+	waitForOutput(t, tm, "Query:")
 
 	tm.Send(keyRune("q"))
 	waitForOutput(t, tm, "Quit tortui?")

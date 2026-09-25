@@ -26,13 +26,16 @@
 // indexer.Trust value, a wide CJK title, an emoji title, a huge and a tiny
 // size, and a zero-seeder entry; one of three fixture sources always fails,
 // exercising the registry's "N/M sources failed" degrade path, AGENT.md
-// §6.3) but is **not yet visually reachable inside the running --demo TUI**.
-// That is not an oversight: internal/tui may only import indexer
-// *interfaces*, never a concrete type (AGENT.md §4), and no such interface
-// exists yet — the search screen that would define one is T-060, and the
-// results screen that would render what it returns is T-061. Demo.Registry
-// exposes the fully-populated *indexer.Registry so T-060 can wire it
-// straight in without touching this file's fixtures.
+// §6.3) and is now reachable from the running --demo TUI's search screen
+// (T-060): NewDemo passes Registry straight to tui.New via
+// tui.WithSearcher, which *indexer.Registry satisfies without this package
+// or internal/tui ever naming a concrete indexer type outside this one
+// call (AGENT.md §4 — internal/tui imports indexer's frozen domain types
+// and the tui.Searcher interface T-060 defines, never *indexer.Registry
+// itself). Pressing `/`, moving the cursor, and dispatching a query are
+// all live against this fixture data today; the results screen that would
+// render a full row per hit is still T-061's job, so a completed query
+// lands on Results' placeholder body for now.
 //
 // Likewise, `o` (open file) and `f` (open folder) on the downloads screen
 // are bound in the keymap but handled as a no-op by internal/tui's root
@@ -191,7 +194,12 @@ func NewDemo(opts DemoOptions) (*Demo, error) {
 	}
 
 	th := theme.New(opts.ThemeName, opts.Capability)
-	model := tui.New(eng, th)
+	// WithSearcher wires the fixture registry straight into T-060's search
+	// screen — *indexer.Registry satisfies tui.Searcher, the interface
+	// this package doc comment and T-056's tracker notes said T-060 would
+	// define, so this is the only change this file needed to make the
+	// indexer half of --demo visually reachable.
+	model := tui.New(eng, th, tui.WithSearcher(reg))
 	model.Banner = DemoBanner
 
 	return &Demo{
