@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -9,9 +11,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 
+	"github.com/kdta91/tortui/internal/engine"
 	"github.com/kdta91/tortui/internal/engine/fake"
 	"github.com/kdta91/tortui/internal/indexer"
 	indexerfake "github.com/kdta91/tortui/internal/indexer/fake"
+	"github.com/kdta91/tortui/internal/store"
 	"github.com/kdta91/tortui/internal/tui/theme"
 )
 
@@ -507,6 +511,564 @@ func TestHandleAddResultReportsEngineFailureWithoutSwitchingScreen(t *testing.T)
 	}
 	if !strings.Contains(m.statusBar.Message(), "couldn't add torrent") {
 		t.Errorf("statusBar.Message() = %q, want it to mention the add failure", m.statusBar.Message())
+	}
+}
+
+// --- startAdd / finishAdd (T-070: Resolve, dedup, Origin, destination) ----
+
+// resolvingIndexer is a programmable indexer.Indexer test double whose
+// Resolve does whatever resolveFn says — a canned successful result, or a
+// canned error — so these tests can drive the add flow's Resolve step
+// without a network call (AGENT.md §6.7).
+type resolvingIndexer struct {
+	id        string
+	resolveFn func(r indexer.Result) (indexer.Result, error)
+	calls     int
+}
+
+func (f *resolvingIndexer) ID() string         { return f.id }
+func (f *resolvingIndexer) Name() string       { return f.id }
+func (f *resolvingIndexer) Caps() indexer.Caps { return indexer.Caps{Search: true} }
+
+func (f *resolvingIndexer) Search(context.Context, indexer.Query) ([]indexer.Result, error) {
+	return nil, nil
+}
+
+func (f *resolvingIndexer) Resolve(_ context.Context, r indexer.Result) (indexer.Result, error) {
+	f.calls++
+	if f.resolveFn != nil {
+		return f.resolveFn(r)
+	}
+
+	return r, nil
+}
+
+// stubResolveSearcher is a minimal Searcher test double for the add flow:
+// only Get is exercised here — the search screen's own tests already cover
+// Enabled/SearchAll — so those two are trivial stubs.
+type stubResolveSearcher struct {
+	indexers map[string]indexer.Indexer
+}
+
+func newStubResolveSearcher(ixs ...indexer.Indexer) *stubResolveSearcher {
+	m := make(map[string]indexer.Indexer, len(ixs))
+	for _, ix := range ixs {
+		m[ix.ID()] = ix
+	}
+
+	return &stubResolveSearcher{indexers: m}
+}
+
+func (s *stubResolveSearcher) Enabled() []indexer.Indexer { return nil }
+
+func (s *stubResolveSearcher) SearchAll(context.Context, indexer.Query, ...string) ([]indexer.Result, []indexer.SourceError, error) {
+	return nil, nil, nil
+}
+
+func (s *stubResolveSearcher) Get(id string) (indexer.Indexer, bool) {
+	ix, ok := s.indexers[id]
+	return ix, ok
+}
+
+// stubTorrentStore is a TorrentStore test double recording every
+// SetTorrent call, or failing every one when failWith is set.
+type stubTorrentStore struct {
+	records  []store.TorrentRecord
+	failWith error
+}
+
+func (s *stubTorrentStore) SetTorrent(rec store.TorrentRecord) error {
+	if s.failWith != nil {
+		return s.failWith
+	}
+
+	s.records = append(s.records, rec)
+
+	return nil
+}
+
+// stubDedupEngine is a minimal engine.Engine test double whose List()
+// returns a fixed set of statuses (including an InfoHash — something
+// internal/engine/fake never populates from AddSource, since a real
+// engine only learns an infohash once it parses the magnet or fetches
+// metadata) and whose Add fails the test outright: duplicateTorrentID's
+// whole point is that Add is never reached for a known-duplicate infohash.
+type stubDedupEngine struct {
+	t        *testing.T
+	statuses []engine.TorrentStatus
+	updates  chan []engine.TorrentStatus
+}
+
+func newStubDedupEngine(t *testing.T, statuses ...engine.TorrentStatus) *stubDedupEngine {
+	t.Helper()
+	return &stubDedupEngine{t: t, statuses: statuses, updates: make(chan []engine.TorrentStatus)}
+}
+
+func (e *stubDedupEngine) Add(context.Context, engine.AddSource) (string, error) {
+	e.t.Helper()
+	e.t.Fatal("Add called — duplicate detection should have short-circuited it")
+	return "", nil
+}
+func (e *stubDedupEngine) Pause(string) error           { return nil }
+func (e *stubDedupEngine) Resume(string) error          { return nil }
+func (e *stubDedupEngine) Remove(string, bool) error    { return nil }
+func (e *stubDedupEngine) List() []engine.TorrentStatus { return e.statuses }
+
+func (e *stubDedupEngine) Files(string) ([]engine.FileStatus, error) { return nil, nil }
+func (e *stubDedupEngine) Updates() <-chan []engine.TorrentStatus    { return e.updates }
+func (e *stubDedupEngine) Close() error                              { return nil }
+
+var _ engine.Engine = (*stubDedupEngine)(nil)
+
+// TestStartAddResolvesWhenMagnetIsEmpty is T-070's first acceptance line:
+// "Calls Resolve first when the result lacks a magnet." The magnet a
+// successful Resolve fills in is what actually reaches engine.Add.
+func TestStartAddResolvesWhenMagnetIsEmpty(t *testing.T) {
+	eng := fake.New()
+	t.Cleanup(func() { _ = eng.Close() })
+
+	const resolvedMagnet = "magnet:?xt=urn:btih:resolved00"
+
+	ix := &resolvingIndexer{id: "src-a", resolveFn: func(r indexer.Result) (indexer.Result, error) {
+		r.Magnet = resolvedMagnet
+		r.InfoHash = "resolved00"
+
+		return r, nil
+	}}
+
+	m := New(eng, testTheme(), WithSearcher(newStubResolveSearcher(ix)))
+	m.details = m.details.withResult(indexer.Result{
+		Title: "needs-resolve.iso", IndexerID: "src-a", TorrentURL: "https://example.org/t/1",
+	})
+
+	updated, cmd := m.handleAddFromDetails()
+	m = updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected a cmd dispatching Resolve")
+	}
+	if ix.calls != 0 {
+		t.Fatalf("Resolve called synchronously inside Update (calls=%d), want it deferred to the returned cmd", ix.calls)
+	}
+
+	msg := cmd()
+
+	resolveMsg, ok := msg.(resolveResultMsg)
+	if !ok {
+		t.Fatalf("cmd() = %#v (%T), want resolveResultMsg", msg, msg)
+	}
+	if resolveMsg.err != nil {
+		t.Fatalf("resolveResultMsg.err = %v, want nil", resolveMsg.err)
+	}
+	if ix.calls != 1 {
+		t.Fatalf("ix.calls = %d, want 1", ix.calls)
+	}
+
+	updated, addCmd := m.Update(resolveMsg)
+	m = updated.(Model)
+
+	if addCmd == nil {
+		t.Fatal("expected a cmd dispatching the add after a successful resolve")
+	}
+
+	addMsg, ok := addCmd().(addResultMsg)
+	if !ok {
+		t.Fatalf("addCmd() did not produce addResultMsg")
+	}
+	if addMsg.err != nil {
+		t.Fatalf("addResultMsg.err = %v, want nil", addMsg.err)
+	}
+	if addMsg.magnet != resolvedMagnet {
+		t.Errorf("addResultMsg.magnet = %q, want the resolved magnet %q", addMsg.magnet, resolvedMagnet)
+	}
+
+	updated, _ = m.Update(addMsg)
+	m = updated.(Model)
+
+	if m.screen != ScreenDownloads {
+		t.Fatalf("screen = %v, want ScreenDownloads", m.screen)
+	}
+	if len(eng.List()) != 1 {
+		t.Fatalf("engine.List() has %d entries, want 1", len(eng.List()))
+	}
+}
+
+// TestStartAddResolveFailureSurfacesAsStatusBarErrorNotACrash is T-070's
+// first acceptance line's second half: a Resolve failure is a status-bar
+// message, never a panic, and engine.Add is never reached.
+func TestStartAddResolveFailureSurfacesAsStatusBarErrorNotACrash(t *testing.T) {
+	eng := fake.New()
+	t.Cleanup(func() { _ = eng.Close() })
+
+	resolveErr := errors.New("example.org: resolve failed")
+	ix := &resolvingIndexer{id: "src-a", resolveFn: func(r indexer.Result) (indexer.Result, error) {
+		return r, resolveErr
+	}}
+
+	m := New(eng, testTheme(), WithSearcher(newStubResolveSearcher(ix)))
+	m.details = m.details.withResult(indexer.Result{Title: "broken.iso", IndexerID: "src-a"})
+
+	updated, cmd := m.handleAddFromDetails()
+	m = updated.(Model)
+
+	resolveMsg, ok := cmd().(resolveResultMsg)
+	if !ok {
+		t.Fatalf("cmd() did not produce resolveResultMsg")
+	}
+
+	updated, _ = m.Update(resolveMsg)
+	m = updated.(Model)
+
+	if !strings.Contains(m.statusBar.Message(), "couldn't add") {
+		t.Errorf("statusBar.Message() = %q, want it to mention the resolve failure", m.statusBar.Message())
+	}
+	if len(eng.List()) != 0 {
+		t.Fatalf("engine.List() has %d entries, want 0 — Add must not have been called", len(eng.List()))
+	}
+}
+
+// TestStartAddNoSourceAvailableToResolvePushesCantAdd covers a Result whose
+// IndexerID names no currently registered source (or no Searcher was wired
+// at all): the add is refused with a readable reason instead of panicking
+// on a nil lookup.
+func TestStartAddNoSourceAvailableToResolvePushesCantAdd(t *testing.T) {
+	m := New(fake.New(), testTheme()) // no WithSearcher
+	m.details = m.details.withResult(indexer.Result{Title: "orphan.iso", IndexerID: "gone"})
+
+	updated, _ := m.handleAddFromDetails()
+	m = updated.(Model)
+
+	if !strings.Contains(m.statusBar.Message(), "can't add") {
+		t.Errorf("statusBar.Message() = %q, want it to mention the add failure", m.statusBar.Message())
+	}
+}
+
+// TestStartAddDuplicateInfoHashSelectsExistingDownloadInsteadOfAddingTwice
+// is T-070's second acceptance line: a Result whose infohash matches an
+// already-tracked torrent (case-insensitively) selects that existing entry
+// — switches to the downloads screen and points the selection cursor at
+// it — instead of calling engine.Add a second time.
+func TestStartAddDuplicateInfoHashSelectsExistingDownloadInsteadOfAddingTwice(t *testing.T) {
+	eng := newStubDedupEngine(t,
+		engine.TorrentStatus{ID: "existing-1", InfoHash: "CAFEBABE01"},
+		engine.TorrentStatus{ID: "existing-0", InfoHash: "aaaa"},
+	)
+
+	m := New(eng, testTheme())
+	m.screen = ScreenSearch // prove startAdd itself switches the screen
+
+	dup := indexer.Result{
+		Title: "duplicate.iso", Magnet: "magnet:?xt=urn:btih:CAFEBABE01", InfoHash: "cafebabe01",
+	}
+
+	updated, cmd := m.startAdd(dup)
+	m = updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected a status-bar cmd from the duplicate path")
+	}
+	if m.screen != ScreenDownloads {
+		t.Fatalf("screen = %v, want ScreenDownloads", m.screen)
+	}
+	if !strings.Contains(m.statusBar.Message(), "already downloading") {
+		t.Errorf("statusBar.Message() = %q, want it to mention the existing download", m.statusBar.Message())
+	}
+
+	wantIndex := m.downloadIndexOf("existing-1")
+	if m.selection != wantIndex {
+		t.Errorf("selection = %d, want %d (the existing torrent's index)", m.selection, wantIndex)
+	}
+}
+
+// TestStartAddEmptyInfoHashNeverMatchesADuplicate confirms a Result that
+// has not yet resolved an infohash (the common pre-Resolve case) is never
+// treated as a duplicate of anything, however it fails afterwards — dedup
+// activates only on a genuine, known infohash match.
+func TestStartAddEmptyInfoHashNeverMatchesADuplicate(t *testing.T) {
+	eng := fake.New()
+	t.Cleanup(func() { _ = eng.Close() })
+
+	m := New(eng, testTheme())
+	m.details = m.details.withResult(indexer.Result{Title: "fresh.iso", Magnet: "magnet:?xt=urn:btih:ffff0000"})
+
+	updated, cmd := m.handleAddFromDetails()
+	m = updated.(Model)
+
+	addMsg, ok := cmd().(addResultMsg)
+	if !ok {
+		t.Fatalf("cmd() did not produce addResultMsg")
+	}
+	if addMsg.err != nil {
+		t.Fatalf("addResultMsg.err = %v, want nil", addMsg.err)
+	}
+}
+
+// TestFinishAddValidatesTheResolvedResult covers a Result whose Resolve
+// succeeds but still leaves neither a Magnet nor a TorrentURL (a source
+// whose Resolve genuinely has nothing to offer this particular result):
+// finishAdd's own Validate call catches it, the same way it always has,
+// and engine.Add is never reached.
+func TestFinishAddValidatesTheResolvedResult(t *testing.T) {
+	eng := newStubDedupEngine(t)
+
+	ix := &resolvingIndexer{id: "src-a"} // resolveFn nil: Resolve is a no-op
+
+	m := New(eng, testTheme(), WithSearcher(newStubResolveSearcher(ix)))
+	m.details = m.details.withResult(indexer.Result{Title: "no-link.iso", IndexerID: "src-a"})
+
+	updated, cmd := m.handleAddFromDetails()
+	m = updated.(Model)
+
+	resolveMsg, ok := cmd().(resolveResultMsg)
+	if !ok {
+		t.Fatalf("cmd() did not produce resolveResultMsg")
+	}
+
+	updated, _ = m.Update(resolveMsg)
+	m = updated.(Model)
+
+	if !strings.Contains(m.statusBar.Message(), "can't add") {
+		t.Errorf("statusBar.Message() = %q, want it to mention the validation failure", m.statusBar.Message())
+	}
+}
+
+// TestFinishAddDetectsADuplicateDiscoveredByResolve covers the case where
+// the infohash match is only known *after* Resolve runs — the common case,
+// since most Results reach the add flow with an empty InfoHash. finishAdd
+// re-checks for a duplicate rather than assuming startAdd's earlier,
+// pre-Resolve check (which had nothing to match on) was the only chance.
+func TestFinishAddDetectsADuplicateDiscoveredByResolve(t *testing.T) {
+	eng := newStubDedupEngine(t, engine.TorrentStatus{ID: "existing-1", InfoHash: "AABBCCDD"})
+
+	ix := &resolvingIndexer{id: "src-a", resolveFn: func(r indexer.Result) (indexer.Result, error) {
+		r.Magnet = "magnet:?xt=urn:btih:AABBCCDD"
+		r.InfoHash = "aabbccdd"
+
+		return r, nil
+	}}
+
+	m := New(eng, testTheme(), WithSearcher(newStubResolveSearcher(ix)))
+	m.details = m.details.withResult(indexer.Result{Title: "found-by-resolve.iso", IndexerID: "src-a"})
+
+	updated, cmd := m.handleAddFromDetails()
+	m = updated.(Model)
+
+	resolveMsg, ok := cmd().(resolveResultMsg)
+	if !ok {
+		t.Fatalf("cmd() did not produce resolveResultMsg")
+	}
+
+	updated, _ = m.Update(resolveMsg)
+	m = updated.(Model)
+
+	if m.screen != ScreenDownloads {
+		t.Fatalf("screen = %v, want ScreenDownloads", m.screen)
+	}
+	if !strings.Contains(m.statusBar.Message(), "already downloading") {
+		t.Errorf("statusBar.Message() = %q, want it to mention the existing download", m.statusBar.Message())
+	}
+}
+
+// TestHandleAddResultPersistsOriginViaTheStore is T-070's third acceptance
+// line: a successful add records IndexerID and SourceURL via the wired
+// TorrentStore.
+func TestHandleAddResultPersistsOriginViaTheStore(t *testing.T) {
+	eng := fake.New()
+	t.Cleanup(func() { _ = eng.Close() })
+
+	ts := &stubTorrentStore{}
+
+	m := New(eng, testTheme(), WithTorrentStore(ts))
+	m.details = m.details.withResult(indexer.Result{
+		Title: "origin.iso", IndexerID: "src-a", SourceURL: "https://example.org/t/9",
+		Magnet: "magnet:?xt=urn:btih:aaaa1111",
+	})
+
+	updated, cmd := m.handleAddFromDetails()
+	m = updated.(Model)
+
+	addMsg, ok := cmd().(addResultMsg)
+	if !ok {
+		t.Fatalf("cmd() did not produce addResultMsg")
+	}
+
+	updated, _ = m.Update(addMsg)
+	m = updated.(Model)
+
+	if len(ts.records) != 1 {
+		t.Fatalf("len(records) = %d, want 1", len(ts.records))
+	}
+
+	rec := ts.records[0]
+	if rec.ID != addMsg.id {
+		t.Errorf("rec.ID = %q, want %q", rec.ID, addMsg.id)
+	}
+	if rec.IndexerID != "src-a" {
+		t.Errorf("rec.IndexerID = %q, want %q", rec.IndexerID, "src-a")
+	}
+	if rec.SourceURL != "https://example.org/t/9" {
+		t.Errorf("rec.SourceURL = %q, want %q", rec.SourceURL, "https://example.org/t/9")
+	}
+	if rec.Name != "origin.iso" {
+		t.Errorf("rec.Name = %q, want %q", rec.Name, "origin.iso")
+	}
+}
+
+// TestHandleAddResultReportsAPersistFailureWithoutUndoingTheAdd confirms a
+// broken TorrentStore is surfaced as a status-bar message but never blocks
+// or reverses the already-successful engine.Add.
+func TestHandleAddResultReportsAPersistFailureWithoutUndoingTheAdd(t *testing.T) {
+	eng := fake.New()
+	t.Cleanup(func() { _ = eng.Close() })
+
+	ts := &stubTorrentStore{failWith: errors.New("disk full")}
+
+	m := New(eng, testTheme(), WithTorrentStore(ts))
+	m.details = m.details.withResult(indexer.Result{Title: "still-added.iso", Magnet: "magnet:?xt=urn:btih:bbbb2222"})
+
+	updated, cmd := m.handleAddFromDetails()
+	m = updated.(Model)
+
+	addMsg, ok := cmd().(addResultMsg)
+	if !ok {
+		t.Fatalf("cmd() did not produce addResultMsg")
+	}
+
+	updated, _ = m.Update(addMsg)
+	m = updated.(Model)
+
+	if m.screen != ScreenDownloads {
+		t.Fatalf("screen = %v, want ScreenDownloads even though persistence failed", m.screen)
+	}
+	if len(eng.List()) != 1 {
+		t.Fatalf("engine.List() has %d entries, want 1 — the add itself must still have succeeded", len(eng.List()))
+	}
+	if !strings.Contains(m.statusBar.Message(), "disk full") {
+		t.Errorf("statusBar.Message() = %q, want it to mention the persist failure", m.statusBar.Message())
+	}
+}
+
+// TestFinishAddResolvesTheConfiguredDownloadDirIntoSavePath is T-070's
+// fourth acceptance line: "the resolved absolute path goes into
+// AddSource.SavePath." WithDownloadDir is this task's own resolution (the
+// configured default only); T-074 replaces it with an interactive
+// per-torrent choice on top of the same flow.
+func TestFinishAddResolvesTheConfiguredDownloadDirIntoSavePath(t *testing.T) {
+	eng := fake.New()
+	t.Cleanup(func() { _ = eng.Close() })
+
+	dir := filepath.Join(t.TempDir(), "downloads")
+
+	m := New(eng, testTheme(), WithDownloadDir(dir))
+	m.details = m.details.withResult(indexer.Result{Title: "dest.iso", Magnet: "magnet:?xt=urn:btih:cccc3333"})
+
+	updated, cmd := m.handleAddFromDetails()
+	m = updated.(Model)
+
+	addMsg, ok := cmd().(addResultMsg)
+	if !ok {
+		t.Fatalf("cmd() did not produce addResultMsg")
+	}
+	if addMsg.err != nil {
+		t.Fatalf("addResultMsg.err = %v, want nil", addMsg.err)
+	}
+
+	statuses := eng.List()
+	if len(statuses) != 1 {
+		t.Fatalf("engine.List() has %d entries, want 1", len(statuses))
+	}
+	if statuses[0].SavePath != filepath.Clean(dir) {
+		t.Errorf("SavePath = %q, want %q", statuses[0].SavePath, filepath.Clean(dir))
+	}
+}
+
+// TestFinishAddLeavesSavePathEmptyWithNoDownloadDirConfigured confirms the
+// no-WithDownloadDir case falls back to engine.AddSource.SavePath's own
+// documented "empty means use the configured default" rather than this
+// flow inventing a path of its own.
+func TestFinishAddLeavesSavePathEmptyWithNoDownloadDirConfigured(t *testing.T) {
+	eng := fake.New()
+	t.Cleanup(func() { _ = eng.Close() })
+
+	m := New(eng, testTheme())
+	m.details = m.details.withResult(indexer.Result{Title: "no-dir.iso", Magnet: "magnet:?xt=urn:btih:dddd4444"})
+
+	_, cmd := m.handleAddFromDetails()
+
+	addMsg, ok := cmd().(addResultMsg)
+	if !ok {
+		t.Fatalf("cmd() did not produce addResultMsg")
+	}
+	if addMsg.err != nil {
+		t.Fatalf("addResultMsg.err = %v, want nil", addMsg.err)
+	}
+
+	if got := eng.List()[0].SavePath; got != "" {
+		t.Errorf("SavePath = %q, want empty (engine's own default)", got)
+	}
+}
+
+// --- handleAddFromResults (enter on the results screen) --------------------
+
+// TestHandleAddFromResultsNoSelectionIsNoop confirms an empty results table
+// makes enter on the results screen a no-op, exactly like the details
+// screen with nothing selected.
+func TestHandleAddFromResultsNoSelectionIsNoop(t *testing.T) {
+	m := New(fake.New(), testTheme())
+
+	updated, cmd := m.handleAddFromResults()
+	m = updated.(Model)
+
+	if cmd != nil {
+		t.Errorf("cmd = %v, want nil", cmd)
+	}
+	if m.statusBar.Message() != "" {
+		t.Errorf("statusBar.Message() = %q, want empty", m.statusBar.Message())
+	}
+}
+
+// TestActionSelectOnResultsScreenAddsTheSelectedResult drives the full path
+// through the real keymap routing (AGENT.md §7: "enter | Add torrent
+// (results)"): enter on ScreenResults with a populated table adds the
+// currently selected row's result.
+func TestActionSelectOnResultsScreenAddsTheSelectedResult(t *testing.T) {
+	eng := fake.New()
+	t.Cleanup(func() { _ = eng.Close() })
+
+	m := New(eng, testTheme())
+	m.screen = ScreenResults
+
+	r := indexer.Result{Title: "from-results.iso", Magnet: "magnet:?xt=urn:btih:eeee5555"}
+	m.lastResults = []indexer.Result{r}
+	m.results = m.results.setResults(m.lastResults, indexer.ModeSearch, time.Now())
+
+	if m.results.table.SelectedID() == "" {
+		t.Fatal("expected setResults to select the only row")
+	}
+
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected a cmd dispatching the add")
+	}
+
+	addMsg, ok := cmd().(addResultMsg)
+	if !ok {
+		t.Fatalf("cmd() did not produce addResultMsg")
+	}
+	if addMsg.name != "from-results.iso" {
+		t.Errorf("addResultMsg.name = %q, want %q", addMsg.name, "from-results.iso")
+	}
+
+	updated, _ = m.Update(addMsg)
+	m = updated.(Model)
+
+	if m.screen != ScreenDownloads {
+		t.Fatalf("screen = %v, want ScreenDownloads", m.screen)
+	}
+	if len(eng.List()) != 1 {
+		t.Fatalf("engine.List() has %d entries, want 1", len(eng.List()))
 	}
 }
 

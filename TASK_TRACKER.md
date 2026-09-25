@@ -73,21 +73,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 7 — Downloads
 
-
-### T-070 · Add flow
-```
-status: todo
-depends: T-063, T-031
-tier: M
-```
-**Acceptance**
-- Calls `Resolve` first when the result lacks a magnet; failures surface as a status-bar error,
-  not a crash.
-- Duplicate infohash already in the engine is detected and selects the existing row instead of
-  adding twice.
-- `Origin` populated with indexer ID and source URL, persisted via the store.
-- Destination is chosen here via T-074 before the engine is handed the torrent; the resolved
-  absolute path goes into `AddSource.SavePath`.
+**Done (archived in `docs/tracker-archive.md`):** `T-070` Add flow.
 
 ---
 
@@ -853,6 +839,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-109 | 2026-09-25 | T-060: internal/tui defines its own Searcher/HistoryStore interfaces, never a concrete Registry/Store; New() gains a variadic Option instead of new required params; esc-cancel/space-toggle handled as raw key checks, not declarative Bindings, to stay inside the search screen's help overlay's 24-line budget at the 80×24 floor; empty query dispatches Latest; L jumps to Results once the fetch resolves |
 | DEC-111 | 2026-09-25 | T-062: components.Table gains Row.SortKey, Column.SortMissingLast, and Column.Accent (all generic, no Trust-specific logic); Trust's sort key comes from the real Trust value since Badge() renders Unknown/None identically; Unknown pins last in both sort directions; the "t" filter toggle re-derives rows from resultsModel.allRows |
 | DEC-112 | 2026-09-25 | T-063: indexer.ExtraKeyFiles is a new well-known, optional Extra convention for the details screen's file list; internal/platform.OpenURL (open/xdg-open/rundll32, http(s)-only) backs `u`; results-screen j/k now move the table's own cursor instead of the unused generic m.selection |
+| DEC-113 | 2026-09-26 | T-070: resolves the T-070/T-074 mutual dependency — SavePath defaults via WithDownloadDir only, T-074 adds the real picker; dedup matches only on Result.InfoHash; Resolve triggers on an empty Magnet via new Searcher.Get; Origin persists via new optional TorrentStore; duplicate selects the existing row via m.selection; results-screen enter now also adds |
 
 ## Blocked
 

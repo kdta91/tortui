@@ -17,6 +17,10 @@
 // (T-053) is implemented in internal/tui/components. The status bar (T-052)
 // is also implemented in internal/tui/components and wired in here as
 // root.go's bottom line and ContextErrorDetail modal.
+//
+// details.go also owns the add flow (T-070): Resolve, duplicate-infohash
+// detection, Origin persistence, and destination resolution, reachable from
+// either the details screen's or the results screen's own enter key.
 package tui
 
 import (

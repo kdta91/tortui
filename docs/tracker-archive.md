@@ -3369,6 +3369,35 @@ quit-confirm test updated for it. `make check`, `make race` (tui, platform, inde
 
 ---
 
+## Phase 7 — Downloads
+
+### T-070 · Add flow
+```
+status: done
+depends: T-063, T-031
+tier: M
+```
+**Notes:** `details.go`'s `startAdd`/`finishAdd` now back enter on both the details and results
+screens. Resolve fires when `Magnet` is empty, via a new `Searcher.Get(id)`; failures push a
+status-bar message, never reach `engine.Add`. Dedup matches `Result.InfoHash` (case-insensitive)
+against `eng.List()`, checked before and after Resolve; a match switches to `ScreenDownloads` and
+points `m.selection` at it instead of adding twice. A successful add persists a
+`store.TorrentRecord` through a new optional `TorrentStore` (`WithTorrentStore`). `SavePath` comes
+from a new `WithDownloadDir` option (the configured default only — see DEC-113 for why T-074's
+own picker is deferred rather than built ahead of schedule here). `make check`, `make race`
+(`internal/tui`), `make cover` (`internal/tui` 93.5%) green.
+
+**Acceptance**
+- Calls `Resolve` first when the result lacks a magnet; failures surface as a status-bar error,
+  not a crash.
+- Duplicate infohash already in the engine is detected and selects the existing row instead of
+  adding twice.
+- `Origin` populated with indexer ID and source URL, persisted via the store.
+- Destination is chosen here via T-074 before the engine is handed the torrent; the resolved
+  absolute path goes into `AddSource.SavePath`.
+
+---
+
 ## Blocked — Resolved
 
 

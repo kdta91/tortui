@@ -11,6 +11,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 
 	"github.com/kdta91/tortui/internal/engine"
 	"github.com/kdta91/tortui/internal/indexer"
+	"github.com/kdta91/tortui/internal/store"
 	"github.com/kdta91/tortui/internal/tui/theme"
 )
 
@@ -71,15 +74,24 @@ func (m Model) handleOpenDetails() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// addResultMsg carries handleAddFromDetails' engine.Add outcome back into
-// Update (root.go, handleAddResult). name is the result's title, captured
-// at dispatch time for the confirmation message — the engine itself has no
+// addResultMsg carries addTorrentCmd's engine.Add outcome back into Update
+// (root.go, handleAddResult). name is the result's title, captured at
+// dispatch time for the confirmation message — the engine itself has no
 // notion of "title" until its own metadata arrives, and until then a
 // torrent is only ever addressable by the id this message also carries.
+// indexerID/sourceURL/savePath/magnet/torrentURL are exactly what
+// handleAddResult needs to persist a store.TorrentRecord (T-070 acceptance:
+// "Origin populated ... persisted via the store") without handleAddResult
+// having to reach back into whatever Result produced them.
 type addResultMsg struct {
-	id   string
-	name string
-	err  error
+	id         string
+	name       string
+	err        error
+	indexerID  string
+	sourceURL  string
+	savePath   string
+	magnet     string
+	torrentURL string
 }
 
 // addTorrentCmd returns the tea.Cmd that actually calls eng.Add — off
@@ -88,25 +100,81 @@ type addResultMsg struct {
 // happen asynchronously), so this resolves quickly even though it still
 // goes through the same async-Cmd path as every other engine call in this
 // package.
-func addTorrentCmd(eng engine.Engine, src engine.AddSource, name string) tea.Cmd {
+func addTorrentCmd(eng engine.Engine, src engine.AddSource, name, indexerID, sourceURL string) tea.Cmd {
 	return func() tea.Msg {
 		id, err := eng.Add(context.Background(), src)
-		return addResultMsg{id: id, name: name, err: err}
+		return addResultMsg{
+			id: id, name: name, err: err,
+			indexerID: indexerID, sourceURL: sourceURL, savePath: src.SavePath,
+			magnet: src.Magnet, torrentURL: src.TorrentURL,
+		}
+	}
+}
+
+// resolveResultMsg carries resolveCmd's indexer.Indexer.Resolve outcome back
+// into Update (root.go, handleResolveResult). result is r unchanged on
+// failure, so a caller that only inspects it on the success path never sees
+// anything but the resolved value.
+type resolveResultMsg struct {
+	result indexer.Result
+	err    error
+}
+
+// resolveCmd returns the tea.Cmd that calls ix.Resolve — off Update's own
+// goroutine, per AGENT.md §6.1, since a real adapter's Resolve makes a
+// network request.
+func resolveCmd(ix indexer.Indexer, r indexer.Result) tea.Cmd {
+	return func() tea.Msg {
+		resolved, err := ix.Resolve(context.Background(), r)
+		if err != nil {
+			return resolveResultMsg{result: r, err: fmt.Errorf("resolve %q: %w", r.Title, err)}
+		}
+
+		return resolveResultMsg{result: resolved}
 	}
 }
 
 // handleAddFromDetails implements enter (ActionSelect) on the details
 // screen — T-063 acceptance: "enter adds the torrent and switches to the
-// downloads screen." Only Magnet/TorrentURL are threaded through; Resolve,
-// duplicate-infohash detection, Origin, and destination selection are
-// T-070's job (it depends on this task and builds all four on top of this
-// same enter key), so this is deliberately the smallest add path T-063's
-// own acceptance text asks for, not a preview of T-070's.
+// downloads screen," now via startAdd's full T-070 flow (Resolve, dedup,
+// Origin, destination).
 func (m Model) handleAddFromDetails() (tea.Model, tea.Cmd) {
 	if !m.details.hasResult {
 		return m, nil
 	}
 
+	return m.startAdd(m.details.result)
+}
+
+// handleAddFromResults implements enter (ActionSelect) on the results
+// screen (AGENT.md §7: "enter | Add torrent (results)"). It resolves the
+// selected table row back to the indexer.Result that produced it — the
+// table itself only carries the row's already-rendered cells
+// (components.Row) — the same lookup handleOpenDetails uses for the `d`
+// key, then runs the same startAdd flow the details screen's enter key
+// does. A no-op when nothing is selected.
+func (m Model) handleAddFromResults() (tea.Model, tea.Cmd) {
+	id := m.results.table.SelectedID()
+	if id == "" {
+		return m, nil
+	}
+
+	for _, r := range m.lastResults {
+		if resultRowID(r) == id {
+			return m.startAdd(r)
+		}
+	}
+
+	return m, nil
+}
+
+// startAdd is the shared implementation behind enter's "add torrent"
+// meaning on both the details and results screens (T-070): a duplicate
+// infohash already tracked by the engine selects that existing entry
+// instead of adding a second copy; otherwise a Result missing a magnet is
+// resolved first (calling the originating source's own Resolve), and only
+// then handed to finishAdd.
+func (m Model) startAdd(r indexer.Result) (tea.Model, tea.Cmd) {
 	if m.eng == nil {
 		var cmd tea.Cmd
 		m.statusBar, cmd = m.statusBar.Push("no engine configured")
@@ -114,7 +182,52 @@ func (m Model) handleAddFromDetails() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	r := m.details.result
+	if id, ok := m.duplicateTorrentID(r.InfoHash); ok {
+		return m.selectExistingDownload(id, r.Title)
+	}
+
+	if strings.TrimSpace(r.Magnet) == "" {
+		ix, ok := m.lookupIndexer(r.IndexerID)
+		if !ok {
+			var cmd tea.Cmd
+			m.statusBar, cmd = m.statusBar.Push(fmt.Sprintf("can't add %q: no source available to resolve it", r.Title))
+
+			return m, cmd
+		}
+
+		return m, resolveCmd(ix, r)
+	}
+
+	return m.finishAdd(r)
+}
+
+// handleResolveResult applies resolveCmd's outcome (root.go's Update,
+// resolveResultMsg case): a failed Resolve is reported in the status bar
+// without leaving the current screen or ever calling engine.Add (T-070
+// acceptance: "failures surface as a status-bar error, not a crash"); a
+// successful one continues into finishAdd with the now-resolved Result.
+func (m Model) handleResolveResult(msg resolveResultMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		var cmd tea.Cmd
+		m.statusBar, cmd = m.statusBar.Push(fmt.Sprintf("couldn't add: %v", msg.err))
+
+		return m, cmd
+	}
+
+	return m.finishAdd(msg.result)
+}
+
+// finishAdd validates r (Resolve may have left it without a usable link),
+// re-checks for a duplicate infohash (Resolve is exactly the step that most
+// often discovers one), and dispatches the actual engine.Add with the
+// resolved destination (T-070: "the resolved absolute path goes into
+// AddSource.SavePath" — T-074 replaces resolveSavePath's default-only
+// answer with an interactive picker on top of this same flow).
+func (m Model) finishAdd(r indexer.Result) (tea.Model, tea.Cmd) {
+	if id, ok := m.duplicateTorrentID(r.InfoHash); ok {
+		return m.selectExistingDownload(id, r.Title)
+	}
+
 	if err := r.Validate(); err != nil {
 		var cmd tea.Cmd
 		m.statusBar, cmd = m.statusBar.Push(fmt.Sprintf("can't add: %v", err))
@@ -122,18 +235,107 @@ func (m Model) handleAddFromDetails() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	src := engine.AddSource{Magnet: r.Magnet, TorrentURL: r.TorrentURL}
+	src := engine.AddSource{
+		Magnet:     r.Magnet,
+		TorrentURL: r.TorrentURL,
+		SavePath:   m.resolveSavePath(),
+	}
 
-	return m, addTorrentCmd(m.eng, src, r.Title)
+	return m, addTorrentCmd(m.eng, src, r.Title, r.IndexerID, r.SourceURL)
+}
+
+// resolveSavePath is T-070's own answer to "where does this torrent's data
+// go": the configured default download directory, cleaned, or "" (the
+// engine's own configured-default fallback, per AddSource.SavePath's doc)
+// when none was wired in via WithDownloadDir. T-074 replaces this with a
+// per-torrent destination the user actually chose, without this flow's
+// callers (startAdd/finishAdd) needing to change.
+func (m Model) resolveSavePath() string {
+	if strings.TrimSpace(m.downloadDir) == "" {
+		return ""
+	}
+
+	return filepath.Clean(m.downloadDir)
+}
+
+// lookupIndexer finds the indexer.Indexer that produced a Result, by the
+// IndexerID it carries, via the same Searcher the search screen dispatches
+// against (search.go). false when no searcher is wired, or the id names no
+// registered source — a source that existed at search time but has since
+// been removed, for instance.
+func (m Model) lookupIndexer(id string) (indexer.Indexer, bool) {
+	if m.searcher == nil {
+		return nil, false
+	}
+
+	return m.searcher.Get(id)
+}
+
+// duplicateTorrentID reports the engine ID of an already-tracked torrent
+// whose InfoHash matches infoHash, case-insensitively (hex infohashes from
+// different sources are not guaranteed the same case). An empty infoHash
+// never matches — most Results reach here unresolved, and treating an
+// unknown infohash as "duplicate of everything" would be wrong, not
+// conservative.
+func (m Model) duplicateTorrentID(infoHash string) (string, bool) {
+	infoHash = strings.TrimSpace(infoHash)
+	if infoHash == "" || m.eng == nil {
+		return "", false
+	}
+
+	for _, s := range m.eng.List() {
+		if s.InfoHash != "" && strings.EqualFold(s.InfoHash, infoHash) {
+			return s.ID, true
+		}
+	}
+
+	return "", false
+}
+
+// selectExistingDownload implements T-070's "duplicate infohash ... selects
+// the existing row instead of adding twice": switch to the downloads
+// screen and point the root's generic selection cursor (root.go's
+// Model.selection — "a later screen is free to replace it with its own
+// bounded, data-backed cursor") at the matching torrent, in the same
+// sorted-by-ID order downloadIndexOf defines, rather than calling
+// engine.Add a second time.
+func (m Model) selectExistingDownload(id, title string) (tea.Model, tea.Cmd) {
+	m.screen = ScreenDownloads
+	m.selection = m.downloadIndexOf(id)
+
+	var cmd tea.Cmd
+	m.statusBar, cmd = m.statusBar.Push("already downloading: " + title)
+
+	return m, cmd
+}
+
+// downloadIndexOf returns id's position in m.eng.List() sorted by ID — a
+// fixed, deterministic order good enough for selectExistingDownload's
+// stopgap cursor ahead of T-071's real, data-backed downloads table. 0 when
+// id is not found (never expected: the caller just read it off the same
+// List()).
+func (m Model) downloadIndexOf(id string) int {
+	statuses := m.eng.List()
+	sort.Slice(statuses, func(i, j int) bool { return statuses[i].ID < statuses[j].ID })
+
+	for i, s := range statuses {
+		if s.ID == id {
+			return i
+		}
+	}
+
+	return 0
 }
 
 // handleAddResult applies addTorrentCmd's outcome (root.go's Update,
 // addResultMsg case). A failed Add is reported in the status bar without
-// leaving the details screen — switching to an empty downloads screen on a
+// leaving the current screen — switching to an empty downloads screen on a
 // failed add would be a worse outcome than staying put with a readable
-// error. A successful Add switches to the downloads screen (the acceptance
-// text's "switches to the downloads screen") and pushes a confirmation
-// naming what was added.
+// error. A successful Add persists a store.TorrentRecord when a
+// TorrentStore is wired (T-070 acceptance: "Origin populated ... persisted
+// via the store" — a persistence failure is reported but never blocks the
+// add itself, which already succeeded), switches to the downloads screen,
+// and pushes a confirmation naming what was added.
 func (m Model) handleAddResult(msg addResultMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		var cmd tea.Cmd
@@ -142,12 +344,31 @@ func (m Model) handleAddResult(msg addResultMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	var persistErrCmd tea.Cmd
+
+	if m.torrentStore != nil {
+		rec := store.TorrentRecord{
+			ID:         msg.id,
+			IndexerID:  msg.indexerID,
+			SourceURL:  msg.sourceURL,
+			AddedAt:    time.Now(),
+			SavePath:   msg.savePath,
+			Name:       msg.name,
+			Magnet:     msg.magnet,
+			TorrentURL: msg.torrentURL,
+		}
+
+		if err := m.torrentStore.SetTorrent(rec); err != nil {
+			m.statusBar, persistErrCmd = m.statusBar.Push(fmt.Sprintf("couldn't save torrent record: %v", err))
+		}
+	}
+
 	m.screen = ScreenDownloads
 
 	var cmd tea.Cmd
 	m.statusBar, cmd = m.statusBar.Push("added " + msg.name)
 
-	return m, cmd
+	return m, tea.Batch(persistErrCmd, cmd)
 }
 
 // openSourceCmd returns the tea.Cmd that calls open(rawURL) and reports any

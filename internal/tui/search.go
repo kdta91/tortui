@@ -26,8 +26,10 @@ import (
 	"github.com/kdta91/tortui/internal/tui/theme"
 )
 
-// Searcher is the subset of *indexer.Registry the search screen needs:
-// the enabled sources to offer in the multi-select, and the fan-out itself.
+// Searcher is the subset of *indexer.Registry the search screen and the add
+// flow (T-070) need: the enabled sources to offer in the multi-select, the
+// fan-out itself, and — for the add flow's Resolve step — looking a source
+// back up by the ID a Result carries.
 type Searcher interface {
 	// Enabled returns the sources the multi-select should offer, in a
 	// stable order. The search screen snapshots this once, at
@@ -41,6 +43,12 @@ type Searcher interface {
 	// source that failed or was skipped, exactly as
 	// (*indexer.Registry).SearchAll documents.
 	SearchAll(ctx context.Context, q indexer.Query, ids ...string) ([]indexer.Result, []indexer.SourceError, error)
+
+	// Get returns the indexer.Indexer registered under id, exactly as
+	// (*indexer.Registry).Get documents — the add flow (details.go) uses
+	// this to find the source that produced a Result, so it can call that
+	// source's own Resolve before handing the result to the engine.
+	Get(id string) (indexer.Indexer, bool)
 }
 
 // HistoryStore is the subset of *store.Store the search screen reads recent
