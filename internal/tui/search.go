@@ -373,7 +373,11 @@ type searchResultMsg struct {
 	// status bar's "N/M sources failed" needs M even when every one of
 	// them failed and so contributed nothing to results.
 	queried int
-	err     error
+	// queriedIDs is exactly which sources dispatchSearch asked, in
+	// dispatch order — T-061's empty-results state names them ("no
+	// results from: alpha, bravo"), which a bare count cannot do.
+	queriedIDs []string
+	err        error
 }
 
 // searchTickMsg advances the in-flight spinner. Same gen-guard as
@@ -399,8 +403,60 @@ func searchTickCmd(gen int) tea.Cmd {
 func dispatchSearchCmd(searcher Searcher, ctx context.Context, q indexer.Query, ids []string, gen int) tea.Cmd {
 	return func() tea.Msg {
 		results, sourceErrs, err := searcher.SearchAll(ctx, q, ids...)
-		return searchResultMsg{gen: gen, query: q, results: results, sourceErrs: sourceErrs, queried: len(ids), err: err}
+		return searchResultMsg{
+			gen: gen, query: q, results: results, sourceErrs: sourceErrs,
+			queried: len(ids), queriedIDs: ids, err: err,
+		}
 	}
+}
+
+// handleRefresh is R's (ActionRefresh) implementation — AGENT.md §7: "R |
+// Refresh current results". It re-runs m.lastQuery against
+// m.lastQueriedIDs: the exact query and source set that produced the rows
+// currently on screen, never whatever the search form happens to hold right
+// now. The form is independent state — a user can commit text into it, or
+// flip its mode selector, without ever submitting — so re-dispatching the
+// form's live contents would refresh the wrong thing whenever it has
+// drifted from the last dispatch (T-061 review finding: commit "x" into the
+// query field without submitting, press L, then R — the old code dispatched
+// mode=Search text="x" instead of staying on the Latest results actually
+// showing). Re-dispatching the exact prior query is also what makes
+// "honouring the T-012 cache" true: SearchAll only serves a cache hit for
+// an identical query, so anything else here would often miss the cache too.
+//
+// Unlike dispatchSearch (enter/L: a genuinely new search the user typed or
+// asked for), a refresh is not new input: it never calls AddHistory, and
+// with nothing searched yet (m.lastQueriedIDs empty) it just pushes a hint
+// rather than dispatching anything.
+func (m Model) handleRefresh() (Model, tea.Cmd) {
+	if m.searcher == nil {
+		var cmd tea.Cmd
+		m.statusBar, cmd = m.statusBar.Push("no sources configured")
+
+		return m, cmd
+	}
+
+	if len(m.lastQueriedIDs) == 0 {
+		var cmd tea.Cmd
+		m.statusBar, cmd = m.statusBar.Push("nothing to refresh yet")
+
+		return m, cmd
+	}
+
+	// Supersede whatever is already in flight, exactly like dispatchSearch.
+	if m.search.inFlight && m.search.cancel != nil {
+		m.search.cancel()
+	}
+
+	m.search.generation++
+	gen := m.search.generation
+	m.search.inFlight = true
+	m.search.spinnerFrame = 0
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.search.cancel = cancel
+
+	return m, tea.Batch(dispatchSearchCmd(m.searcher, ctx, m.lastQuery, m.lastQueriedIDs, gen), searchTickCmd(gen))
 }
 
 // dispatchSearch is enter's (ActionSelect) and L's (ActionLatest) shared
@@ -499,6 +555,9 @@ func (m Model) handleSearchResult(msg searchResultMsg) (tea.Model, tea.Cmd) {
 	m.lastResults = msg.results
 	m.lastSourceErrs = msg.sourceErrs
 	m.lastQuery = msg.query
+	m.lastQueriedIDs = msg.queriedIDs
+	m.results = m.results.setResults(msg.results, msg.query.Mode, time.Now())
+	m.statusBar.CacheHint = cacheSummary(msg.results)
 
 	failed := make([]string, 0, len(msg.sourceErrs))
 	for _, se := range msg.sourceErrs {
@@ -520,8 +579,7 @@ func (m Model) handleSearchResult(msg searchResultMsg) (tea.Model, tea.Cmd) {
 
 	// T-060 acceptance ("L ... jumps to results") and the natural reading
 	// of enter's own dispatch: once there is something to show, go show
-	// it. T-061 (not yet built) is what actually renders m.lastResults;
-	// until then this lands on Results' placeholder body.
+	// it. T-061's results.go is what actually renders m.lastResults.
 	m.screen = ScreenResults
 
 	return m, nil

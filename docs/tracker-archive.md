@@ -3284,6 +3284,38 @@ all green.
 
 ---
 
+### T-061 · Results screen
+```
+status: done
+depends: T-060, T-053
+tier: M
+```
+**Notes:** `results.go`'s `resultsModel` wraps `components.Table`. `s`/`S` cycle/reverse sort;
+`R` re-dispatches `m.lastQuery`/`m.lastQueriedIDs` via `search.go:handleRefresh` (not the live
+search form, which the reviewer caught diverging after an unsubmitted edit) and skips
+`AddHistory`. Size/S-L/Age `Less` funcs parse the *rendered* cell text back (Table has no
+separate sort key); `sortAscBy`/`sortDescBy` guarantee direction regardless of prior state.
+Cache visibility used `indexer.ExtraKeyCacheHit` on `Result.Extra` (same pattern as
+`ExtraKeySources`) rather than widen `SearchAll`'s signature (DEC-110; resolves backlog
+`T-921`). Non-blocking findings logged as backlog `T-957`/`T-958` — see PR #40 for the full
+review-remediation account. `make check`, `make race` (`internal/tui`, `internal/indexer`),
+`make cover` (tui 94.4%, indexer 100%) green.
+
+**Acceptance**
+- Columns exactly `Title · Size · S/L · Trust · Age · Source`. Default sort follows the mode:
+  seeders desc for Search, age ascending (newest first) for Latest.
+- Header states the current mode and query, so a Latest view is never mistaken for a stale
+  search result.
+- `R` refreshes, honouring the T-012 cache and per-source minimum interval; the status bar shows
+  when results came from cache rather than a fresh fetch.
+- Sizes human-readable; ages relative (`3h`, `2d`, `1y`).
+- Per-source failures shown in the status bar without hiding successful results.
+- Zero results shows an explicit empty state naming which sources were queried, and in Search
+  mode offers Latest as a next step.
+- `teatest` covers render, sort cycling, and the partial-failure case.
+
+---
+
 ## Blocked — Resolved
 
 

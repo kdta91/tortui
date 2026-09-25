@@ -793,6 +793,34 @@ func TestSearchAllCacheServesRepeatedQuery(t *testing.T) {
 	}
 }
 
+// TestSearchAllTagsCacheHitOnResults confirms every result SearchAll returns
+// carries ExtraKeyCacheHit ("false" for the fetch that actually queried the
+// source, "true" for every repeat served from the registry's cache) — the
+// signal T-061's results screen aggregates into its status-bar "results came
+// from cache" indicator.
+func TestSearchAllTagsCacheHitOnResults(t *testing.T) {
+	src := okSource("alpha", hit("alpha", "1", "alpha one", 6))
+	r, clock := newTestRegistry(t, Config{CacheTTL: time.Minute, MinRefreshInterval: time.Second}, src)
+	q := Query{Text: "same query"}
+
+	fresh, _, err := r.SearchAll(context.Background(), q)
+	if err != nil {
+		t.Fatalf("first SearchAll: %v", err)
+	}
+	if len(fresh) != 1 || fresh[0].Extra[ExtraKeyCacheHit] != "false" {
+		t.Fatalf("fresh fetch result Extra[%s] = %q, want %q", ExtraKeyCacheHit, fresh[0].Extra[ExtraKeyCacheHit], "false")
+	}
+
+	clock.advance(time.Second)
+	cached, _, err := r.SearchAll(context.Background(), q)
+	if err != nil {
+		t.Fatalf("cached SearchAll: %v", err)
+	}
+	if len(cached) != 1 || cached[0].Extra[ExtraKeyCacheHit] != "true" {
+		t.Fatalf("cached fetch result Extra[%s] = %q, want %q", ExtraKeyCacheHit, cached[0].Extra[ExtraKeyCacheHit], "true")
+	}
+}
+
 func TestSearchAllCacheKeyCoversTheWholeQuery(t *testing.T) {
 	src := okSource("alpha", hit("alpha", "1", "alpha one", 6))
 	r, clock := newTestRegistry(t, Config{CacheTTL: time.Hour, MinRefreshInterval: time.Second}, src)
