@@ -4,11 +4,8 @@
 // §4) — never a concrete implementation — so it can be developed and tested
 // end-to-end against internal/engine/fake with no network and no swarm.
 //
-// One of the five screens (settings) is still a placeholder here: this
-// package only routes to it. Its real content belongs to a later task
-// (T-080 settings), as does the shared modal/confirm component's use on
-// that screen. Search (T-060), results (T-061), details (T-063), and
-// downloads (T-071) are real: search.go owns the query input, mode
+// Search (T-060), results (T-061), details (T-063), downloads (T-071), and
+// settings (T-080) are real: search.go owns the query input, mode
 // selector, source multi-select, and category/min-seeders filters;
 // results.go owns the sortable results table; details.go owns a single
 // result's full information, the `u` open-source-in-browser action, and the
@@ -24,7 +21,9 @@
 // details.go also owns the add flow (T-070): Resolve, duplicate-infohash
 // detection, and Origin persistence, reachable from either the details
 // screen's or the results screen's own enter key; destination.go owns its
-// destination picker (T-074).
+// destination picker (T-074); settings.go owns indexer management: the
+// source list, the add/edit form, test-before-save, and remove-with-confirm
+// (T-080).
 package tui
 
 import (
@@ -168,6 +167,28 @@ const (
 	// DEC-092 for why this is not literally bound to tab as the T-052
 	// acceptance text's wording suggests.
 	ActionToggleErrorDetail Action = "toggle-error-detail"
+
+	// Settings screen actions (T-080). Bound only in
+	// screenContext(ScreenSettings) — see GlobalBindings.
+	ActionSourceAdd           Action = "source-add"
+	ActionSourceEdit          Action = "source-edit"
+	ActionSourceTest          Action = "source-test"
+	ActionSourceToggleEnabled Action = "source-toggle-enabled"
+	ActionSourceRemove        Action = "source-remove"
+	ActionSourceReloadDefs    Action = "source-reload-definitions"
+
+	// Add/edit source form actions (T-080). Bound only in
+	// ContextSourceForm; settings.go's handleSourceFormKey is the actual
+	// source of truth — these exist so the `?` overlay and conflict
+	// checking have real Binding data to work from, the same "declare it
+	// even though a dedicated handler owns the key" pattern
+	// destinationBindings already uses for ContextDestination.
+	ActionFormNextField Action = "form-next-field"
+	ActionFormPrevField Action = "form-prev-field"
+	ActionFormSave      Action = "form-save"
+	ActionFormTest      Action = "form-test"
+	ActionFormReveal    Action = "form-reveal"
+	ActionFormImport    Action = "form-import"
 )
 
 // Context is where a binding applies: one of the five screens (non-modal),
@@ -198,6 +219,12 @@ const (
 	// ContextDestination is the add flow's destination picker (T-074,
 	// destination.go).
 	ContextDestination Context = "modal:destination"
+	// ContextSourceForm is the settings screen's add/edit source form
+	// (T-080, settings.go).
+	ContextSourceForm Context = "modal:source-form"
+	// ContextSourceRemoveConfirm is the settings screen's `x` remove
+	// confirmation (T-080).
+	ContextSourceRemoveConfirm Context = "modal:source-remove-confirm"
 )
 
 // screenContext names the Context a given Screen's keymap lookups use.
@@ -307,9 +334,62 @@ func GlobalBindings() []Binding {
 		{Keys: []string{"?"}, Action: ActionHelp, Help: "toggle this help overlay"},
 		{Keys: []string{"q", "ctrl+c"}, Action: ActionQuit, Help: "quit (prompts if downloads active)"},
 		{
+			// Scoped to every screen except settings (T-080): the source-
+			// error panel is about a search fan-out's failures, and
+			// settings claims "e" for its own edit-source action instead
+			// (settingsScreenBindings) — the two never need to coexist on
+			// the same screen.
 			Keys: []string{"e"}, Action: ActionToggleErrorDetail,
-			Help: "view source errors, if any (T-052; DEC-092)",
+			Help:     "view source errors, if any (T-052; DEC-092)",
+			Contexts: []Context{screenContext(ScreenSearch), screenContext(ScreenResults), screenContext(ScreenDetails), screenContext(ScreenDownloads)},
 		},
+	}
+}
+
+// The settings screen's own list-view keys (a, e, t, space, x, r —
+// ActionSourceAdd/Edit/Test/ToggleEnabled/Remove/ReloadDefs) are
+// deliberately *not* Bindings here, the same trade the search screen's
+// esc/space already made (see the note above helpOverlayBindings):
+// six more lines would push screenContext(ScreenSettings)'s "?" overlay
+// (already carrying every global binding) past the AGENT.md §7 80×24
+// floor. root.go's handleKey claims these keys directly, ahead of the
+// declarative Lookup, when the settings screen has focus and no modal is
+// open; renderSettingsScreen (settings.go) prints its own one-line legend
+// under the list instead, so the keys stay discoverable without a help
+// overlay entry.
+
+// sourceFormBindings documents the add/edit form's own keys (T-080,
+// settings.go's handleSourceFormKey) for the `?` overlay and conflict
+// checking. The form claims almost every key itself — text entry needs
+// runes, space, and backspace too — so unlike every other modal context
+// these are the *non-typing* keys only; handleSourceFormKey is the actual
+// source of truth for what each one does.
+func sourceFormBindings() []Binding {
+	ctx := []Context{ContextSourceForm}
+
+	return []Binding{
+		{Keys: []string{"tab", "down"}, Action: ActionFormNextField, Help: "next field", Contexts: ctx},
+		{Keys: []string{"shift+tab", "up"}, Action: ActionFormPrevField, Help: "previous field", Contexts: ctx},
+		{
+			Keys: []string{"ctrl+s", "enter"}, Action: ActionFormSave,
+			Help: "save (or, on the import field, run the import)", Contexts: ctx,
+		},
+		{Keys: []string{"ctrl+t"}, Action: ActionFormTest, Help: "test before saving", Contexts: ctx},
+		{Keys: []string{"ctrl+r"}, Action: ActionFormReveal, Help: "reveal/mask credentials", Contexts: ctx},
+		{Keys: []string{"esc"}, Action: ActionCancel, Help: "cancel (confirms if dirty)", Contexts: ctx},
+	}
+}
+
+// sourceRemoveConfirmBindings are the bindings live while the settings
+// screen's remove confirmation (ContextSourceRemoveConfirm) is open.
+func sourceRemoveConfirmBindings() []Binding {
+	ctx := []Context{ContextSourceRemoveConfirm}
+
+	return []Binding{
+		{Keys: []string{"j", "down"}, Action: ActionMoveDown, Help: "next choice", Contexts: ctx},
+		{Keys: []string{"k", "up"}, Action: ActionMoveUp, Help: "previous choice", Contexts: ctx},
+		{Keys: []string{"enter"}, Action: ActionConfirmYes, Help: "confirm highlighted choice", Contexts: ctx},
+		{Keys: []string{"esc", "n"}, Action: ActionCancel, Help: "cancel", Contexts: ctx},
 	}
 }
 
@@ -400,6 +480,8 @@ func AllBindings() []Binding {
 	all = append(all, errorDetailBindings()...)
 	all = append(all, removeConfirmBindings()...)
 	all = append(all, destinationBindings()...)
+	all = append(all, sourceFormBindings()...)
+	all = append(all, sourceRemoveConfirmBindings()...)
 
 	return all
 }

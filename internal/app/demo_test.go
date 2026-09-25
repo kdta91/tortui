@@ -364,7 +364,7 @@ func TestEveryScreenKeybindAndDialogIsReachable(t *testing.T) {
 	for _, key := range []string{"1", "2", "3", "4", "5"} {
 		tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
 	}
-	waitFor(t, tm, "settings screen")
+	waitFor(t, tm, "No sources configured")
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
 	waitFor(t, tm, "Keys")

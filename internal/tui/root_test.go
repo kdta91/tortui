@@ -49,15 +49,14 @@ func TestNavigationAllScreensViaNumberKeys(t *testing.T) {
 		want string
 	}{
 		// ScreenSearch (T-060), ScreenResults (T-061), ScreenDetails
-		// (T-063), and ScreenDownloads (T-071) are real now: "Query:", "No
-		// search yet", "No result selected", and "No downloads yet" are
-		// their own stable markers, not the generic placeholder text
-		// ScreenSettings still renders.
+		// (T-063), ScreenDownloads (T-071), and ScreenSettings (T-080) are
+		// all real now: each has its own stable marker rather than the
+		// generic placeholder text.
 		{"1", "Query:"},
 		{"2", "No search yet"},
 		{"3", "No result selected"},
 		{"4", "No downloads yet"},
-		{"5", ScreenSettings.String() + " screen"},
+		{"5", "No sources configured"},
 	}
 
 	for _, c := range cases {
@@ -75,16 +74,14 @@ func TestNavigationTabCyclesForwardAndBack(t *testing.T) {
 	t.Cleanup(func() { _ = tm.Quit() })
 
 	// Starts on ScreenSearch. tab -> results -> details -> downloads ->
-	// settings -> (wrap) search. ScreenSearch, ScreenResults, ScreenDetails,
-	// and ScreenDownloads have real content now (T-060, T-061, T-063,
-	// T-071), so they are checked by their own "Query:"/"No search yet"/"No
-	// result selected"/"No downloads yet" markers rather than the generic
-	// placeholder text ScreenSettings still renders.
+	// settings -> (wrap) search. Every screen has real content now (T-060,
+	// T-061, T-063, T-071, T-080), so each is checked by its own stable
+	// marker.
 	forward := []string{
 		"No search yet",
 		"No result selected",
 		"No downloads yet",
-		ScreenSettings.String() + " screen",
+		"No sources configured",
 		"Query:",
 	}
 	for _, want := range forward {
@@ -94,7 +91,7 @@ func TestNavigationTabCyclesForwardAndBack(t *testing.T) {
 
 	// shift+tab from search wraps back to settings.
 	tm.Send(tea.KeyMsg{Type: tea.KeyShiftTab})
-	waitForOutput(t, tm, ScreenSettings.String()+" screen")
+	waitForOutput(t, tm, "No sources configured")
 }
 
 // TestHelpOverlayTogglesAndShowsScreenBindings confirms ? opens an overlay

@@ -3524,6 +3524,68 @@ is T-970.
 
 ---
 
+## Phase 8 — Settings
+
+### T-080 · Indexer management
+```
+status: done
+depends: T-051, T-023, T-054
+tier: M
+```
+**Notes:** New `internal/tui/settings.go`: `SourceManager` interface (composition-root seam, no
+concrete adapter import, AGENT.md §4), list + add/edit `sourceForm`, slugify/uniqueness, paste-
+triggered `splitTorznabURL`, masked credentials (`ctrl+r` reveal), `ctrl+t` test-before-save,
+save (`ctrl+s`/enter), import-a-definition (enter on that field — `ctrl+i` is literally tab's
+keycode on every terminal), esc-with-dirty-confirm. List's `a/e/t/space/x/r` are handled
+directly in `root.go`, not declarative `Binding`s, to keep the `?` overlay inside AGENT.md §7's
+80×24 budget; a one-line legend keeps them discoverable. Search's empty state jumps to the add
+form via `a`. Production `SourceManager` wiring is Backlog `T-975` (no composition root exists
+yet, T-950); comment/order preservation is `config.Save`'s existing behavior (Backlog `T-976`).
+**Review remediation:** a model-side `sourcesSnapshot` (root.go) replaces every synchronous
+`SourceManager.Sources()` call from `Update()`/`View()` (§6.1/§6.8), updated optimistically on
+toggle/remove/save and reverted on failure; a new `refreshSearchSources` re-reads
+`Searcher.Enabled()` after every successful save so the search screen's source list is never a
+permanent startup snapshot; the form gained up/down field navigation and continuously
+recomputed live validation (required fields, an `invalidURLReason` http(s) check, the duplicate-
+id check) shown as you type; `handleFormSaveResult` now reports a save's outcome via the status
+bar even if the form was closed while it was in flight; `sourceTestTimeout` uses `time.Second`.
+`make check`, `make race` (tui, app), `make cover` (tui 93.2%) green.
+
+**Acceptance**
+
+**Principle: a user must never have to open the config file.** Everything about a source is
+addable, editable, testable, and removable from inside the TUI. Hand-editing TOML stays
+supported for people who prefer it, but it is never the documented path.
+
+- List view: one row per source with name, type, enabled toggle, and last-search outcome.
+  Keys: `a` add, `e` edit, `t` test (T-081), `space` enable/disable, `x` remove (confirm),
+  `r` reload definitions (T-023).
+- **Add form** with typed fields, arrow/tab navigation, and inline validation as you type:
+  name, type (torznab | scraper), URL, API key, cookie, definition file. Fields irrelevant to
+  the selected type are hidden, not greyed out.
+- **Paste handling.** Bracketed paste must work — API keys are long and nobody types them.
+  Pasting a complete Torznab feed URL that already contains `?apikey=...` splits it
+  automatically into the URL and key fields rather than storing the whole string as the URL.
+- `id` is derived from the name, slugified, and uniqueness-checked. The user never types an id
+  unless they want to override it.
+- Credential fields masked by default with a reveal toggle; never written to the log, never
+  shown in `doctor` output.
+- `t` tests the source **before** saving, so a bad URL or key is caught in the form rather than
+  discovered at the next search.
+- Save writes back to the config file, preserving existing comments and key order where
+  practical, and reloads the registry live — no restart.
+- The add form offers "import a definition" (T-025) alongside manual entry, so a user with a
+  definition file does not have to hand-place it and then wire it up separately.
+- Cancel discards cleanly with no partial write. Confirm before discarding a dirty form.
+- **Empty state.** If every source has been disabled or removed, the search screen shows an
+  explicit prompt that jumps straight into the add form rather than returning zero results with
+  no explanation. On a default install this state should be unreachable — bundled sources are
+  active and the first screen shows Latest (T-024, T-060).
+- `teatest` covers: add a torznab source end-to-end, add a scraper source, paste a URL with an
+  embedded key, duplicate id rejection, edit, disable, remove, and cancel-with-dirty-form.
+
+---
+
 ## Blocked — Resolved
 
 
