@@ -3291,13 +3291,19 @@ depends: T-060, T-053
 tier: M
 ```
 **Notes:** `results.go`'s `resultsModel` wraps `components.Table` (own column set, since `internal/tui`
-can't import components' test-only helper). `s`/`S` (`ActionSortCycle`/`Reverse`) and `R`
-(`ActionRefresh`, reusing `dispatchSearch(false)`) now do something. Size/S-L/Age columns get a `Less`
-that parses the *rendered* cell text back (Table has no separate sort key); `sortAscBy`/`sortDescBy`
-guarantee direction regardless of prior state. Cache visibility needed a signal `SearchAll`'s signature
-doesn't carry: added `indexer.ExtraKeyCacheHit` (registry-written `Result.Extra`, same pattern as
-`ExtraKeySources`) rather than change the exported signature (DEC-110). `make check`, `make race`
-(`internal/tui`, `internal/indexer`), `make cover` (tui 94.9%, indexer 100%) green.
+can't import components' test-only helper). `s`/`S` (`ActionSortCycle`/`Reverse`) now do something.
+`R` (`ActionRefresh`) got its own `search.go:handleRefresh`, re-dispatching `m.lastQuery` against
+`m.lastQueriedIDs` — the query/sources that actually produced what's on screen — rather than
+`dispatchSearch(false)`'s live search-form state, which the reviewer caught diverging from it (edit
+the query field without submitting, then `L`, then `R`); it also does not call `AddHistory`, unlike a
+real new search. Size/S-L/Age columns get a `Less` that parses the *rendered* cell text back (Table
+has no separate sort key); `sortAscBy`/`sortDescBy` guarantee direction regardless of prior state.
+Cache visibility needed a signal `SearchAll`'s signature doesn't carry: added
+`indexer.ExtraKeyCacheHit` (registry-written `Result.Extra`, same pattern as `ExtraKeySources`)
+rather than change the exported signature (DEC-110; also resolves backlog `T-921`). Non-blocking
+review findings logged as backlog `T-957` (undated results sort as newest, not last, under Latest)
+and `T-958` (`formatSize` can exceed the 8-wide Size column). `make check`, `make race`
+(`internal/tui`, `internal/indexer`), `make cover` (tui 94.4%, indexer 100%) green.
 
 **Acceptance**
 - Columns exactly `Title · Size · S/L · Trust · Age · Source`. Default sort follows the mode:

@@ -438,14 +438,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// downloads' (open details) to T-071. No-op here.
 		return m, nil
 	case ActionRefresh:
-		// AGENT.md §7: "R | Refresh current results" — re-runs the search
-		// screen's current settings exactly like enter does. This is what
-		// makes T-061's "honouring the T-012 cache" acceptance true for
-		// free: SearchAll itself serves an unchanged query from its cache
-		// within CacheTTL, so mashing R re-renders rather than re-fetching
-		// (search.go's dispatchSearch is the single dispatch path both
-		// keys share).
-		return m.dispatchSearch(false)
+		// AGENT.md §7: "R | Refresh current results" — re-runs the exact
+		// query that produced what's on screen (m.lastQuery/
+		// m.lastQueriedIDs), not the search form's current, possibly-since-
+		// edited contents (search.go's handleRefresh; T-061 review finding).
+		return m.handleRefresh()
 	case ActionSortCycle:
 		m.results = m.results.cycleSort()
 		return m, nil

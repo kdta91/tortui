@@ -502,10 +502,13 @@ when it reaches it and does not start backlog items on its own.
   `ErrThrottled` skip. Pinned by `TestSearchAllConcurrentCallsShareTheCache` and documented in
   DEC-054; harmless while the TUI issues one search at a time, worth closing before anything
   issues two.
-- `T-921` `SearchAll` does not tell the caller which sources answered from cache. T-061's
-  acceptance criteria require the status bar to show "when results came from cache rather than a
-  fresh fetch", and the T-012 return shape (`[]Result`, `[]SourceError`, `error`) has nowhere to
-  put it. Decide the shape when T-061 lands rather than guessing now.
+- `T-921` **Resolved by T-061 (DEC-110).** `SearchAll` did not tell the caller which sources
+  answered from cache, and T-061's acceptance criteria required the status bar to show "when
+  results came from cache rather than a fresh fetch" with the T-012 return shape
+  (`[]Result`, `[]SourceError`, `error`) having nowhere to put it. Decided without changing that
+  exported signature: `mergeResults` tags each merged `Result.Extra["tortui.cacheHit"]`
+  (`indexer.ExtraKeyCacheHit`), the same registry-writes-`Extra` pattern `ExtraKeySources` already
+  used; `internal/tui/results.go`'s `cacheSummary` aggregates it for the status bar.
 - `T-922` No TOML keys for the registry's cache TTL and per-source minimum refresh interval.
   `internal/config` has `search_timeout` only; `indexer.Config`'s other two durations are
   code-level defaults. Nothing is wired either way yet — no composition root exists — so this is
@@ -724,6 +727,16 @@ when it reaches it and does not start backlog items on its own.
   as "shown," not "recallable." Needs a keybind (the flat cursor would need a row for the
   suggestion list, or a dedicated key) that sets `search.query` to the chosen entry. Found by QA
   on T-060 (PR #39).
+- `T-957` `internal/tui/results.go`'s `parseAgeSeconds` maps `formatAge`'s `"-"` (no `Published`
+  date) to `0`, the same value as "just now" — so an undated result sorts as the *newest* item
+  under the Latest default (ascending age), a false positive rather than the "sorts last" a
+  missing date should get. Needs a distinct sentinel (e.g. a very large value, or a stable
+  secondary key) so undated results sort to the end regardless of sort direction. Found by QA on
+  T-061 (PR #40).
+- `T-958` `internal/tui/results.go`'s `formatSize` can render 9 characters (`"1023.9 MB"`,
+  `"1023.9 GB"`, etc. — one decimal digit plus a 4-character unit above 1000) while the Size
+  column is only 8 wide, so `components.Table`'s `theme.Truncate` ellipsises it. Either widen the
+  column, or round/format so the string never exceeds 8. Found by QA on T-061 (PR #40).
 
 
 

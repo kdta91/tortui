@@ -391,3 +391,131 @@ func TestResultsScreenRefreshShowsCacheHintOnSecondFetch(t *testing.T) {
 	tm.Send(keyRune("R"))
 	waitForOutput(t, tm, "cached")
 }
+
+// waitForCallCount blocks until searcher has recorded at least n calls, or
+// fails the test after a generous deadline — SearchAll resolves inside a
+// tea.Cmd on bubbletea's own goroutine, not synchronously with Send, so a
+// bare callCount() check right after Send would race it.
+func waitForCallCount(t *testing.T, searcher *stubSearcher, n int) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for searcher.callCount() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("callCount() = %d after 2s, want at least %d", searcher.callCount(), n)
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestRefreshReDispatchesLastQueryNotTheSearchForm is the regression test
+// for the T-061 review finding: R must re-run the query that produced the
+// results on screen (m.lastQuery/m.lastQueriedIDs), never the search
+// form's own live contents, which are independent state a user can edit
+// without submitting. Repro: commit "x" into the query field without
+// submitting it, press L (dispatches and shows Latest), then press R — the
+// pre-fix code called dispatchSearch(false), which reads m.search.mode
+// (still ModeSearch, never touched by L) and m.search.query (still "x"),
+// so it would have re-dispatched Mode=Search Text="x" instead of staying
+// on Latest. Verified against the pre-fix code: reverting handleRefresh to
+// `return m.dispatchSearch(false)` makes this test fail exactly that way.
+func TestRefreshReDispatchesLastQueryNotTheSearchForm(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	tm, _ := newSearchTestModel(t, searcher, nil)
+
+	waitForOutput(t, tm, "Query:")
+
+	// Commit "x" into the query field without submitting it.
+	tm.Send(keyRune("/"))
+	tm.Send(keyRune("x"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // commits the field, does not submit
+	waitForOutput(t, tm, "x")
+
+	tm.Send(keyRune("L")) // dispatches Latest, independent of the form's own mode/text
+	waitForOutput(t, tm, "Sources queried")
+	waitForCallCount(t, searcher, 1)
+
+	firstCall, ok := searcher.lastCall()
+	if !ok || firstCall.q.Mode != indexer.ModeLatest {
+		t.Fatalf("setup: L dispatched %+v, want Mode=Latest", firstCall.q)
+	}
+
+	tm.Send(keyRune("R"))
+	waitForCallCount(t, searcher, 2)
+
+	call, ok := searcher.lastCall()
+	if !ok {
+		t.Fatal("expected a second SearchAll call from R")
+	}
+
+	if call.q.Mode != indexer.ModeLatest {
+		t.Fatalf("R dispatched Mode=%v, want ModeLatest — the query that produced the results on screen, not the search form's", call.q.Mode)
+	}
+
+	if call.q.Text != "" {
+		t.Fatalf("R dispatched Text=%q, want empty — it must not pick up the uncommitted \"x\" left in the search form", call.q.Text)
+	}
+
+	if got := searcher.callCount(); got != 2 {
+		t.Fatalf("SearchAll called %d times, want exactly 2 (L, then R)", got)
+	}
+}
+
+// TestRefreshDoesNotRecordHistory confirms R does not call AddHistory a
+// second time for the query it re-dispatches — only enter/L (a genuinely
+// new, user-typed search) records one (T-061 review finding #4: fixing the
+// refresh-target bug also removes the duplicate AddHistory call, since R
+// now has its own dispatch path that never calls it).
+func TestRefreshDoesNotRecordHistory(t *testing.T) {
+	hist := &stubHistory{}
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	tm, _ := newSearchTestModel(t, searcher, hist)
+
+	waitForOutput(t, tm, "Query:")
+
+	tm.Send(keyRune("/"))
+	for _, r := range "brand-new" {
+		tm.Send(keyRune(string(r)))
+	}
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	waitForOutput(t, tm, "Sources queried")
+	waitForCallCount(t, searcher, 1)
+
+	tm.Send(keyRune("R"))
+	waitForCallCount(t, searcher, 2)
+
+	hist.mu.Lock()
+	added := append([]string(nil), hist.added...)
+	hist.mu.Unlock()
+
+	if len(added) != 1 || added[0] != "brand-new" {
+		t.Fatalf("AddHistory calls = %v, want exactly [\"brand-new\"] — R must not record a second entry", added)
+	}
+}
+
+// TestHandleRefreshWithNoPriorSearchPushesHint confirms R before any
+// search has ever completed (m.lastQueriedIDs empty) does nothing but push
+// a status-bar hint, rather than dispatching an empty/zero-value query.
+func TestHandleRefreshWithNoPriorSearchPushesHint(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	m := New(fake.New(), testTheme(), WithSearcher(searcher))
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(Model)
+
+	updatedModel, cmd := m.handleRefresh()
+
+	if updatedModel.search.inFlight {
+		t.Fatal("handleRefresh with nothing searched yet should not dispatch anything")
+	}
+
+	if cmd == nil {
+		t.Fatal("expected a tea.Cmd pushing a status-bar hint")
+	}
+
+	if searcher.callCount() != 0 {
+		t.Fatalf("SearchAll called %d times, want 0", searcher.callCount())
+	}
+}
