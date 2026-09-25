@@ -9,9 +9,19 @@ import (
 	"github.com/kdta91/tortui/internal/engine"
 	"github.com/kdta91/tortui/internal/indexer"
 	"github.com/kdta91/tortui/internal/platform"
+	"github.com/kdta91/tortui/internal/store"
 	"github.com/kdta91/tortui/internal/tui/components"
 	"github.com/kdta91/tortui/internal/tui/theme"
 )
+
+// TorrentStore is the subset of *store.Store the add flow (T-070, details.go)
+// persists a newly added torrent's origin and destination to, so a restart's
+// Resumer (internal/engine, T-041) can rehydrate them. nil is valid: an
+// added torrent's engine tracking still works, it just is not recorded for
+// the next restart to pick up.
+type TorrentStore interface {
+	SetTorrent(rec store.TorrentRecord) error
+}
 
 // Model is the top-level bubbletea program: it owns which Screen is
 // current, the global keymap, the help overlay, and the one cross-cutting
@@ -114,6 +124,21 @@ type Model struct {
 	// screen simply offers no suggestions and records nothing.
 	history HistoryStore
 
+	// torrentStore is the optional persistence target for a newly added
+	// torrent's Origin and destination (details.go's add flow, T-070).
+	// nil is valid: adding still works, it just is not recorded for the
+	// next restart's Resumer to pick up.
+	torrentStore TorrentStore
+
+	// downloadDir is the configured default download destination
+	// (typically config.Paths.DownloadDir, always absolute in
+	// production). The add flow (details.go, T-070) resolves it into
+	// AddSource.SavePath for every add until T-074's per-torrent
+	// destination picker lands on top of this same flow. Empty means "let
+	// the engine fall back to its own configured default"
+	// (engine.AddSource.SavePath's own documented behaviour).
+	downloadDir string
+
 	// lastResults, lastSourceErrs, and lastQuery are the most recent
 	// completed search's outcome, set by search.go's Update handling of
 	// searchResultMsg. Nothing in this package renders them yet — T-061's
@@ -151,6 +176,22 @@ func WithHistory(h HistoryStore) Option {
 	return func(m *Model) { m.history = h }
 }
 
+// WithTorrentStore wires s as the add flow's persistence target (details.go,
+// T-070). Without it, adding a torrent still works; its Origin and
+// destination are simply not recorded for the next restart.
+func WithTorrentStore(s TorrentStore) Option {
+	return func(m *Model) { m.torrentStore = s }
+}
+
+// WithDownloadDir sets dir as the default destination the add flow resolves
+// into AddSource.SavePath (details.go, T-070). dir is expected to already be
+// an absolute path, the same contract config.Paths.DownloadDir guarantees.
+// Without this option, SavePath is left empty and the engine falls back to
+// its own configured default.
+func WithDownloadDir(dir string) Option {
+	return func(m *Model) { m.downloadDir = dir }
+}
+
 // openURLFunc opens rawURL in the system's default browser: platform.OpenURL's
 // own signature. It exists as a named type so Model.openURL and WithOpenURL
 // don't have to keep repeating `func(string) error`, the same reason
@@ -170,7 +211,8 @@ func WithOpenURL(f openURLFunc) Option {
 // New builds a Model wired to eng (typically a real engine in production,
 // internal/engine/fake in tests) and th, starting on ScreenSearch with no
 // modal open. opts wires the optional dependencies later screens need
-// (search's Searcher and HistoryStore today); every existing call site
+// (search's Searcher and HistoryStore, plus the add flow's TorrentStore and
+// download dir); every existing call site
 // that predates them keeps working unchanged.
 func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 	m := Model{
@@ -356,6 +398,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case addResultMsg:
 		return m.handleAddResult(msg)
 
+	case resolveResultMsg:
+		return m.handleResolveResult(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -485,8 +530,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == ScreenDetails {
 			return m.handleAddFromDetails()
 		}
-		// Results' own meaning of enter (add torrent) belongs to T-070;
-		// downloads' (open details) to T-071. No-op here.
+		if m.screen == ScreenResults {
+			return m.handleAddFromResults()
+		}
+		// Downloads' own meaning of enter (open details) belongs to T-071.
+		// No-op here.
 		return m, nil
 	case ActionDetails:
 		if m.screen == ScreenResults {

@@ -97,6 +97,18 @@ func newStubSearcher(enabled ...indexer.Indexer) *stubSearcher {
 
 func (s *stubSearcher) Enabled() []indexer.Indexer { return s.enabled }
 
+// Get satisfies Searcher's add-flow (T-070) lookup: a linear scan of the
+// same fixed slice Enabled returns, which is all a test double needs.
+func (s *stubSearcher) Get(id string) (indexer.Indexer, bool) {
+	for _, ix := range s.enabled {
+		if ix.ID() == id {
+			return ix, true
+		}
+	}
+
+	return nil, false
+}
+
 func (s *stubSearcher) SearchAll(ctx context.Context, q indexer.Query, ids ...string) ([]indexer.Result, []indexer.SourceError, error) {
 	s.mu.Lock()
 	idsCopy := append([]string(nil), ids...)
