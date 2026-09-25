@@ -1,7 +1,10 @@
 package platform
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -319,6 +322,47 @@ func TestLauncherFailureIsWrapped(t *testing.T) {
 	for name, fn := range map[string]func(string, []string) error{"OpenFile": OpenFile, "RevealFile": RevealFile} {
 		if err := fn(file, []string{root}); !errors.Is(err, boom) {
 			t.Errorf("%s error = %v, want it to wrap the launcher failure", name, err)
+		}
+	}
+}
+
+// TestRefusalsAreLoggedAtWarn: both refusal paths — an unsafe path and one
+// outside every root — leave a warn record naming the path (T-073).
+func TestRefusalsAreLoggedAtWarn(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	writeFile(t, outside)
+
+	forbidLaunches(t)
+
+	var buf bytes.Buffer
+
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	cases := []struct {
+		path, wantMsg string
+		wantErr       error
+	}{
+		{path: "a.iso", wantMsg: "platform: refused to launch for an unsafe path", wantErr: ErrUnsafeOpenPath},
+		{path: outside, wantMsg: "platform: refused to launch for a path outside every known destination root", wantErr: ErrOutsideRoots},
+	}
+
+	for _, tc := range cases {
+		buf.Reset()
+
+		if err := RevealFile(tc.path, []string{root}); !errors.Is(err, tc.wantErr) {
+			t.Fatalf("RevealFile(%q) error = %v, want %v", tc.path, err, tc.wantErr)
+		}
+
+		var rec map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+			t.Fatalf("RevealFile(%q) log = %q, want exactly one JSON record: %v", tc.path, buf.String(), err)
+		}
+
+		if rec["level"] != "WARN" || rec["msg"] != tc.wantMsg || rec["path"] != tc.path {
+			t.Errorf("RevealFile(%q) log record = %v, want WARN %q with path", tc.path, rec, tc.wantMsg)
 		}
 	}
 }

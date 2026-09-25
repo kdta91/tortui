@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -55,10 +56,26 @@ func TestRevealFileArgvWindows(t *testing.T) {
 	}
 }
 
-// TestExplorerNonZeroExitIsSuccess: explorer.exe exits 1 even when it
-// opened the target, so an ExitError is not reported as a failure — but a
-// failure to start the process is.
-func TestExplorerNonZeroExitIsSuccess(t *testing.T) {
+// exitError returns the *exec.ExitError a real process exiting with code
+// produces. cmd.exe is always present on Windows; nothing touches the
+// network.
+func exitError(t *testing.T, code int) error {
+	t.Helper()
+
+	err := exec.Command("cmd", "/c", "exit", strconv.Itoa(code)).Run()
+
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != code {
+		t.Fatalf("cmd /c exit %d error = %v, want an ExitError with that code", code, err)
+	}
+
+	return err
+}
+
+// TestExplorerExitOneIsSuccess: explorer.exe exits 1 even when it opened
+// the target, so exit status 1 is not reported as a failure — but any other
+// non-zero status, and a failure to start the process, is.
+func TestExplorerExitOneIsSuccess(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "a.iso")
 	writeFile(t, file)
@@ -66,9 +83,16 @@ func TestExplorerNonZeroExitIsSuccess(t *testing.T) {
 	orig := runCommandFunc
 	t.Cleanup(func() { runCommandFunc = orig })
 
-	runCommandFunc = func(*exec.Cmd) error { return &exec.ExitError{} }
+	exitOne := exitError(t, 1)
+	runCommandFunc = func(*exec.Cmd) error { return exitOne }
 	if err := OpenFile(file, []string{root}); err != nil {
 		t.Errorf("OpenFile with explorer exit 1 error = %v, want nil", err)
+	}
+
+	exitTwo := exitError(t, 2)
+	runCommandFunc = func(*exec.Cmd) error { return exitTwo }
+	if err := OpenFile(file, []string{root}); !errors.Is(err, exitTwo) {
+		t.Errorf("OpenFile with explorer exit 2 error = %v, want it wrapped", err)
 	}
 
 	notFound := errors.New("executable file not found")

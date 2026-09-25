@@ -6,12 +6,14 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kdta91/tortui/internal/engine"
 	"github.com/kdta91/tortui/internal/engine/fake"
 	"github.com/kdta91/tortui/internal/platform"
+	"github.com/kdta91/tortui/internal/tui/components"
 )
 
 // filesEngine is a fake engine whose Files reports a scripted list.
@@ -39,6 +41,32 @@ func recordingLauncher(calls *[]launchCall) openPathFunc {
 		*calls = append(*calls, launchCall{path: path, roots: append([]string(nil), roots...)})
 		return nil
 	}
+}
+
+// drainCmd executes cmd and, recursively, every command inside any
+// tea.BatchMsg it yields, returning each non-batch message produced.
+func drainCmd(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+
+	msg := cmd()
+
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		if msg == nil {
+			return nil
+		}
+
+		return []tea.Msg{msg}
+	}
+
+	var msgs []tea.Msg
+	for _, c := range batch {
+		msgs = append(msgs, drainCmd(c)...)
+	}
+
+	return msgs
 }
 
 func newOpenFileModel(t *testing.T, eng engine.Engine, statuses []engine.TorrentStatus, opts ...Option) Model {
@@ -144,11 +172,24 @@ func TestOpenOnIncompleteTorrentSaysSoAndDoesNotLaunch(t *testing.T) {
 		m := newOpenFileModel(t, eng, []engine.TorrentStatus{{
 			ID: "t1", Name: "a.iso", State: engine.StateDownloading, Progress: 0.62, SavePath: t.TempDir(),
 		}}, WithOpenFile(recordingLauncher(&calls)), WithRevealFile(recordingLauncher(&calls)))
+		m.statusBar.Timeout = time.Nanosecond
 
-		m, _ = press(t, m, keyRune(key)) // cmd is only the notice's timeout tick
+		m, cmd := press(t, m, keyRune(key))
+
+		// Run everything the key returned, the way bubbletea would: a launch
+		// batched alongside the notice would call the launcher here.
+		msgs := drainCmd(cmd)
 
 		if len(calls) != 0 {
 			t.Fatalf("%s on an incomplete torrent launched %+v", key, calls)
+		}
+
+		if len(msgs) != 1 {
+			t.Fatalf("%s: cmd produced %d messages %+v, want only the notice's timeout tick", key, len(msgs), msgs)
+		}
+
+		if _, ok := msgs[0].(components.TickMsg); !ok {
+			t.Fatalf("%s: cmd produced %T, want only the notice's timeout tick", key, msgs[0])
 		}
 
 		if bar := statusBarText(m); !strings.Contains(bar, "a.iso is still downloading (62%)") {

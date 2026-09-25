@@ -61,14 +61,14 @@ func explorerCommand(flags []string, path string) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-// runExplorer runs cmd, treating a non-zero exit as success: explorer.exe
-// reports exit status 1 even when it opened the target, so only a failure
-// to start the process at all is a real error.
+// runExplorer runs cmd, treating exit status 1 as success: explorer.exe
+// reports 1 even when it opened the target. Any other non-zero status, and
+// a failure to start the process at all, is a real error.
 func runExplorer(cmd *exec.Cmd) error {
 	err := runCommandFunc(cmd)
 
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 		return nil
 	}
 

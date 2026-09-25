@@ -675,6 +675,14 @@ when it reaches it and does not start backlog items on its own.
   destination picker) should enforce this when it replaces this default-only answer, per
   `engine.TorrentStatus.SavePath`'s own documented invariant ("always ... absolute"). Found in
   review of T-070 (PR #43).
+- `T-969` TOCTOU window in `platform.OpenFile`/`RevealFile`: `resolveInsideRoots` symlink-resolves
+  and containment-checks the target, then the launcher (`open`/`xdg-open`/`explorer`) is exec'd
+  with the resolved path as a separate step. A process that can write inside a destination root
+  could swap a path component for a symlink between the check and the launcher's own open, and
+  the launcher would follow it. Residual risk is low (needs local write access to the root, and
+  the launcher only opens/reveals, never writes), but it is not closed. Closing it would mean
+  handing the launcher an already-open handle, which none of the three OS launchers accept.
+  Found in review of T-073 (PR #46).
 
 
 
