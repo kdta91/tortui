@@ -55,23 +55,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 4 — Persistence
 
-**Done (archived in `docs/tracker-archive.md`):** `T-040` bbolt store · `T-042` Single-instance lock and data integrity.
-
----
-
-### T-041 · Session resume
-```
-status: blocked
-depends: T-040, T-032
-tier: H
-```
-**Acceptance**
-- On startup, torrents recorded in the store are re-added to the engine and resume from
-  existing data without re-downloading completed pieces.
-- A torrent whose data is missing on disk is surfaced as `StateErrored` with a clear message
-  and an offer to remove the entry — it is not silently dropped.
-- `Origin` (indexer ID + source URL) survives restart so the downloads screen can still show
-  the source.
+**Done (archived in `docs/tracker-archive.md`):** `T-040` bbolt store · `T-042` Single-instance lock and data integrity · `T-041` Session resume.
 
 ---
 
@@ -584,6 +568,7 @@ when it reaches it and does not start backlog items on its own.
   this tree. Requiring the matched value to look like a hostname — at least one dot-separated
   label followed by a plausible TLD, and not a known Go identifier shape — would keep the check
   meaningful without the false positives. Found while building T-020.
+  T-041 hit it on `internal/lifecycle` field copies and worked around it in code (split lines).
 - `T-927` `internal/logging`'s free-text masker misses `CookieHeader:` in a `%+v` struct dump. The
   regex requires the sensitive word immediately followed by `[:=]`, so `APIKey:` is caught but
   `CookieHeader:` is not — the `Header` sits between. Only bites when a caller formats a struct into
@@ -732,6 +717,40 @@ when it reaches it and does not start backlog items on its own.
   of refusing again; a queued spec whose promote-time `attach` fails stays tracked via `e.fail` the
   same way. Untrack (or re-evaluate) refused entries on re-`Add`, as `untrackFailedSpec` does for
   `addSpec`. Found in review of T-034 (PR #36).
+- `T-950` Wire `lifecycle.Session` into the composition root when one exists: `NewSession` after
+  `OpenStore` and the engine, `Resume` before the TUI starts (show `ResumeReport.Missing` on
+  first render), `Save` after every add/remove, and `ShutdownOptions.Session`. The add flow
+  (T-070) records `Origin` with `SetTorrent` before `Save`; `Save` keeps it. From T-041.
+- `T-951` Downloads screen: a row whose `Err` wraps `engine.ErrDataMissing` offers removal (the
+  `x` dialog, keep-data default) as its primary action, not just the truncated reason (T-071,
+  T-072). From T-041.
+- `T-952` A user-paused torrent comes back running after a restart. `Shutdown` pauses everything
+  before `Session.Save`, so pause state cannot be read from `State` there; needs a
+  user-pause flag in `engine.ResumeData` read before the shutdown pause. From T-041.
+- `T-953` `Session.Resume` re-keys a record onto whatever ID `Restore` returns. Two store records
+  sharing an infohash make `Restore` return the first's ID for the second, and the
+  `DeleteTorrent`/`SetTorrent` pair then overwrites the first record's data (and the re-key can
+  delete a record already re-keyed onto that ID; the next `Save` repairs it). Detect an ID already
+  restored this pass and drop the duplicate record instead. Found in review of T-041 (PR #38).
+- `T-954` `make check (windows-latest)`, advisory: `internal/engine`
+  `TestProbeListenPortFallsBackWhenTaken` and `TestProbeListenPortPrefersTheConfiguredPort` fail
+  with "no random port was free on both TCP and UDP" (PR #38 run 36134477067). This is T-034's
+  probe; it passed on `main`'s last run, so it is intermittent on Windows runners. Make the probe
+  retry more than one random port before giving up. Found on T-041's PR.
+- `T-955` The anacrolix file storage keeps every data file memory-mapped after `Engine.Close`. The
+  library's default mmap file IO never unmaps, and `fileTorrentImpl.Close` is a no-op. On Windows
+  the file then cannot be rewritten or deleted ("user-mapped section open" / "being used by
+  another process"), so remove-with-data breaks too. Before T-041 a completed file was unmapped by
+  its `.part` rename; T-041 turned part files off, so completed files now stay mapped as well.
+  Failing on `make check (windows-latest)` (advisory, PR #38 run 36134477067):
+  `TestRestoreSurfacesMissingDataAsErroredNotDropped`,
+  `TestRestoreResumesFromExistingDataWithoutDownloading`,
+  `TestRestoreResumesAPartialDownloadFromItsVerifiedPieces`,
+  `TestCompletedTorrentSeedsUnderTheRatioPolicy` and
+  `TestCompletedTorrentStopsUploadingUnderTheOffPolicyAndResumeOverrides` (the last two regressed
+  in T-041). Options: selecting the library's classic file IO is only possible through the
+  `TORRENT_STORAGE_DEFAULT_FILE_IO` env var at process start, so use a wrapping `storage.ClientImpl`
+  whose close releases handles, or a small tortui-owned file storage. Tier H.
 
 
 
@@ -852,17 +871,10 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-105 | 2026-09-25 | T-944: findOrTrack (one critical section) fixes concurrent Add; a beforeAttach test hook and untrackFailedSpec fix two pre-merge review findings in the fix itself; check-goos-scope gates runtime.GOOS |
 | DEC-106 | 2026-09-25 | T-034: queue via optional engine.Queuer; space shortfall pauses as StateErrored; seed-policy stop shows StatePaused, Resume overrides; listen port 6881 with random fallback; Windows path limit is MAX_PATH |
 | DEC-107 | 2026-09-25 | T-949: merge gate is macOS-first (macOS make check + build-all + licenses + hostname check required, Linux/Windows make check advisory); reviewers stop checking CI; re-review resumes the same reviewer; stalled agents get one auto-resume then a fresh agent; tests wait on a predicate/terminal state, not one exact intermediate state; Windows shellcheck installs from a pinned, checksum-verified GitHub release |
+| DEC-108 | 2026-09-25 | T-041: session resume via optional engine.Resumer; persistent per-destination piece completion; unresumable torrents tracked as StateErrored (ErrDataMissing); lifecycle.Session saves only after Resume |
 
 ## Blocked
 
-### T-041 · Session resume — blocked 2026-09-25
-PR #38 (`task/T-041-session-resume`, head `cc97d20`) is code-complete and reviewer-passed except for
-the required `check indexer hostname allowlist (T-007)` check. The scan covers every commit message in
-base..head, and the message of already-pushed commit `3041707` quotes `d.Origin.IndexerID`. The narrowed
-rule flags that, correctly. Removing it needs a history rewrite (force-push is denied, and §10 forbids it
-on a PR under review) or a replacement PR (§10: no second PR).
-**Unblock:** owner picks one: (a) authorise rewording `3041707` plus `git push --force-with-lease`;
-(b) authorise a replacement PR from one clean commit with the same tree, closing #38; or
-(c) another resolution.
+*(empty — append `T-0NN` blocks here with the exact input needed to unblock)*
 
 Resolved blockers are archived verbatim under **Blocked — Resolved** in `docs/tracker-archive.md`.

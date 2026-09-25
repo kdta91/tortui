@@ -2789,6 +2789,33 @@ anything new. `make check` and `go test -race ./...` are both green.
 
 ---
 
+### T-041 · Session resume
+```
+status: done
+depends: T-040, T-032
+tier: H
+```
+**Notes:** Resume goes through a new optional `engine.Resumer` (`ResumeData`, `Restore`) in
+`internal/engine/resume.go`, found by type assertion like `Queuer`, since frozen `AddSource` has no
+origin or ID (DEC-108). `anacrolix` opens a persistent piece-completion record per destination and
+turns part files off (with them on, each open marked every piece of a `.part` file incomplete), so
+verified pieces of a partial download survive a restart; `Restore` re-validates destination roots and every metainfo path, keeps the saved ID, and
+tracks anything unresumable as `StateErrored` — data recorded complete but gone from disk is
+`engine.ErrDataMissing` ("remove this entry, or put the files back"). `lifecycle.Session` does
+Resume at startup / Save (prunes, merges origin + added-at) and `Shutdown` saves it before the
+final flush; the store record gained name, magnet, URL and metainfo. Also fixed: a magnet with no
+infohash made `Add` panic inside the library. Wiring and UI follow-ups: T-950, T-951, T-952.
+
+**Acceptance**
+- On startup, torrents recorded in the store are re-added to the engine and resume from
+  existing data without re-downloading completed pieces.
+- A torrent whose data is missing on disk is surfaced as `StateErrored` with a clear message
+  and an offer to remove the entry — it is not silently dropped.
+- `Origin` (indexer ID + source URL) survives restart so the downloads screen can still show
+  the source.
+
+---
+
 ## Phase 5 — TUI shell
 
 ### T-050 · Theme
@@ -3225,6 +3252,17 @@ caught by CI rather than a reviewer's eye — proposed, not implemented here.
 
 ## Blocked — Resolved
 
+
+### T-041 · Session resume — blocked 2026-09-25
+PR #38 (`task/T-041-session-resume`, head `cc97d20`) is code-complete and reviewer-passed except for
+the required `check indexer hostname allowlist (T-007)` check. The scan covers every commit message in
+base..head, and the message of already-pushed commit `3041707` quotes `d.Origin.IndexerID`. The narrowed
+rule flags that, correctly. Removing it needs a history rewrite (force-push is denied, and §10 forbids it
+on a PR under review) or a replacement PR (§10: no second PR).
+**Unblock:** owner picks one: (a) authorise rewording `3041707` plus `git push --force-with-lease`;
+(b) authorise a replacement PR from one clean commit with the same tree, closing #38; or
+(c) another resolution.
+**Resolved 2026-09-25:** the owner authorised rewording `3041707` (now `27e6e0c`), and the hostname-script exemption was reverted to `main`'s script, working around the false positives in `internal/lifecycle` code instead (`8ae2e35`).
 
 - `T-031` (2026-09-17 → 2026-09-18). **The MPL-2.0 exception authorised by DEC-098 is narrower than
   `anacrolix/torrent`'s own dependency tree, and that tree also contains a module with no

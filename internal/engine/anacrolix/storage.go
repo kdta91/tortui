@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	g "github.com/anacrolix/generics"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
 )
@@ -21,6 +22,13 @@ import (
 type safeStorage struct {
 	dest  string
 	inner storage.ClientImplCloser
+
+	// completion is the piece-completion record inner writes to. It is
+	// persistent (a database file in dest), which is what lets a torrent
+	// restored after a restart resume from the pieces it already has
+	// instead of downloading them again (T-041), and what Restore reads to
+	// tell "never downloaded anything" from "downloaded data now missing".
+	completion storage.PieceCompletion
 }
 
 // newSafeStorage builds a file-backed storage rooted at dest, wrapped in the
@@ -30,13 +38,37 @@ type safeStorage struct {
 // slog's default: the default handler writes to stderr, and a torrent whose
 // files cannot be statted makes the backend log about it (AGENT.md §13 — the
 // TUI owns the terminal).
-func newSafeStorage(dest string, logger *slog.Logger) storage.ClientImplCloser {
+//
+// Piece completion is opened explicitly as the library's persistent default
+// for dest (a hidden ".torrent.db" or ".torrent.bolt.db" file there), and part
+// files are turned off. With the library's defaults — part files on, an
+// in-memory record — a restart forgets every verified piece of an unfinished
+// file. Instead, data is written straight to its final name and the record
+// says which pieces of it are good. Where no persistent record can be opened
+// the in-memory one is the fallback, logged: the torrent still works, it just
+// re-downloads after a restart.
+func newSafeStorage(dest string, logger *slog.Logger) safeStorage {
+	completion, err := storage.NewDefaultPieceCompletionForDir(dest)
+	if err != nil {
+		logger.Warn("anacrolix: no persistent piece-completion record; progress will not survive a restart",
+			"destination", dest, "error", err)
+
+		completion = storage.NewMapPieceCompletion()
+	}
+
 	return safeStorage{
 		dest: dest,
 		inner: storage.NewFileOpts(storage.NewFileClientOpts{
-			ClientBaseDir: dest,
-			Logger:        logger,
+			ClientBaseDir:   dest,
+			Logger:          logger,
+			PieceCompletion: completion,
+			// Part files off: with them on, every open re-derives
+			// completion from file names and marks every piece of a
+			// still-".part" file incomplete, discarding the persistent
+			// record for exactly the partial downloads it exists for.
+			UsePartFiles: g.Some(false),
 		}),
+		completion: completion,
 	}
 }
 
@@ -54,5 +86,6 @@ func (s safeStorage) OpenTorrent(
 	return s.inner.OpenTorrent(ctx, info, infoHash)
 }
 
-// Close implements storage.ClientImplCloser.
+// Close implements storage.ClientImplCloser. It also closes the
+// piece-completion record, which the file backend owns once handed it.
 func (s safeStorage) Close() error { return s.inner.Close() }

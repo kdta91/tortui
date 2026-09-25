@@ -29,6 +29,9 @@ straight away. Runs on **macOS, Linux, and Windows**.
   saved location, or any path you type. Validated for space and writability before it starts.
 - **Download management.** Progress, rates, peers, ETA, queue position. Open the file, reveal
   the folder, open the source page, pause, resume, or remove with or without the data.
+- **Resumes where it left off.** Downloads come back after a restart without re-fetching pieces
+  already verified. Each download folder gets a hidden piece-record file (`.torrent.db` or
+  `.torrent.bolt.db`) for this; leave it in place.
 - **Minimal by design.** One accent colour, no boxes, readable at 80×24.
 
 ## What it deliberately doesn't do

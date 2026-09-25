@@ -34,6 +34,22 @@ type TorrentRecord struct {
 	// SavePath is the absolute destination path chosen for this torrent's
 	// data.
 	SavePath string `json:"save_path"`
+
+	// Name is the torrent's display name when last saved, shown for a
+	// torrent that cannot be resumed.
+	Name string `json:"name,omitempty"`
+
+	// Magnet and TorrentURL are the source the torrent was added from, if
+	// it was added from either. They are what a restart falls back to
+	// before the torrent's metadata is known.
+	Magnet     string `json:"magnet,omitempty"`
+	TorrentURL string `json:"torrent_url,omitempty"`
+
+	// Metainfo is the bencoded .torrent once the torrent's metadata is
+	// known, so a restart resumes from the data on disk without fetching
+	// anything. It is attacker-controlled data like any .torrent, and is
+	// re-validated whenever it is used.
+	Metainfo []byte `json:"metainfo,omitempty"`
 }
 
 // SetTorrent inserts or replaces the record for rec.ID. It returns
