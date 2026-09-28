@@ -85,41 +85,42 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 9 — Release readiness
 
-**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite · `T-092` Build and release · `T-093` Final hardening pass · `T-095` Composition root · `T-096` Settings wiring · `T-097` Windows engine storage handles.
+**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite · `T-092` Build and release · `T-093` Final hardening pass · `T-095` Composition root · `T-096` Settings wiring · `T-097` Windows engine storage handles · `T-094` Terminal compatibility matrix.
 
 ---
 
-### T-094 · Terminal compatibility matrix
+## Phase 10 — Release hardening follow-ups
+
+### T-993 · Engine destination-roots test
 ```
-status: blocked
-depends: T-056, T-092, T-093, T-095, T-096, T-097
-tier: M
+status: todo
+depends: T-094
+tier: H
 ```
 **Acceptance**
-- `docs/terminal-matrix.md` records a verified pass for each of: Terminal.app, iTerm2 or
-  Ghostty, Windows Terminal, a common Linux emulator, tmux, `NO_COLOR=1`, `TERM=xterm`,
-  `--ascii`, and non-TTY refusal — per the command list in AGENT.md §15.
-- Windows is tier 1: Windows Terminal must pass, and legacy conhost must produce the clear
-  upgrade message rather than a garbled render.
-- Each entry confirms column alignment, colour degradation, clean exit, and correct terminal
-  restore.
-- Resize to 80×24 and ~60 columns while running; documented column-drop order holds with no
-  garbling.
-- Shell-agnosticism confirmed once under `zsh`, `bash`, `sh`, and PowerShell.
-- **Terminal.app is the pass/fail floor.** A defect visible only in a modern emulator is a
-  bug; a defect visible in Terminal.app is a release blocker.
-- Any failure becomes a `T-9NN` backlog item or blocks the release — agent decides and records
-  which in the decision log.
+- A test records a destination in the store, adds a torrent under it, then closes and restarts
+  the composition root, and asserts `Restored == 1` with nothing in `Failed`/`Errored`.
+- Dropping either root source from `internal/app/app.go`'s engine config —
+  `st.Destinations()` or `cfg.SavedDestinations` out of `engCfg.SavedDestinations` — must fail
+  this test (AGENT.md §6.12: destination roots are the security boundary, and neither source may
+  go untested).
 
-**Notes:** Manual terminal-at-a-real-keyboard passes are owner-only (AGENT.md §12) — an agent
-cannot fill this task's acceptance criteria in. `docs/terminal-matrix.md` now holds the owner's
-fill-in checklist (one row per required terminal/condition × alignment/colour/exit/restore, plus
-the resize and shell rows) built from the exact command list in AGENT.md §15/`docs/running.md`,
-and a separate "verified unattended" section with quoted evidence for everything provable by
-machine: non-TTY and `TERM=dumb` refusal, `NO_COLOR`/ASCII/colour-degradation unit and golden
-tests, the 80×24/120×40/60×20 table goldens (the resize/drop-order check), and
-zsh/bash/sh `--version` (PowerShell unavailable on this darwin agent). Status stays `todo`; the
-owner flips it to `done` and archives it once the real-terminal rows are filled in.
+**Notes:** Promoted from Backlog `T-993` (found in review of T-095, PR #56).
+
+### T-994 · Serialise session saves
+```
+status: todo
+depends: T-094, T-993
+tier: H
+```
+**Acceptance**
+- Session saves are serialised through one owner, or in-flight saves are drained before
+  `Shutdown`, so no `Session.Save` runs after `Store` or `Engine` `Close`.
+- A save racing the next add's `SetTorrent` cannot overwrite the new record's `Origin` (T-095's
+  `Save` does a non-atomic `GetTorrent`-then-`SetTorrent`).
+- Both properties are proven under `-race`.
+
+**Notes:** Promoted from Backlog `T-994` (found in review of T-095, PR #56).
 
 ---
 
@@ -128,16 +129,19 @@ owner flips it to `done` and archives it once the real-terminal rows are filled 
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-094 are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993 and T-994, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI.
 - [ ] Coverage thresholds from AGENT.md §9 met.
 - [ ] `govulncheck` clean; `NOTICE` current; no GPL/AGPL dependency.
-- [ ] Terminal matrix (T-094) passes, Terminal.app and Windows Terminal included.
-- [ ] A real download completes, resumes across a restart, and removes cleanly on all three OSes.
+- [ ] Terminal matrix (T-094) passes on macOS for v1.0 (DEC-132 — owner has no Windows/Linux
+      device; Windows Terminal/conhost/Linux emulator/PowerShell deferred to Backlog T-9004).
+- [ ] A real download completes, resumes across a restart, and removes cleanly on macOS for
+      v1.0 (DEC-132 — Linux/Windows deferred to Backlog T-9004).
 - [ ] No infringement-oriented site is named anywhere in the repository (AGENT.md §2, §16).
       Verified by grep against the T-024 allowlist.
 - [ ] A fresh install searches and downloads successfully with no configuration, no account,
-      and no other software installed — verified on all three OSes (T-091).
+      and no other software installed — verified on macOS for v1.0 (T-091; DEC-132 —
+      Linux/Windows deferred to Backlog T-9004).
 - [ ] Latest works on first launch with no keyword typed, against every bundled source.
 - [ ] Malicious-path `.torrent` fixtures are refused on all three OSes (T-034).
 - [ ] A second instance refuses to start; a crash mid-config-write loses nothing (T-042).
@@ -152,6 +156,11 @@ when it reaches it and does not start backlog items on its own.
 
 ## Backlog (not scheduled)
 
+- `T-9004` Manual terminal matrix + real-download/fresh-install checks on Windows and Linux
+  (deferred by DEC-132 — the owner has no Windows or Linux device for v1.0). Covers the
+  Windows Terminal, conhost, Linux-emulator, and PowerShell rows in `docs/terminal-matrix.md`
+  and the Windows/Linux halves of the v1.0 release criteria's manual download-resume-remove and
+  fresh-install bullets. CI and cross-builds on all three OSes are unaffected.
 - `T-991` `make cover` enforces AGENT.md §9's per-package floors (T-093) but no CI job runs it,
   so a regression is caught only when an agent runs its verification row. Add it to a CI job;
   which checks are required stays the owner's call (AGENT.md §12). From T-093.
@@ -619,16 +628,16 @@ when it reaches it and does not start backlog items on its own.
   something probes its caps. Run the caps probe once per source off the UI goroutine after startup
   (bounded, AGENT.md §6.2/§6.13) and re-register with the discovered caps. Found in T-095.
 
-- `T-993` No test covers the engine's destination roots in `internal/app/app.go`: dropping
-  `st.Destinations()` or `cfg.SavedDestinations` from `engCfg.SavedDestinations` passes every test,
-  and that is the AGENT.md §6.12 boundary. Add one: record a destination in the store, add a torrent
-  under it, restart the root, assert `Restored == 1` with nothing in `Failed`/`Errored`. Found in
-  review of T-095 (PR #56).
-- `T-994` `tui.saveSessionCmd` (T-095) runs `Session.Save` on a Cmd goroutine, so it can race with
-  shutdown (a Save landing after `Store`/`Engine` Close) and with the next add's `SetTorrent`
-  (`Save`'s `GetTorrent`-then-`SetTorrent` is not atomic, so a fresh record's Origin can be
-  overwritten). Serialise saves through one owner, or drain in-flight saves before `Shutdown`.
-  Found in review of T-095 (PR #56).
+- `T-993` (promoted to task, 2026-09-28) No test covers the engine's destination roots in
+  `internal/app/app.go`: dropping `st.Destinations()` or `cfg.SavedDestinations` from
+  `engCfg.SavedDestinations` passes every test, and that is the AGENT.md §6.12 boundary. Add one:
+  record a destination in the store, add a torrent under it, restart the root, assert
+  `Restored == 1` with nothing in `Failed`/`Errored`. Found in review of T-095 (PR #56).
+- `T-994` (promoted to task, 2026-09-28) `tui.saveSessionCmd` (T-095) runs `Session.Save` on a Cmd
+  goroutine, so it can race with shutdown (a Save landing after `Store`/`Engine` Close) and with
+  the next add's `SetTorrent` (`Save`'s `GetTorrent`-then-`SetTorrent` is not atomic, so a fresh
+  record's Origin can be overwritten). Serialise saves through one owner, or drain in-flight saves
+  before `Shutdown`. Found in review of T-095 (PR #56).
 - `T-995` Re-registering a source under the same id (an edit or disable/enable in Settings, T-096)
   gives it a fresh `indexer.Registry` source, so its per-source minimum refresh interval (§6.13)
   restarts from zero. Carry `lastFetch` across `Unregister`/`Register` of the same id if the 1s
@@ -805,19 +814,11 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-129 | 2026-09-28 | T-095: "starts on Latest" read as one Latest fetch per launch against the selected sources (tui.WithStartupLatest), never a timer, not yanking a user who already left Search; session saves after add/remove are a TUI hook (tui.WithSessionSaver) so they follow the add flow's SetTorrent, not an engine wrapper |
 | DEC-130 | 2026-09-28 | T-096: disabling a source unregisters it (as at startup), edits re-register; SaveConfig keeps the manager's own Indexers and admits download_dir plus every saved destination as engine roots only after the write succeeds |
 | DEC-131 | 2026-09-28 | T-097: tortui owns its file storage (plain `*os.File` handles, closed on torrent and engine close) instead of the library's mmap file storage, whose classic I/O is reachable only through a process-wide env var |
+| DEC-132 | 2026-09-28 | v1.0 manual verification is macOS-only (owner has no Windows/Linux device); Windows/Linux terminal matrix and manual download/fresh-install checks deferred to Backlog T-9004 — CI and cross-builds on all three OSes unchanged |
 
 ## Blocked
 
-**T-094 · Terminal compatibility matrix — blocked 2026-09-28**
-Owner-only (AGENT.md §12: manual steps needing a human at a real terminal). Everything
-automatable is merged (PR #59): `docs/terminal-matrix.md` holds the owner checklist and the
-unattended evidence (non-TTY/`TERM=dumb` refusal, `NO_COLOR` goldens, 80×24/120×40/60×20 drop
-order). **To unblock (owner):** run the checklist on Terminal.app, iTerm2 or Ghostty, Windows
-Terminal (+ legacy conhost upgrade message), a Linux emulator, tmux, `NO_COLOR=1`, `TERM=xterm`,
-`--ascii`, and zsh/bash/sh/PowerShell; fill in the tables; then flip T-094 per the Protocol.
-Two review notes on the checklist to apply while filling it in: record each failure's
-bug-vs-release-blocker call as a `DEC-` entry (not only in the matrix file), and a defect visible
-in Terminal.app is a release blocker while one seen only in a modern emulator is a bug.
+None.
 
 ---
 

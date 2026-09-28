@@ -44,46 +44,54 @@ than a garbled render if it can't support the TUI.
 
 | Terminal | Column alignment | Colour degradation | Clean exit | Terminal restore |
 |---|---|---|---|---|
-| Terminal.app (macOS) — **pass/fail floor** | | | | |
-| iTerm2 or Ghostty (macOS) | | | | |
-| Windows Terminal | | | | |
-| conhost (legacy, Windows) — upgrade message, not garbled render | | | | |
-| Linux terminal emulator (e.g. GNOME Terminal, Konsole, Alacritty) | | | | |
-| tmux (inside any of the above) | | | | |
+| Terminal.app (macOS) — **pass/fail floor** | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
+| iTerm2 or Ghostty (macOS) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
+| Windows Terminal | DEFERRED (DEC-132) — no device | DEFERRED (DEC-132) — no device | DEFERRED (DEC-132) — no device | DEFERRED (DEC-132) — no device |
+| conhost (legacy, Windows) — upgrade message, not garbled render | DEFERRED (DEC-132) — no device | DEFERRED (DEC-132) — no device | DEFERRED (DEC-132) — no device | DEFERRED (DEC-132) — no device |
+| Linux terminal emulator (e.g. GNOME Terminal, Konsole, Alacritty) | DEFERRED (DEC-132) — no device | DEFERRED (DEC-132) — no device | DEFERRED (DEC-132) — no device | DEFERRED (DEC-132) — no device |
+| tmux (inside any of the above) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
 
 Additional required conditions — same four columns, run in whichever terminal is convenient
 (note which one):
 
 | Condition | Column alignment | Colour degradation | Clean exit | Terminal restore |
 |---|---|---|---|---|
-| `NO_COLOR=1 ./bin/tortui --demo` | | | | |
-| `TERM=xterm ./bin/tortui --demo` | | | | |
-| `./bin/tortui --ascii --demo` | | | | |
-| `printf '' \| ./bin/tortui` (non-TTY refusal) | | | | |
+| `NO_COLOR=1 ./bin/tortui --demo` | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
+| `TERM=xterm ./bin/tortui --demo` | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
+| `./bin/tortui --ascii --demo` | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
+| `printf '' \| ./bin/tortui` (non-TTY refusal) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
 
 Resize check (run in at least the Terminal.app pass and one other):
 
 | Terminal | 80×24 holds, no garbling | ~60 columns drops Source→Age→Trust in order, no garbling |
 |---|---|---|
-| | | |
+| Terminal.app (macOS) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
+| iTerm2 or Ghostty (macOS) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
 
 Shell-agnosticism (confirmed once, note which terminal/OS each ran on):
 
 | Shell | `./bin/tortui --version` runs cleanly |
 |---|---|
-| zsh | |
-| bash | |
-| sh | |
-| PowerShell (Windows) | |
+| zsh | PASS (owner, macOS, 2026-09-28) |
+| bash | PASS (owner, macOS, 2026-09-28) |
+| sh | PASS (owner, macOS, 2026-09-28) |
+| PowerShell (Windows) | DEFERRED (DEC-132) — no device |
 
 **Any failure becomes a `T-9NN` Backlog item or blocks the release — record which, and why, in
-this file next to the failing row, and add the Backlog entry to `TASK_TRACKER.md` (or note the
-release-blocking decision) before closing T-094.**
+this file next to the failing row, add the Backlog entry to `TASK_TRACKER.md` (or note the
+release-blocking decision), and add the bug-vs-release-blocker call itself as a `DEC-` entry in
+`docs/decisions.md` (not only as a note in this file — a note here is not a substitute for the
+decision log). Terminal.app is the pass/fail floor (AGENT.md §7, §12, DEC-007): a defect seen
+only in a modern emulator (iTerm2, Ghostty, Windows Terminal, a Linux emulator) is a bug, routed
+to Backlog; a defect seen in Terminal.app blocks the release, full stop, regardless of how it
+behaves elsewhere.**
 
-Once every required row above is filled in with a real `PASS` (or a documented, non-blocking
-`FAIL` routed to Backlog), flip `TASK_TRACKER.md`'s T-094 block to `status: done` per the
-Protocol, moving it into `docs/tracker-archive.md`. Until then it stays `todo` even though the
-scaffolding and everything provable by machine (below) is already in place.
+Once every required row above is filled in with a real `PASS`, a documented non-blocking `FAIL`
+routed to Backlog, or an owner-decided `DEFERRED` citing its `DEC-` entry, flip
+`TASK_TRACKER.md`'s T-094 block to `status: done` per the Protocol, moving it into
+`docs/tracker-archive.md`. As of 2026-09-28 every macOS row is `PASS` (owner pass) and the
+Windows/Linux/PowerShell rows are `DEFERRED (DEC-132)` — v1.0 manual verification is macOS-only
+because the owner has no Windows or Linux device; that work is Backlog `T-9004`.
 
 ---
 
@@ -180,9 +188,11 @@ ok  	github.com/kdta91/tortui/internal/tui/theme	0.01s
 
 `internal/tui/components`'s `TestTableGolden80x24`, `TestTableGolden120x40`, and
 `TestTableGolden60x20` are the exact resize check from AGENT.md §7 and this task's acceptance
-criteria (80×24 and ~60 columns), run against the same results table the TUI renders, asserting
-the documented drop order (`Source → Age → Trust`) holds with every remaining column still at its
-declared width — the golden diff *is* the garbling check:
+criteria (80×24 and ~60 columns), run against a test-side copy of the results column set
+(`internal/tui/components/table_test.go`'s `resultColumns()`) that currently matches
+`internal/tui/results.go`'s own column builder, asserting the documented drop order
+(`Source → Age → Trust`) holds with every remaining column still at its declared width — the
+golden diff *is* the garbling check:
 
 ```
 $ go test ./internal/tui/components/... -run 'TestTableGolden80x24|TestTableGolden120x40|TestTableGolden60x20' -v
