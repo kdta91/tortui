@@ -3894,6 +3894,42 @@ write (DEC-130). Tests: temp `TORTUI_HOME`, httptest servers, offline engine. `m
 
 ---
 
+### T-097 · Windows engine storage handles
+```
+status: done
+depends: T-093
+tier: H
+```
+**Scope (owner, 2026-09-28, DEC-128):** folds Backlog `T-955` and `T-954`. Windows is tier 1
+(AGENT.md §14), and all three OSes must be green before a release tag (§12).
+
+**Acceptance**
+- Engine data files are unmapped / their handles released on `Engine.Close` and before
+  remove-with-data, so Windows can rewrite and delete them. Use a wrapping `storage.ClientImpl`
+  whose close releases handles, or a small tortui-owned file storage (T-955's options); no
+  process-wide environment-variable switch.
+- These pass on `make check (windows-latest)`:
+  `TestRestoreSurfacesMissingDataAsErroredNotDropped`,
+  `TestRestoreResumesFromExistingDataWithoutDownloading`,
+  `TestRestoreResumesAPartialDownloadFromItsVerifiedPieces`,
+  `TestCompletedTorrentSeedsUnderTheRatioPolicy`,
+  `TestCompletedTorrentStopsUploadingUnderTheOffPolicyAndResumeOverrides`.
+- The listen-port probe retries more than one random port before giving up (T-954), with a test.
+- A test on every OS proves a completed file can be removed with data after `Close`.
+- Done means `make check (windows-latest)` is green on the PR's head. That one job is required
+  for this task only; the orchestrator verifies it with the other checks.
+
+**Notes:** `internal/engine/anacrolix/filestore.go`: tortui-owned `storage.ClientImpl` on plain
+`*os.File` handles (the library's default file I/O mmaps every file and never unmaps). Torrent
+storage close (on `Drop` and client close) and `fileStore.Close` close every handle; at most 16
+open per torrent (LRU). Same on-disk layout, persistent piece record, and no part files as before;
+`Completion` still re-marks a piece whose file is gone or short (DEC-131). `listen.go`: the probe
+holds one socket while binding the other protocol on its port, alternates which protocol picks,
+32 attempts. Handle counts are asserted, so the every-OS remove-after-Close test fails on macOS
+too if a handle leaks. `go mod tidy` moved `anacrolix/generics` to indirect; `NOTICE` unchanged.
+
+---
+
 ## Blocked — Resolved
 
 
