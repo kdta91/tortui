@@ -79,35 +79,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 8 — Settings
 
-**Done (archived in `docs/tracker-archive.md`):** `T-080` Indexer management · `T-081` Connection test · `T-082` Preferences.
-
----
-
-### T-083 · Bulk import from a Torznab aggregator
-```
-status: todo
-depends: T-080, T-081
-tier: M
-```
-**Scope (owner, 2026-09-28, DEC-123):** Prowlarr only. Jackett has no API-key-authenticated
-endpoint that lists indexers, and NZBHydra2's could not be verified without a running instance, so
-both move to Backlog `T-984`. The aggregator import must be shaped so a second aggregator can be
-added later without changing the TUI flow.
-**Acceptance**
-- From the add form, an "import from aggregator" path takes a base URL and API key for a
-  self-hosted Prowlarr instance, lists the indexers that instance exposes
-  (`GET /api/v1/indexer`, per Prowlarr's own API documentation), and lets the user multi-select
-  which to add. Jackett and NZBHydra2 are out of scope for this task (Backlog `T-984`).
-- Each import becomes an ordinary `[[indexer]]` entry — nothing special-cased afterwards.
-- Names come from the aggregator; ids are slugified and de-duplicated against existing entries.
-- A failed or unauthenticated probe reports the distinct reason, same taxonomy as T-081.
-- **Verify the aggregator's API shape against its official documentation before implementing.**
-  Do not infer endpoint paths or response fields. If the documentation cannot be reached,
-  mark this task `blocked` rather than guessing — a wrong endpoint here silently produces
-  broken sources.
-
-This targets self-hosted aggregator software the user already runs. It is not a source list and
-it does not put any indexer into the repo.
+**Done (archived in `docs/tracker-archive.md`):** `T-080` Indexer management · `T-081` Connection test · `T-082` Preferences · `T-083` Bulk import from a Torznab aggregator.
 
 ---
 
@@ -257,6 +229,11 @@ when it reaches it and does not start backlog items on its own.
   documented endpoint, `/api/stats/indexers`, returns health stats, not re-addable entries; its
   real surface is its instance Swagger (`/swagger-ui/index`), which the owner must supply from a
   running instance. Once either is verified, add it behind T-083's aggregator seam.
+- `T-985` T-083's aggregator import (`internal/indexer/prowlarr.ListIndexers`) silently leaves out
+  any indexer the aggregator itself has disabled (`enable: false`), rather than importing it and
+  marking it disabled — `config.Indexer` has no "disabled at the source" distinct from the user's
+  own `Enabled` toggle, and inventing one wasn't worth it for a first pass (found in review,
+  PR #51). Revisit if a user asks to bulk-import a currently-disabled indexer on purpose.
 - `T-983` `handlePrefsDownloadDirCheck` (internal/tui/preferences.go, ~line 762) compares
   `path`/`margin` against the current form to drop stale results, but no test pins this: if an
   older probe result arrives after a newer one (e.g. the user edits again before the first probe
@@ -638,7 +615,9 @@ when it reaches it and does not start backlog items on its own.
   `internal/indexer/torznab.New`/`internal/indexer/scraper.New` to actually run a `TestSource`
   probe — passed via `tui.WithSourceManager` into `tui.New`. `cmd/tortui/main.go` itself has no
   composition root yet (T-950's own scope), so this stays a Backlog item rather than this task's
-  work. Found in T-080.
+  work. Found in T-080. Its `ListAggregatorIndexers` (T-083) must fill each
+  `tui.AggregatorIndexer.FeedURL` itself via `prowlarr.FeedURL(baseURL, idx.ID)`, since
+  `prowlarr.Indexer` has no `FeedURL` field; an empty `FeedURL` would save a torznab source with no URL.
 - `T-976` `config.Save` (T-002) round-trips through `toml.Encoder` over the whole `Config` struct,
   so it does not preserve a hand-edited file's comments or original key order — T-080's "preserving
   existing comments and key order where practical" acceptance is satisfied only in the sense that

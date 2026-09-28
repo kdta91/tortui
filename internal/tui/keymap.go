@@ -237,6 +237,12 @@ const (
 	// ContextPreferences is the settings screen's preferences panel
 	// (T-082, preferences.go), reached with `p` from the source list.
 	ContextPreferences Context = "modal:preferences"
+	// ContextAggregatorImport is the add form's aggregator-import wizard
+	// (T-083, aggregator_import.go), reached via enter on the blank add
+	// form's own aggregator-import field. It replaces the add form rather
+	// than stacking on top of it (AGENT.md §7: never more than one modal
+	// deep).
+	ContextAggregatorImport Context = "modal:aggregator-import"
 )
 
 // screenContext names the Context a given Screen's keymap lookups use.
@@ -411,6 +417,26 @@ func preferencesBindings() []Binding {
 	}
 }
 
+// aggregatorImportBindings documents the aggregator-import wizard's own
+// non-typing keys (T-083, aggregator_import.go's handleAggregatorImportKey)
+// for the `?` overlay and conflict checking — the same trade
+// sourceFormBindings and preferencesBindings already make: the input step
+// needs runes and backspace for two free-text fields, so only the rest are
+// listed here, and only the input step's own meaning for each (the list
+// step reuses esc/enter differently; handleAggregatorImportKey is the
+// actual source of truth for both).
+func aggregatorImportBindings() []Binding {
+	ctx := []Context{ContextAggregatorImport}
+
+	return []Binding{
+		{Keys: []string{"tab", "down"}, Action: ActionFormNextField, Help: "next field", Contexts: ctx},
+		{Keys: []string{"shift+tab", "up"}, Action: ActionFormPrevField, Help: "previous field", Contexts: ctx},
+		{Keys: []string{"enter"}, Action: ActionFormSave, Help: "fetch (input step) / import selected (list step)", Contexts: ctx},
+		{Keys: []string{"ctrl+r"}, Action: ActionFormReveal, Help: "reveal/mask the api key", Contexts: ctx},
+		{Keys: []string{"esc"}, Action: ActionCancel, Help: "cancel (or back, from the list step)", Contexts: ctx},
+	}
+}
+
 // sourceRemoveConfirmBindings are the bindings live while the settings
 // screen's remove confirmation (ContextSourceRemoveConfirm) is open.
 func sourceRemoveConfirmBindings() []Binding {
@@ -527,6 +553,7 @@ func AllBindings() []Binding {
 	all = append(all, sourceRemoveConfirmBindings()...)
 	all = append(all, sourceTestDetailBindings()...)
 	all = append(all, preferencesBindings()...)
+	all = append(all, aggregatorImportBindings()...)
 
 	return all
 }

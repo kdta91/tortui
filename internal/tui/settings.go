@@ -63,6 +63,33 @@ type SourceManager interface {
 	// ReloadDefinitions re-reads every scraper definition file from disk
 	// (T-023's Loader.Reload) — the `r` key.
 	ReloadDefinitions() error
+
+	// ListAggregatorIndexers lists the indexers a self-hosted aggregator
+	// instance (baseURL) is itself configured with, authenticating with
+	// the user's own API key for that instance (T-083; AGENT.md §2 — the
+	// only auth path). It returns AggregatorIndexer rather than a
+	// concrete adapter type, the same reason every other SourceManager
+	// method here does (AGENT.md §4): the composition root is the only
+	// place that may import a concrete aggregator client package, and it
+	// is also the one that fills AggregatorIndexer.FeedURL (e.g. via
+	// prowlarr.FeedURL) — this package never builds an aggregator's own
+	// URL pattern itself, so a second aggregator is only a second
+	// SourceManager implementation, never a TUI change (found in review:
+	// the wizard previously hard-coded Prowlarr's own feed-URL pattern).
+	ListAggregatorIndexers(ctx context.Context, baseURL, apiKey string) ([]AggregatorIndexer, error)
+}
+
+// AggregatorIndexer is one indexer a self-hosted aggregator (T-083)
+// reports it is itself configured with: enough for the import wizard to
+// show a name to pick and, once selected, a ready-to-save feed URL —
+// FeedURL is filled by the SourceManager implementation that produced this
+// value (e.g. internal/indexer/prowlarr's FeedURL for a Prowlarr
+// instance), never computed inside internal/tui, so this package never
+// needs to know any aggregator's own URL shape (AGENT.md §4).
+type AggregatorIndexer struct {
+	ID      string
+	Name    string
+	FeedURL string
 }
 
 // Option wiring for the settings screen.
@@ -87,17 +114,29 @@ const (
 	fieldCookie
 	fieldDefinition
 	fieldImport
+	// fieldAggregatorImport is the blank add form's entry point into the
+	// bulk aggregator-import wizard (T-083): enter on this field opens it.
+	// It is torznab-only — an aggregator's own indexers are imported as
+	// ordinary torznab sources (see prowlarr.FeedURL) — and add-only:
+	// editing a single already-saved source has no use for a wizard that
+	// creates several new ones.
+	fieldAggregatorImport
 	fieldID
 )
 
 // visibleFields returns the fields the form shows for typ ("torznab" or
-// "scraper"), in the order arrow/tab navigation moves through them.
-// Definition and Import are scraper-only; ID is last since it is an
-// override nobody has to touch.
-func visibleFields(typ string) []sourceFormField {
+// "scraper") on a blank add form (isNew) or an edit form, in the order
+// arrow/tab navigation moves through them. Definition and Import are
+// scraper-only; aggregator import is torznab-and-add-only; ID is last
+// since it is an override nobody has to touch.
+func visibleFields(typ string, isNew bool) []sourceFormField {
 	base := []sourceFormField{fieldName, fieldType, fieldURL, fieldAPIKey, fieldCookie}
-	if typ == "scraper" {
+
+	switch {
+	case typ == "scraper":
 		base = append(base, fieldDefinition, fieldImport)
+	case isNew:
+		base = append(base, fieldAggregatorImport)
 	}
 
 	return append(base, fieldID)
@@ -119,6 +158,8 @@ func (f sourceFormField) label() string {
 		return "Definition file"
 	case fieldImport:
 		return "Import from (path or URL)"
+	case fieldAggregatorImport:
+		return "Import from aggregator (enter opens it)"
 	case fieldID:
 		return "ID (override)"
 	default:
@@ -179,7 +220,7 @@ func newEditForm(src config.Indexer) sourceForm {
 }
 
 // fields returns this form's currently visible fields.
-func (f sourceForm) fields() []sourceFormField { return visibleFields(f.typ) }
+func (f sourceForm) fields() []sourceFormField { return visibleFields(f.typ, f.editingID == "") }
 
 // clampCursor keeps cursor in range after Type changes the visible set.
 func (f sourceForm) clampCursor() sourceForm {
@@ -436,6 +477,12 @@ type settingsModel struct {
 	// prefsForm is the open preferences panel's own state, nil when the
 	// source list has focus.
 	prefsForm *prefsForm
+
+	// aggImport is the open aggregator-import wizard's own state (T-083,
+	// aggregator_import.go), nil when it is closed. Mutually exclusive
+	// with form: opening it replaces the add form rather than stacking a
+	// second modal on top of it (AGENT.md §7).
+	aggImport *aggregatorForm
 }
 
 func newSettingsModel() settingsModel {
@@ -1145,6 +1192,18 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, importDefinitionCmd(m.sources, f.importText)
 		}
 
+		// On the aggregator-import field, enter replaces the add form with
+		// the import wizard (T-083) instead of saving — never more than
+		// one modal deep (AGENT.md §7), so this swaps the modal's content
+		// rather than opening a second one on top of it.
+		if f.current() == fieldAggregatorImport {
+			m.settings.form = nil
+			ag := newAggregatorForm()
+			m.settings.aggImport = &ag
+
+			return m, nil
+		}
+
 		return m.handleSourceFormSave(f)
 
 	case "ctrl+t":
@@ -1393,9 +1452,11 @@ func (m Model) renderSourceForm() string {
 			val = f.typ
 		case fieldAPIKey, fieldCookie:
 			val = maskSecret(val, f.reveal)
+		case fieldAggregatorImport:
+			val = "press enter to list an aggregator's sources"
 		}
 
-		if val == "" && field != fieldType {
+		if val == "" && field != fieldType && field != fieldAggregatorImport {
 			val = "(empty)"
 		}
 

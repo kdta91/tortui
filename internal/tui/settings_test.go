@@ -46,12 +46,25 @@ type fakeSourceManager struct {
 	testDelay    time.Duration
 	ctxCancelled bool
 
+	// saveDelay, when set, makes SaveSources block for that long before
+	// actually applying sources — used to make a second save dispatched
+	// while the first is still in flight deterministic to test, the same
+	// reason testDelay exists for TestSource.
+	saveDelay time.Duration
+
 	// registrySync, when set, is called by SaveSources with the newly
 	// saved set — standing in for "reloads the registry live" (the real
 	// contract's own job), so a test can wire it to update a matching
 	// Searcher double and prove the TUI's own refresh (root.go's
 	// refreshSearchSources) actually reads it back.
 	registrySync func([]config.Indexer)
+
+	// aggregatorItems/aggregatorErr script ListAggregatorIndexers (T-083).
+	aggregatorItems   []AggregatorIndexer
+	aggregatorErr     error
+	aggregatorCalls   int
+	aggregatorBaseURL string
+	aggregatorAPIKey  string
 }
 
 func (f *fakeSourceManager) Sources() []config.Indexer {
@@ -63,16 +76,22 @@ func (f *fakeSourceManager) Sources() []config.Indexer {
 
 func (f *fakeSourceManager) SaveSources(sources []config.Indexer) error {
 	f.mu.Lock()
-
 	f.saveCalls++
-	if f.saveErr != nil {
-		f.mu.Unlock()
-		return f.saveErr
+	delay := f.saveDelay
+	saveErr := f.saveErr
+	f.mu.Unlock()
+
+	if delay > 0 {
+		time.Sleep(delay)
 	}
 
+	if saveErr != nil {
+		return saveErr
+	}
+
+	f.mu.Lock()
 	f.sources = append([]config.Indexer(nil), sources...)
 	sync := f.registrySync
-
 	f.mu.Unlock()
 
 	if sync != nil {
@@ -142,6 +161,21 @@ func (f *fakeSourceManager) ImportDefinition(_ context.Context, _ string) (strin
 	return f.importID, nil
 }
 
+func (f *fakeSourceManager) ListAggregatorIndexers(_ context.Context, baseURL, apiKey string) ([]AggregatorIndexer, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.aggregatorCalls++
+	f.aggregatorBaseURL = baseURL
+	f.aggregatorAPIKey = apiKey
+
+	if f.aggregatorErr != nil {
+		return nil, f.aggregatorErr
+	}
+
+	return append([]AggregatorIndexer(nil), f.aggregatorItems...), nil
+}
+
 func (f *fakeSourceManager) ReloadDefinitions() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -177,6 +211,27 @@ func (f *fakeSourceManager) reloadCallCount() int {
 	defer f.mu.Unlock()
 
 	return f.reloadCall
+}
+
+// aggregatorCallCount reads aggregatorCalls under the same lock
+// ListAggregatorIndexers writes it with, since that call runs off Update's
+// own goroutine (AGENT.md §6.1) while a test's assertion runs on the test
+// goroutine — an unsynchronised read is a data race (found in review).
+func (f *fakeSourceManager) aggregatorCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.aggregatorCalls
+}
+
+// aggregatorLastRequest reads the most recent ListAggregatorIndexers call's
+// arguments under the same lock they were written with — the same race the
+// unsynchronised aggregatorCallCount read above already fixed.
+func (f *fakeSourceManager) aggregatorLastRequest() (baseURL, apiKey string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.aggregatorBaseURL, f.aggregatorAPIKey
 }
 
 // dynamicSearcher is a Searcher test double whose Enabled() result can

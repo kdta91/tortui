@@ -608,6 +608,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case prefsSaveResultMsg:
 		return m.handlePrefsSaveResult(msg)
 
+	case aggregatorFetchResultMsg:
+		return m.handleAggregatorFetchResult(msg)
+
+	case aggregatorImportResultMsg:
+		return m.handleAggregatorImportResult(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -633,6 +639,8 @@ func (m Model) context() Context {
 		return ContextSourceTestDetail
 	case m.settings.prefsForm != nil:
 		return ContextPreferences
+	case m.settings.aggImport != nil:
+		return ContextAggregatorImport
 	case m.showHelp:
 		return ContextHelp
 	case m.errorDetail:
@@ -664,6 +672,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// for the same reason: it needs almost every key for free-text fields.
 	if m.settings.prefsForm != nil {
 		return m.handlePreferencesKey(msg)
+	}
+
+	// The aggregator-import wizard (T-083, aggregator_import.go) is modal
+	// the same way, for the same reason.
+	if m.settings.aggImport != nil {
+		return m.handleAggregatorImportKey(msg)
 	}
 
 	// While the search screen has a field in text-edit mode, most keys —
@@ -1015,6 +1029,8 @@ func (m Model) View() string {
 		body = m.renderSourceTestDetail()
 	case ContextPreferences:
 		body = m.renderPreferencesScreen()
+	case ContextAggregatorImport:
+		body = m.renderAggregatorImport()
 	case ContextErrorDetail:
 		body = m.renderErrorDetail()
 	default:

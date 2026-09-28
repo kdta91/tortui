@@ -3648,6 +3648,44 @@ no live path against the frozen `Engine`, so it is saved and reported "restart t
 
 ---
 
+### T-083 · Bulk import from a Torznab aggregator
+```
+status: done
+depends: T-080, T-081
+tier: M
+```
+**Scope (owner, 2026-09-28, DEC-123):** Prowlarr only. Jackett has no API-key-authenticated
+endpoint that lists indexers, and NZBHydra2's could not be verified without a running instance, so
+both move to Backlog `T-984`. The aggregator import must be shaped so a second aggregator can be
+added later without changing the TUI flow.
+**Acceptance**
+- From the add form, an "import from aggregator" path takes a base URL and API key for a
+  self-hosted Prowlarr instance, lists the indexers that instance exposes
+  (`GET /api/v1/indexer`, per Prowlarr's own API documentation), and lets the user multi-select
+  which to add. Jackett and NZBHydra2 are out of scope for this task (Backlog `T-984`).
+- Each import becomes an ordinary `[[indexer]]` entry — nothing special-cased afterwards.
+- Names come from the aggregator; ids are slugified and de-duplicated against existing entries.
+- A failed or unauthenticated probe reports the distinct reason, same taxonomy as T-081.
+- **Verify the aggregator's API shape against its official documentation before implementing.**
+  Do not infer endpoint paths or response fields. If the documentation cannot be reached,
+  mark this task `blocked` rather than guessing — a wrong endpoint here silently produces
+  broken sources.
+
+This targets self-hosted aggregator software the user already runs. It is not a source list and
+it does not put any indexer into the repo.
+
+**Notes:** Verified against Prowlarr's own source, not inferred: `GET /api/v1/indexer`, `X-Api-Key`
+auth, `IndexerResource` `id`/`name`/`protocol`/`enable` (its `openapi.json`), `{base}/{id}/api` feed.
+New `internal/indexer/prowlarr` client keeps only enabled torrent indexers (Backlog `T-985`); its
+errors classify into T-081's taxonomy. `SourceManager.ListAggregatorIndexers` returns
+`AggregatorIndexer` with a ready `FeedURL`, so `internal/tui` never builds an aggregator's URL and a
+second aggregator needs no TUI change. `aggregator_import.go` replaces the blank add form (one modal
+deep), multi-selects, saves ordinary torznab entries with slugified, deduped ids; a second
+enter/ctrl+s while fetching or saving is refused. Wiring is Backlog `T-975`. Escalated M→H after
+two review FAILs (PR #51). `make check`, `make race` (tui, prowlarr), `make cover` green.
+
+---
+
 ## Blocked — Resolved
 
 
