@@ -229,6 +229,11 @@ when it reaches it and does not start backlog items on its own.
   documented endpoint, `/api/stats/indexers`, returns health stats, not re-addable entries; its
   real surface is its instance Swagger (`/swagger-ui/index`), which the owner must supply from a
   running instance. Once either is verified, add it behind T-083's aggregator seam.
+- `T-985` T-083's aggregator import (`internal/indexer/prowlarr.ListIndexers`) silently leaves out
+  any indexer the aggregator itself has disabled (`enable: false`), rather than importing it and
+  marking it disabled — `config.Indexer` has no "disabled at the source" distinct from the user's
+  own `Enabled` toggle, and inventing one wasn't worth it for a first pass (found in review,
+  PR #51). Revisit if a user asks to bulk-import a currently-disabled indexer on purpose.
 - `T-983` `handlePrefsDownloadDirCheck` (internal/tui/preferences.go, ~line 762) compares
   `path`/`margin` against the current form to drop stale results, but no test pins this: if an
   older probe result arrives after a newer one (e.g. the user edits again before the first probe

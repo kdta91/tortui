@@ -64,23 +64,32 @@ type SourceManager interface {
 	// (T-023's Loader.Reload) — the `r` key.
 	ReloadDefinitions() error
 
-	// ListAggregatorIndexers lists the indexers a self-hosted Prowlarr
+	// ListAggregatorIndexers lists the indexers a self-hosted aggregator
 	// instance (baseURL) is itself configured with, authenticating with
 	// the user's own API key for that instance (T-083; AGENT.md §2 — the
 	// only auth path). It returns AggregatorIndexer rather than a
 	// concrete adapter type, the same reason every other SourceManager
 	// method here does (AGENT.md §4): the composition root is the only
-	// place that may import a concrete aggregator client package.
+	// place that may import a concrete aggregator client package, and it
+	// is also the one that fills AggregatorIndexer.FeedURL (e.g. via
+	// prowlarr.FeedURL) — this package never builds an aggregator's own
+	// URL pattern itself, so a second aggregator is only a second
+	// SourceManager implementation, never a TUI change (found in review:
+	// the wizard previously hard-coded Prowlarr's own feed-URL pattern).
 	ListAggregatorIndexers(ctx context.Context, baseURL, apiKey string) ([]AggregatorIndexer, error)
 }
 
-// AggregatorIndexer is one indexer a self-hosted aggregator (Prowlarr,
-// T-083) reports it is itself configured with: enough for the import
-// wizard to show a name to pick and an id to build that source's own feed
-// URL from once imported.
+// AggregatorIndexer is one indexer a self-hosted aggregator (T-083)
+// reports it is itself configured with: enough for the import wizard to
+// show a name to pick and, once selected, a ready-to-save feed URL —
+// FeedURL is filled by the SourceManager implementation that produced this
+// value (e.g. internal/indexer/prowlarr's FeedURL for a Prowlarr
+// instance), never computed inside internal/tui, so this package never
+// needs to know any aggregator's own URL shape (AGENT.md §4).
 type AggregatorIndexer struct {
-	ID   string
-	Name string
+	ID      string
+	Name    string
+	FeedURL string
 }
 
 // Option wiring for the settings screen.

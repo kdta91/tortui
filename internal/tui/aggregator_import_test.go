@@ -31,7 +31,7 @@ func openAggregatorWizard(t *testing.T, tm *teatest.TestModel) {
 	}
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
-	waitForOutput(t, tm, "Import from aggregator (Prowlarr)")
+	waitForOutput(t, tm, "Import from aggregator")
 }
 
 // TestAggregatorImportEndToEnd drives the whole T-083 flow: open the
@@ -41,9 +41,9 @@ func openAggregatorWizard(t *testing.T, tm *teatest.TestModel) {
 // per-indexer feed URL, saved through the same SaveSources path.
 func TestAggregatorImportEndToEnd(t *testing.T) {
 	sm := &fakeSourceManager{aggregatorItems: []AggregatorIndexer{
-		{ID: "1", Name: "First Indexer"},
-		{ID: "2", Name: "Second Indexer"},
-		{ID: "3", Name: "Third Indexer"},
+		{ID: "1", Name: "First Indexer", FeedURL: "https://example.org/1/api"},
+		{ID: "2", Name: "Second Indexer", FeedURL: "https://example.org/2/api"},
+		{ID: "3", Name: "Third Indexer", FeedURL: "https://example.org/3/api"},
 	}}
 	tm := newSettingsTestModel(t, sm)
 
@@ -68,8 +68,8 @@ func TestAggregatorImportEndToEnd(t *testing.T) {
 
 	waitForPredicate(t, func() bool { return sm.saveCallCount() > 0 })
 
-	if sm.aggregatorBaseURL != "https://example.org" || sm.aggregatorAPIKey != "my-prowlarr-key" {
-		t.Fatalf("ListAggregatorIndexers called with (%q, %q)", sm.aggregatorBaseURL, sm.aggregatorAPIKey)
+	if gotBaseURL, gotAPIKey := sm.aggregatorLastRequest(); gotBaseURL != "https://example.org" || gotAPIKey != "my-prowlarr-key" {
+		t.Fatalf("ListAggregatorIndexers called with (%q, %q)", gotBaseURL, gotAPIKey)
 	}
 
 	saved := sm.savedSources()
@@ -106,6 +106,56 @@ func TestAggregatorImportEndToEnd(t *testing.T) {
 	waitForOutput(t, tm, "First Indexer")
 }
 
+// TestAggregatorImportSecondEnterWhileSavingIsRefused proves pressing
+// enter (or ctrl+s) a second time while the first import is still saving
+// does not import the same selection twice — the reviewer reproduced this
+// as duplicate `first`/`first-2` sources before the fix (T-083 review
+// remediation). saveDelay makes the race deterministic: the first enter
+// starts a save that blocks, the second enter arrives while it is still in
+// flight and must be refused outright, and only then does the first save
+// complete.
+func TestAggregatorImportSecondEnterWhileSavingIsRefused(t *testing.T) {
+	sm := &fakeSourceManager{
+		aggregatorItems: []AggregatorIndexer{{ID: "1", Name: "First Indexer", FeedURL: "https://example.org/1/api"}},
+		saveDelay:       150 * time.Millisecond,
+	}
+	tm := newSettingsTestModel(t, sm)
+
+	waitForOutput(t, tm, "No sources configured")
+
+	openAggregatorWizard(t, tm)
+
+	tm.Send(keyRune("https://example.org"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	tm.Send(keyRune("key"))
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	waitForOutput(t, tm, "First Indexer")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeySpace}) // select "First Indexer"
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // starts the (delayed) save
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // must be refused: a save is in flight
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlS}) // must also be refused
+
+	waitForPredicate(t, func() bool { return sm.saveCallCount() > 0 })
+
+	// The delayed save has not necessarily returned to Update() yet the
+	// instant saveCallCount first turns non-zero; give the result message
+	// a moment to land before asserting the final call count and content.
+	time.Sleep(250 * time.Millisecond)
+
+	if calls := sm.saveCallCount(); calls != 1 {
+		t.Fatalf("SaveSources was called %d times, want exactly 1", calls)
+	}
+
+	saved := sm.savedSources()
+	if len(saved) != 1 {
+		t.Fatalf("expected exactly 1 imported source, got %d: %#v", len(saved), saved)
+	}
+	if saved[0].ID != "first-indexer" {
+		t.Fatalf("imported source id = %q, want first-indexer (not a second, suffixed duplicate)", saved[0].ID)
+	}
+}
+
 // TestAggregatorImportDedupesAgainstExistingIDs proves an imported
 // indexer's id is slugified from its name and de-duplicated against a
 // source that already exists under that id — the same rule the add/edit
@@ -115,7 +165,7 @@ func TestAggregatorImportDedupesAgainstExistingIDs(t *testing.T) {
 		sources: []config.Indexer{
 			{ID: "first-indexer", Name: "Something Else", Type: "torznab", URL: "https://example.org/existing", Enabled: true},
 		},
-		aggregatorItems: []AggregatorIndexer{{ID: "9", Name: "First Indexer"}},
+		aggregatorItems: []AggregatorIndexer{{ID: "9", Name: "First Indexer", FeedURL: "https://example.org/9/api"}},
 	}
 	tm := newSettingsTestModel(t, sm)
 
@@ -151,6 +201,13 @@ func TestAggregatorImportDedupesAgainstExistingIDs(t *testing.T) {
 	if got.ID != "first-indexer-2" {
 		t.Fatalf("imported source id = %q, want first-indexer-2 (deduped against the existing first-indexer)", got.ID)
 	}
+
+	// The saved URL is the FeedURL the SourceManager reported, used
+	// verbatim — this package never builds an aggregator's own per-indexer
+	// URL pattern itself (T-083 review remediation).
+	if got.URL != "https://example.org/9/api" {
+		t.Fatalf("imported source URL = %q, want https://example.org/9/api (AggregatorIndexer.FeedURL passed through verbatim)", got.URL)
+	}
 }
 
 // TestAggregatorImportRequiresBothFields proves enter on the input step
@@ -171,8 +228,8 @@ func TestAggregatorImportRequiresBothFields(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 	waitForOutput(t, tm, "API key is required")
 
-	if sm.aggregatorCalls != 0 {
-		t.Fatalf("ListAggregatorIndexers was called %d times, want 0", sm.aggregatorCalls)
+	if calls := sm.aggregatorCallCount(); calls != 0 {
+		t.Fatalf("ListAggregatorIndexers was called %d times, want 0", calls)
 	}
 }
 
@@ -223,7 +280,7 @@ func TestAggregatorImportEscFromInputClosesWizard(t *testing.T) {
 // TestAggregatorImportEscFromListGoesBackToInput proves esc on the list
 // step returns to the input step rather than closing outright.
 func TestAggregatorImportEscFromListGoesBackToInput(t *testing.T) {
-	sm := &fakeSourceManager{aggregatorItems: []AggregatorIndexer{{ID: "1", Name: "Only One"}}}
+	sm := &fakeSourceManager{aggregatorItems: []AggregatorIndexer{{ID: "1", Name: "Only One", FeedURL: "https://example.org/1/api"}}}
 	tm := newSettingsTestModel(t, sm)
 
 	waitForOutput(t, tm, "No sources configured")
@@ -243,7 +300,7 @@ func TestAggregatorImportEscFromListGoesBackToInput(t *testing.T) {
 // TestAggregatorImportRequiresASelection proves enter on the list step
 // with nothing checked is refused with an inline reason.
 func TestAggregatorImportRequiresASelection(t *testing.T) {
-	sm := &fakeSourceManager{aggregatorItems: []AggregatorIndexer{{ID: "1", Name: "Only One"}}}
+	sm := &fakeSourceManager{aggregatorItems: []AggregatorIndexer{{ID: "1", Name: "Only One", FeedURL: "https://example.org/1/api"}}}
 	tm := newSettingsTestModel(t, sm)
 
 	waitForOutput(t, tm, "No sources configured")

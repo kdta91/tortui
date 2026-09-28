@@ -22,7 +22,10 @@ func TestListIndexersSendsAPIKeyHeaderAndParsesTheResponse(t *testing.T) {
 		gotPath = r.URL.Path
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"id":1,"name":"First Indexer"},{"id":2,"name":"Second Indexer"}]`))
+		_, _ = w.Write([]byte(`[
+			{"id":1,"name":"First Indexer","protocol":"torrent","enable":true},
+			{"id":2,"name":"Second Indexer","protocol":"torrent","enable":true}
+		]`))
 	}))
 	defer srv.Close()
 
@@ -41,6 +44,60 @@ func TestListIndexersSendsAPIKeyHeaderAndParsesTheResponse(t *testing.T) {
 	want := []Indexer{{ID: "1", Name: "First Indexer"}, {ID: "2", Name: "Second Indexer"}}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("ListIndexers = %#v, want %#v", got, want)
+	}
+}
+
+// TestListIndexersFiltersOutUsenetProtocolIndexers proves a usenet-protocol
+// indexer is left out: it has no Torznab feed at all, so importing it as
+// one would silently produce a source that never returns a result (found
+// in review).
+func TestListIndexersFiltersOutUsenetProtocolIndexers(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"id":1,"name":"Torrent Indexer","protocol":"torrent","enable":true},
+			{"id":2,"name":"Usenet Indexer","protocol":"usenet","enable":true},
+			{"id":3,"name":"Unknown Protocol Indexer","protocol":"unknown","enable":true}
+		]`))
+	}))
+	defer srv.Close()
+
+	got, err := ListIndexers(context.Background(), nil, srv.URL, "key")
+	if err != nil {
+		t.Fatalf("ListIndexers: %v", err)
+	}
+
+	want := []Indexer{{ID: "1", Name: "Torrent Indexer"}}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("ListIndexers = %#v, want %#v (usenet/unknown-protocol indexers filtered out)", got, want)
+	}
+}
+
+// TestListIndexersFiltersOutDisabledIndexers proves an indexer the
+// aggregator itself has disabled is left out rather than imported
+// (Backlog T-985; found in review).
+func TestListIndexersFiltersOutDisabledIndexers(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"id":1,"name":"Enabled Indexer","protocol":"torrent","enable":true},
+			{"id":2,"name":"Disabled Indexer","protocol":"torrent","enable":false}
+		]`))
+	}))
+	defer srv.Close()
+
+	got, err := ListIndexers(context.Background(), nil, srv.URL, "key")
+	if err != nil {
+		t.Fatalf("ListIndexers: %v", err)
+	}
+
+	want := []Indexer{{ID: "1", Name: "Enabled Indexer"}}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("ListIndexers = %#v, want %#v (disabled indexer filtered out)", got, want)
 	}
 }
 

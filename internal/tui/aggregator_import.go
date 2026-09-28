@@ -207,8 +207,15 @@ func (m Model) handleAggregatorInputKey(msg tea.KeyMsg, f aggregatorForm) (tea.M
 }
 
 // handleAggregatorFetch validates the input step and, if it passes,
-// dispatches the bounded, cancellable-by-generation list request.
+// dispatches the bounded, cancellable-by-generation list request. A second
+// enter while a fetch is already in flight is refused outright — the same
+// discipline handleSourceTest already applies to a second `t` (DEC-115) —
+// rather than dispatching a second overlapping request.
 func (m Model) handleAggregatorFetch(f aggregatorForm) (tea.Model, tea.Cmd) {
+	if f.fetching {
+		return m, nil
+	}
+
 	baseURL := strings.TrimSpace(f.baseURL)
 
 	if baseURL == "" {
@@ -225,7 +232,8 @@ func (m Model) handleAggregatorFetch(f aggregatorForm) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if strings.TrimSpace(f.apiKey) == "" {
+	apiKey := strings.TrimSpace(f.apiKey)
+	if apiKey == "" {
 		f.err = "API key is required"
 		m.settings.aggImport = &f
 
@@ -240,6 +248,11 @@ func (m Model) handleAggregatorFetch(f aggregatorForm) (tea.Model, tea.Cmd) {
 	}
 
 	f.baseURL = baseURL
+	// Trimmed once, here, and used everywhere downstream — the saved
+	// source's own credential (aggregatorIndexerToSource) must be the same
+	// value that was actually sent to the aggregator, not a re-trim of
+	// whatever the field happens to hold later (found in review).
+	f.apiKey = apiKey
 	f.fetching = true
 	f.fetchGen++
 	f.err = ""
@@ -334,8 +347,18 @@ func (m Model) handleAggregatorListKey(msg tea.KeyMsg, f aggregatorForm) (tea.Mo
 
 // handleAggregatorImport builds one ordinary config.Indexer per selected
 // item and saves them all as a single SaveSources call, the same
-// full-replacement-set contract every other settings save already uses.
+// full-replacement-set contract every other settings save already uses. A
+// second enter/ctrl+s while the first import is still saving is refused
+// outright: the optimistic snapshot (m.sourcesSnapshot) already holds the
+// just-added sources by the time this runs once, so re-entering it before
+// the first SaveSources result lands would append the same chosen items a
+// second time under new, incrementally-suffixed ids (found in review — the
+// reviewer reproduced it as duplicate `first`/`first-2` rows).
 func (m Model) handleAggregatorImport(f aggregatorForm) (tea.Model, tea.Cmd) {
+	if f.importing {
+		return m, nil
+	}
+
 	if m.sources == nil {
 		f.err = "no source manager configured"
 		m.settings.aggImport = &f
@@ -362,7 +385,7 @@ func (m Model) handleAggregatorImport(f aggregatorForm) (tea.Model, tea.Cmd) {
 	all := append([]config.Indexer(nil), previous...)
 
 	for _, it := range chosen {
-		all = append(all, aggregatorIndexerToSource(it, f.baseURL, f.apiKey, all))
+		all = append(all, aggregatorIndexerToSource(it, f.apiKey, all))
 	}
 
 	f.importing = true
@@ -403,8 +426,10 @@ func (m Model) handleAggregatorImportResult(msg aggregatorImportResultMsg) (tea.
 // the same rule the add/edit form's own resolvedID already follows,
 // applied here against the growing "existing" set so two imports whose
 // names collide with each other, not just with a saved source, still get
-// distinct ids.
-func aggregatorIndexerToSource(it AggregatorIndexer, baseURL, apiKey string, existing []config.Indexer) config.Indexer {
+// distinct ids. it.FeedURL is used verbatim: building an aggregator's own
+// per-indexer URL pattern is the SourceManager implementation's job, never
+// this package's (see AggregatorIndexer's doc comment).
+func aggregatorIndexerToSource(it AggregatorIndexer, apiKey string, existing []config.Indexer) config.Indexer {
 	base := slugify(it.Name)
 	id := base
 
@@ -416,7 +441,7 @@ func aggregatorIndexerToSource(it AggregatorIndexer, baseURL, apiKey string, exi
 		ID:      id,
 		Name:    it.Name,
 		Type:    "torznab",
-		URL:     prowlarrFeedURL(baseURL, it.ID),
+		URL:     it.FeedURL,
 		APIKey:  apiKey,
 		Enabled: true,
 	}
@@ -431,17 +456,6 @@ func idCollides(id string, existing []config.Indexer) bool {
 	}
 
 	return false
-}
-
-// prowlarrFeedURL builds the per-indexer Torznab feed URL a Prowlarr
-// instance exposes. This package cannot import internal/indexer/prowlarr
-// directly (AGENT.md §4 — only the composition root wiring this seam may),
-// so the pattern is reproduced here rather than shared; it is fixed by
-// Prowlarr's own frontend (see internal/indexer/prowlarr's doc comment for
-// where this was verified) and covered by
-// TestAggregatorIndexerToSourceBuildsPerIndexerFeedURL.
-func prowlarrFeedURL(baseURL, indexerID string) string {
-	return strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/" + indexerID + "/api"
 }
 
 // aggregatorImportLegend documents the wizard's own keys, the same
@@ -467,7 +481,7 @@ func (m Model) renderAggregatorImport() string {
 
 	var b strings.Builder
 
-	b.WriteString(th.Accent.Render("Import from aggregator (Prowlarr)"))
+	b.WriteString(th.Accent.Render("Import from aggregator"))
 	b.WriteString("\n\n")
 
 	if f.phase == aggregatorPhaseList {

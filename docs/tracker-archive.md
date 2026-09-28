@@ -3685,6 +3685,16 @@ rather than stacking a second modal (never more than one modal deep). Compositio
 Backlog `T-975`, same gap T-080/081/082 already left. `make check`, `make race` (tui, prowlarr),
 `make cover` (prowlarr 90.0%, tui 91.3%) green.
 
+**Review remediation (PR #51):** a second enter/ctrl+s while a fetch or import is already in
+flight is now refused (guarded on `f.fetching`/`f.importing`; reproduced the duplicate-import bug
+with a test first). `ListIndexers` now decodes `protocol`/`enable` from Prowlarr's own
+`openapi.json` schema and drops any non-torrent or disabled indexer (Backlog `T-985` for importing
+a disabled one on request) instead of producing a broken source. `AggregatorIndexer` gained
+`FeedURL`, filled by the `SourceManager` side — `internal/tui` no longer builds Prowlarr's own URL
+pattern or names it in the wizard's header, so a second aggregator needs no TUI change. The API key
+is trimmed once and reused, not re-trimmed inconsistently. `make check`, `make race` (tui,
+prowlarr), `make cover` (prowlarr 91.7%, tui 91.3%) green.
+
 ---
 
 ## Blocked — Resolved

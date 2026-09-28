@@ -15,15 +15,28 @@
 // Verified against Prowlarr's own source before implementing (T-083
 // acceptance): GET /api/v1/indexer is Prowlarr's own documented indexer-list
 // route (Prowlarr.Api.V1/Indexers/IndexerController.cs, inheriting
-// ProviderControllerBase's GetAll), IndexerResource carries Id and Name
-// (Prowlarr.Api.V1/Indexers/IndexerResource.cs), and every Servarr-family
-// app — Prowlarr included — authenticates its own API with the X-Api-Key
-// header (confirmed against Prowlarr's own AuthenticationBuilderExtensions.cs
-// and its integration test client, NzbDrone.Integration.Test/Client/
-// ClientBase.cs). The per-indexer Torznab feed URL an imported source is
-// saved with, {base}/{indexerId}/api, is the same pattern Prowlarr's own
-// frontend builds for its "copy RSS URL" button
+// ProviderControllerBase's GetAll), IndexerResource carries Id, Name,
+// Protocol, and Enable (Prowlarr.Api.V1/Indexers/IndexerResource.cs and its
+// own published src/Prowlarr.Api.V1/openapi.json schema — protocol
+// serialises as the lowercase string enum "unknown"/"usenet"/"torrent", and
+// enable as a plain boolean), and every Servarr-family app — Prowlarr
+// included — authenticates its own API with the X-Api-Key header (confirmed
+// against Prowlarr's own AuthenticationBuilderExtensions.cs and its
+// integration test client, NzbDrone.Integration.Test/Client/ClientBase.cs).
+// The per-indexer Torznab feed URL an imported source is saved with,
+// {base}/{indexerId}/api, is the same pattern Prowlarr's own frontend
+// builds for its "copy RSS URL" button
 // (frontend/src/Indexer/Index/Table/IndexerIndexRow.tsx).
+//
+// ListIndexers only ever returns torrent-protocol, enabled indexers: a
+// Usenet-protocol indexer has no Torznab feed at all (Prowlarr proxies
+// those over the Newznab-family API instead, a different response shape
+// this package does not speak), so importing one as a torznab source would
+// silently produce a source that never returns a result. A disabled
+// indexer is left out rather than imported and marked, since tortui has no
+// "disabled at the source" concept for a config.Indexer to carry (Backlog
+// T-985 tracks adding one if a user asks to import a disabled indexer
+// on purpose).
 package prowlarr
 
 import (
@@ -53,14 +66,25 @@ type Indexer struct {
 	Name string
 }
 
+// protocolTorrent is the DownloadProtocol enum's own "torrent" string, per
+// Prowlarr's published openapi.json schema (the enum serialises as
+// "unknown" | "usenet" | "torrent"). Anything else — usenet, or a future
+// protocol this package doesn't know about — is filtered out: it has no
+// Torznab feed at all, and importing it as one would silently produce a
+// source that never returns a result.
+const protocolTorrent = "torrent"
+
 // indexerJSON is the subset of Prowlarr's IndexerResource this package
-// reads. Every other field on that resource (protocol, capabilities,
-// priority, and the rest) is Prowlarr's own configuration for a source it
-// already knows how to reach; tortui only needs enough to offer the user a
-// name to pick and an id to build a feed URL from.
+// reads. Every other field on that resource (capabilities, priority, and
+// the rest) is Prowlarr's own configuration for a source it already knows
+// how to reach; tortui only needs enough to offer the user a name to pick,
+// an id to build a feed URL from, and enough to filter out what it cannot
+// usefully import (protocol, enable).
 type indexerJSON struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Protocol string `json:"protocol"`
+	Enable   bool   `json:"enable"`
 }
 
 // ParseError reports a response that did not parse as Prowlarr's own
@@ -87,8 +111,10 @@ func (e *ParseError) ParseFailed() bool { return true }
 
 // ListIndexers calls Prowlarr's GET /api/v1/indexer with the user's own
 // API key for that instance (AGENT.md §2 — the only auth path this package
-// ever uses) and returns every indexer the instance is configured with, in
-// the order Prowlarr returned them.
+// ever uses) and returns every torrent-protocol, enabled indexer the
+// instance is configured with, in the order Prowlarr returned them. A
+// usenet-protocol indexer is left out — it has no Torznab feed for a saved
+// torznab source to point at — and so is a disabled one (Backlog T-985).
 //
 // client is the shared httpx.Client every indexer adapter talks to the
 // network through (T-020); a nil client gets a default one with no
@@ -118,7 +144,12 @@ func ListIndexers(ctx context.Context, client *httpx.Client, baseURL, apiKey str
 	}
 
 	out := make([]Indexer, 0, len(raw))
+
 	for _, r := range raw {
+		if !r.Enable || r.Protocol != protocolTorrent {
+			continue
+		}
+
 		out = append(out, Indexer{ID: strconv.Itoa(r.ID), Name: r.Name})
 	}
 
