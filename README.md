@@ -94,6 +94,7 @@ sudo mv tortui /usr/local/bin/
 ```powershell
 Expand-Archive tortui_*_windows_amd64.zip -DestinationPath "$env:LOCALAPPDATA\Programs\tortui"
 $env:PATH += ";$env:LOCALAPPDATA\Programs\tortui"
+Unblock-File "$env:LOCALAPPDATA\Programs\tortui\tortui.exe"   # see Troubleshooting
 ```
 
 To make the `PATH` change permanent, add that directory under
@@ -114,7 +115,8 @@ scoop install tortui
 
 ### Verifying a download
 
-Every release artifact is signed with Sigstore and carries a GitHub build attestation:
+Every release archive carries a GitHub build attestation, and `checksums.txt` (which covers every
+archive) is signed with Sigstore keyless signing (`checksums.txt.sig` / `.pem`):
 
 ```sh
 gh attestation verify tortui_*.tar.gz --repo kdta91/tortui
@@ -144,6 +146,38 @@ On Windows, `make` targets work under Git Bash. Without make:
 
 ```powershell
 go build -o bin\tortui.exe .\cmd\tortui
+```
+
+### Shell completions
+
+Every release archive ships a completion script per shell under `completions/`, generated from
+tortui's actual flag set (`tortui completion <shell>`, also runnable by hand on any installed
+binary). Homebrew installs wire up bash, zsh, and fish automatically; everyone else (Scoop
+included) installs the one matching their shell:
+
+**bash**
+```sh
+sudo cp completions/tortui.bash /etc/bash_completion.d/tortui   # Linux
+# or, on macOS with Homebrew's bash-completion@2:
+cp completions/tortui.bash "$(brew --prefix)/etc/bash_completion.d/tortui"
+```
+
+**zsh**
+```sh
+cp completions/tortui.zsh "${fpath[1]}/_tortui"
+# then start a new shell, or run: autoload -U compinit && compinit
+```
+
+**fish**
+```sh
+cp completions/tortui.fish ~/.config/fish/completions/tortui.fish
+```
+
+**PowerShell**
+```powershell
+Get-Content completions\tortui.powershell | Out-File -Append $PROFILE
+# or, without the archive, straight from an installed binary:
+tortui completion powershell | Out-File -Append $PROFILE
 ```
 
 ---
@@ -394,6 +428,24 @@ only connect outbound and downloads will be slower.
 The default open-file limit (often 256) is too low for a busy swarm. tortui raises it at startup;
 `doctor` shows the before and after. If it's still low, raise the hard limit with `ulimit -n`.
 
+**Windows: "Windows protected your PC" (SmartScreen)**
+Releases aren't code-signed yet (same reason as macOS above). Click **More info**, then
+**Run anyway**. This is a one-time prompt per downloaded file, not per run.
+
+**Windows: Microsoft Defender flags or removes the binary**
+An unsigned executable from an uncommon publisher is exactly what Defender's heuristics are
+tuned to flag — this is a false positive, not a report of actual malicious behaviour. Verify the
+download first with `gh attestation verify` (above), then either allow it once from Defender's
+notification, or add an exclusion for the install directory under
+*Windows Security → Virus & threat protection → Manage settings → Exclusions*.
+
+**Windows: the binary won't run, or PowerShell warns the file is blocked**
+Anything downloaded through a browser or `Expand-Archive` from a downloaded zip is marked with
+Windows' own "Mark of the Web". Clear it before running:
+```powershell
+Unblock-File "$env:LOCALAPPDATA\Programs\tortui\tortui.exe"
+```
+
 **Search returns nothing**
 Check Settings (`5`) → select the source → `t` to test it. Distinguishes *unreachable* from
 *auth failed* from *parse failed*. Auth failures mean your API key or cookie is wrong or expired.
@@ -442,6 +494,7 @@ make check      # fmt + lint + vet + tests — the commit gate
 make build      # → bin/tortui
 make run        # run against ./dev-config.toml
 make build-all  # cross-compile all six OS/arch targets
+make release-check  # validate .goreleaser.yaml + a local snapshot build (no publish)
 ```
 
 Use a scratch directory so development never touches your real config:

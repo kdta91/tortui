@@ -1,0 +1,77 @@
+name: release
+
+# T-092: builds and publishes a tagged release with goreleaser. Fires only
+# on a `v*` tag — pushing that tag is on AGENT.md §12's owner-only list, so
+# this workflow never runs from anything an agent does unattended. The
+# tap/bucket/WinGet steps additionally need secrets (see below) that only
+# the owner can create; a tag pushed before those exist still produces a
+# working, attested GitHub Release, because .goreleaser.yaml templates each
+# of those three sections' skip_upload directly on its own token being set
+# (PR #54 review finding 2 — goreleaser's own `skip_upload: auto` only skips
+# for a *prerelease* tag, not for a missing token, so a plain tag would
+# otherwise fail the `goreleaser release` step outright and skip the
+# "Attest build provenance" step below it entirely; see .goreleaser.yaml's
+# comments for the mechanism).
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the GitHub Release and upload its assets
+  id-token: write # Sigstore keyless signing (cosign) and build attestations, both OIDC-based
+  attestations: write # actions/attest-build-provenance
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # goreleaser needs full history for the changelog
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Free, keyless signing (AGENT.md §16 / T-092 acceptance): no key
+      # material stored anywhere, identity comes from this job's own OIDC
+      # token via Sigstore's public Fulcio/Rekor instances.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Each of these is a personal access token scoped to write a
+          # *different* repository (the Homebrew tap, the Scoop bucket, and
+          # microsoft/winget-pkgs respectively) — GITHUB_TOKEN is scoped
+          # only to this repo and cannot push to them. Creating those repos
+          # and minting/adding these tokens is owner-only (AGENT.md §12).
+          # An unconfigured secret still becomes an empty (not absent)
+          # environment variable here, which is exactly what
+          # .goreleaser.yaml's per-section `skip_upload` template needs to
+          # skip that one channel without failing the release.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          SCOOP_BUCKET_GITHUB_TOKEN: ${{ secrets.SCOOP_BUCKET_GITHUB_TOKEN }}
+          WINGET_GITHUB_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
+
+      # GitHub build attestations (free, alongside Sigstore) — a second,
+      # independent provenance mechanism verifiable with
+      # `gh attestation verify` (documented in README) without relying on
+      # the Sigstore public infrastructure at all.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/tortui_*.tar.gz,dist/tortui_*.zip"
