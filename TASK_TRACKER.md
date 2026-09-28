@@ -93,6 +93,25 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 **Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves.
 
+### T-9008 · Pin session-save wiring and shutdown window
+```
+status: todo
+depends: T-994
+tier: H
+```
+**Acceptance** — each one a test that fails under the named mutation:
+- Reverting `internal/app/app.go` to `tui.WithTorrentStore(a.store)` (instead of `a.session`)
+  fails a test.
+- Shutdown calling `Session.Save` and then seal, instead of `Session.Close`, fails a test
+  deterministically, not by timing luck.
+- `Session.Close` setting `closed` after `mu.Unlock` instead of before fails a test
+  deterministically (a test seam is allowed); the comment on
+  `TestSessionCloseMakesASaveQueuedBehindItANoOp` no longer claims it pins "no gap".
+- `TestShutdownWaitsForASaveInFlight` confirms Shutdown is blocked (not returned, engine not
+  closed) before it releases the parked save, so it fails when `Close` does not take `mu`.
+- The `TorrentStore` doc comment in `internal/tui/root.go` is reflowed.
+- No production behaviour changes beyond unexported test seams.
+
 ---
 
 ## v1.0 release criteria
@@ -100,7 +119,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993 and T-994, are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994 and T-9008, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI.
 - [ ] Coverage thresholds from AGENT.md §9 met.
 - [ ] `govulncheck` clean; `NOTICE` current; no GPL/AGPL dependency.
@@ -657,7 +676,7 @@ when it reaches it and does not start backlog items on its own.
   `Close`, the first App is never closed (lock, engine and log stay open), which can add a Windows
   `TempDir` cleanup error on top of the real failure. Register a `t.Cleanup` that closes it once.
   Found in review of T-993 (PR #61), non-blocking.
-- `T-9008` No test proves `internal/app/app.go` passes the session (not the store) to
+- `T-9008` (promoted to task, 2026-09-28) No test proves `internal/app/app.go` passes the session (not the store) to
   `tui.WithTorrentStore`: reverting it to `a.store` leaves every test green and reopens T-994's
   origin race. Same gap class as `T-997`; one teatest add-flow check on the root would cover both.
   Also, `Shutdown` calling `Session.Save` instead of `Session.Close` is caught only by chance by
