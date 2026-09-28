@@ -832,7 +832,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 
 ## Blocked
 
-### T-095 · Composition root — blocked 2026-09-28
+**T-095 · Composition root — blocked 2026-09-28**
 PR #56 (`task/T-095-composition-root`, head `02271a1`) passed tier-H review at `56f49c3`; every
 required check is green except `check indexer hostname allowlist (T-007)`. The code diff is clean:
 the check fails only because commit `02271a1`'s *message* quotes a struct-field access that the
