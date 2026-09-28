@@ -5,7 +5,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
@@ -40,23 +39,18 @@ func run(args []string, out *os.File) int {
 		return runCompletion(args[1:], out)
 	}
 
-	fs := flag.NewFlagSet("tortui", flag.ContinueOnError)
-	fs.SetOutput(out)
-
-	showVersion := fs.Bool("version", false, "print version information and exit")
-	demo := fs.Bool("demo", false, "run the TUI against a fake engine and fixture indexer — zero network, zero writes outside a temp dir (AGENT.md §15)")
-	// config is accepted but not yet consumed here: internal/config (T-002)
-	// implements loading, but wiring it into main happens once the
-	// composition root (internal/app) exists.
-	fs.String("config", "", "path to config.toml (overrides the default XDG location)")
-	logLevel := fs.String("log-level", "", "override the configured log level (debug, info, warn, error)")
-	logFile := fs.String("log-file", "", "override the configured log file path")
+	// globalFlagSet (completion.go) is the single source of truth for these
+	// flags: run() and `tortui completion <shell>` both build the FlagSet
+	// from it, so a flag added, renamed, or removed here is automatically
+	// reflected in every generated completion script (T-092 review finding
+	// 1 — see TestRunAndDoctorAcceptEveryAdvertisedFlag).
+	fs, g := globalFlagSet(out)
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	if *showVersion {
+	if *g.version {
 		if _, err := fmt.Fprintf(out, "tortui %s (commit %s, built %s)\n", version, commit, date); err != nil {
 			return 1
 		}
@@ -64,10 +58,14 @@ func run(args []string, out *os.File) int {
 		return 0
 	}
 
-	if *demo {
+	if *g.demo {
 		return runDemo(out)
 	}
 
+	// g.config is accepted but not yet consumed here: internal/config
+	// (T-002) implements loading, but wiring it into main happens once the
+	// composition root (internal/app) exists.
+	//
 	// internal/config.Config has no log_level/log_file keys yet (that
 	// remains T-003's deferred scope — see DEC-028), so the config-side
 	// input to these precedence functions is empty for now. Once the
@@ -75,8 +73,8 @@ func run(args []string, out *os.File) int {
 	// settings become the configLevel/configFile arguments here instead of
 	// "". The flag and TORTUI_LOG_LEVEL/TORTUI_LOG_FILE env-var tiers
 	// already work end-to-end today.
-	resolvedLevel := logging.ResolveLevel("", *logLevel)
-	resolvedFile := logging.ResolveFile("", *logFile)
+	resolvedLevel := logging.ResolveLevel("", *g.logLevel)
+	resolvedFile := logging.ResolveFile("", *g.logFile)
 
 	if _, err := logging.ParseLevel(resolvedLevel); err != nil {
 		if _, werr := fmt.Fprintln(out, err); werr != nil {

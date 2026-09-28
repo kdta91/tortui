@@ -746,7 +746,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-123 | 2026-09-28 | T-083 narrowed by the owner to Prowlarr only; Jackett and NZBHydra2 aggregator import deferred to Backlog T-984 pending API verification |
 | DEC-124 | 2026-09-28 | T-090: first-run overlay wording corrected against AGENT.md §2 (bundled sources do ship, T-024) instead of the stale acceptance text; README's Status notice now states precisely what's wired today (`--version`/`doctor`/`--demo`) vs. pending the composition root (Backlog T-950), and concrete false claims (`--ascii` flag, ten MPL modules not yet in `NOTICE`) were fixed |
 | DEC-125 | 2026-09-28 | T-091: one combined suite (search + add + real download + offline restore) covers both the download/resume and zero-config-standalone acceptance items; reachability checked generically across every bundled source; seed_policy pinned to "off" and the wait accepts Seeding-or-Paused (T-034-class race), and the 25 MiB size cap is actually enforced (PR #53 remediation) |
-| DEC-126 | 2026-09-28 | T-092: goreleaser config uses homebrew_casks, not the deprecated brews pipe; completions come from a new `tortui completion <shell>` subcommand walking the real flag set; Homebrew tap/Scoop bucket/WinGet all skip_upload: auto until the owner adds their secrets and repos |
+| DEC-126 | 2026-09-28 | T-092: goreleaser config uses homebrew_casks, not the deprecated brews pipe; run()/runDoctor() parse argv through the same flag-set constructors completions walk; each publisher's skip_upload is templated on its own token (not `auto`, which only skips prereleases); cask gets a quarantine-clearing postflight hook |
 
 ## Blocked
 

@@ -14,30 +14,59 @@ import (
 // (see Makefile's `completions` target and T-092's release notes).
 var completionShells = []string{"bash", "zsh", "fish", "powershell"}
 
-// globalFlagSet returns the same flag.FlagSet main() parses top-level flags
-// with, minus actually parsing anything. Completion generation and any
-// future `--help` output both walk this set rather than hand-maintaining a
-// second list that can drift from the real flags (T-092 acceptance:
-// completions "generated from the flag set").
-func globalFlagSet(out *os.File) *flag.FlagSet {
-	fs := flag.NewFlagSet("tortui", flag.ContinueOnError)
-	fs.SetOutput(out)
-	fs.Bool("version", false, "print version information and exit")
-	fs.Bool("demo", false, "run the TUI against a fake engine and fixture indexer")
-	fs.String("config", "", "path to config.toml (overrides the default XDG location)")
-	fs.String("log-level", "", "override the configured log level (debug, info, warn, error)")
-	fs.String("log-file", "", "override the configured log file path")
-
-	return fs
+// globalFlags holds the *bool/*string cells flag.FlagSet.Parse fills in for
+// tortui's top-level flags. run() reads these after Parse instead of
+// defining its own second set of fs.Bool/fs.String calls, so this struct
+// (built by globalFlagSet below) is the *only* place a global flag is
+// declared. Completion generation walks the same FlagSet, so the two can
+// never drift the way a hand-duplicated list could (see
+// TestRunUsesGlobalFlagSet, which fails if run() ever stops calling
+// globalFlagSet).
+type globalFlags struct {
+	version  *bool
+	demo     *bool
+	config   *string
+	logLevel *string
+	logFile  *string
 }
 
-// doctorFlagSet mirrors runDoctor's flag set for the same reason.
-func doctorFlagSet(out *os.File) *flag.FlagSet {
+// globalFlagSet builds tortui's top-level flag.FlagSet and returns it
+// alongside pointers to every flag's value. Both run() (main.go) and
+// runCompletion (this file) call this one constructor — run() to parse argv
+// and read the results, runCompletion only to enumerate flag names — so a
+// flag added, renamed, or removed here is automatically reflected in both
+// argument parsing and every generated completion script (T-092 acceptance:
+// completions "generated from the flag set").
+func globalFlagSet(out *os.File) (*flag.FlagSet, *globalFlags) {
+	fs := flag.NewFlagSet("tortui", flag.ContinueOnError)
+	fs.SetOutput(out)
+
+	g := &globalFlags{}
+	g.version = fs.Bool("version", false, "print version information and exit")
+	g.demo = fs.Bool("demo", false, "run the TUI against a fake engine and fixture indexer — zero network, zero writes outside a temp dir (AGENT.md §15)")
+	g.config = fs.String("config", "", "path to config.toml (overrides the default XDG location)")
+	g.logLevel = fs.String("log-level", "", "override the configured log level (debug, info, warn, error)")
+	g.logFile = fs.String("log-file", "", "override the configured log file path")
+
+	return fs, g
+}
+
+// doctorFlags is globalFlags' counterpart for `tortui doctor` (runDoctor in
+// doctor.go), built by doctorFlagSet below for the same single-source-of-truth
+// reason.
+type doctorFlags struct {
+	config *string
+}
+
+// doctorFlagSet mirrors globalFlagSet for runDoctor's flag set.
+func doctorFlagSet(out *os.File) (*flag.FlagSet, *doctorFlags) {
 	fs := flag.NewFlagSet("tortui doctor", flag.ContinueOnError)
 	fs.SetOutput(out)
-	fs.String("config", "", "path to config.toml (overrides the default XDG location)")
 
-	return fs
+	d := &doctorFlags{}
+	d.config = fs.String("config", "", "path to config.toml (overrides the default XDG location)")
+
+	return fs, d
 }
 
 // tortuiSubcommands lists the non-flag subcommands completions must offer
@@ -61,9 +90,9 @@ func flagNames(fs *flag.FlagSet) []string {
 
 // runCompletion implements `tortui completion <shell>`: print a completion
 // script for the requested shell to stdout. It takes no other input besides
-// the shell name — the flag/subcommand lists it walks come from the same
-// FlagSet constructors main() and runDoctor use, so a future flag needs no
-// matching edit here (T-092).
+// the shell name — the flag/subcommand lists it walks come from the very
+// same globalFlagSet/doctorFlagSet constructors run() and runDoctor() parse
+// argv with, so a future flag needs no matching edit here (T-092).
 func runCompletion(args []string, out *os.File) int {
 	if len(args) != 1 {
 		if _, err := fmt.Fprintf(out, "tortui completion: expected exactly one shell argument (%s)\n", strings.Join(completionShells, ", ")); err != nil {
@@ -75,8 +104,10 @@ func runCompletion(args []string, out *os.File) int {
 
 	shell := args[0]
 
-	global := flagNames(globalFlagSet(out))
-	doctor := flagNames(doctorFlagSet(out))
+	globalFS, _ := globalFlagSet(out)
+	doctorFS, _ := doctorFlagSet(out)
+	global := flagNames(globalFS)
+	doctor := flagNames(doctorFS)
 
 	var script string
 	switch shell {

@@ -343,4 +343,19 @@ release-check:
 		exit 1; \
 	}
 	set -eu; goreleaser check
-	set -eu; goreleaser release --snapshot --skip=publish --clean
+	@# .goreleaser.yaml templates each of homebrew_casks/scoops/winget's
+	@# skip_upload on its own token env var being set (PR #54 review finding
+	@# 2 -- goreleaser's own `skip_upload: auto` only skips for a prerelease
+	@# tag, not for a missing token, so a plain tag with no secret would fail
+	@# the whole release otherwise). Go's text/template runs those sections
+	@# with `missingkey=error`, so an unset (not just empty) env var would
+	@# abort even this unattended, --skip=publish snapshot build. Exporting
+	@# them as empty-if-unset here matches what the release workflow's own
+	@# `env:` block guarantees (a secret left unconfigured still becomes an
+	@# empty environment variable, never an absent one).
+	set -eu; \
+		: "$${HOMEBREW_TAP_GITHUB_TOKEN:=}"; \
+		: "$${SCOOP_BUCKET_GITHUB_TOKEN:=}"; \
+		: "$${WINGET_GITHUB_TOKEN:=}"; \
+		export HOMEBREW_TAP_GITHUB_TOKEN SCOOP_BUCKET_GITHUB_TOKEN WINGET_GITHUB_TOKEN; \
+		goreleaser release --snapshot --skip=publish --clean

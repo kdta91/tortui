@@ -3784,6 +3784,21 @@ Verified locally: `goreleaser check` plus a full `--snapshot --skip=publish[,sig
 Owner-only checklist (PR body): create the tap/bucket repos and their secrets, push the `v*`
 tag, verify all three OSes green first, confirm the WinGet PR, smoke-test per OS.
 
+**Review remediation (PR #54):** (1) `run()`/`runDoctor()` had each declared their own separate
+`flag.FlagSet` instead of using `globalFlagSet`/`doctorFlagSet` — a flag renamed in one was
+invisible to the other and every test still passed. Both now parse argv through those exact
+constructors (DEC-126); `TestRunAndDoctorAcceptEveryAdvertisedFlag` fails the build on future
+drift. (2) `skip_upload: auto` only skips a publisher for a *prerelease* tag, not for a missing
+token, so a plain release tag with no secret would have failed `goreleaser release` outright and
+skipped `actions/attest-build-provenance` entirely. Each of `homebrew_casks`/`scoops`/`winget` now
+templates `skip_upload` on its own token env var directly; `make release-check` exports all three
+as empty-if-unset so a local snapshot run doesn't hit Go template's `missingkey=error`. (3) Added
+Windows Troubleshooting entries (SmartScreen, Defender, `Unblock-File`). (4) The Homebrew cask
+gained a `postflight` hook clearing the macOS quarantine attribute. (5) `/completions/` added to
+`.gitignore`. (6) The owner-only checklist now names the existing `T-908`/`T-909` Backlog items
+instead of "file as T-9NN". `make check`, `make race` (`./cmd/tortui/...`), `goreleaser check`, and
+a full local snapshot run all green.
+
 ---
 
 ## Blocked — Resolved

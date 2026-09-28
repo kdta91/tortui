@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -24,16 +23,15 @@ const doctorTimeout = 30 * time.Second
 // (AGENT.md §4) — flag parsing, gathering the inputs internal/doctor needs,
 // and translating its verdict into an exit code.
 func runDoctor(args []string, out *os.File) int {
-	fs := flag.NewFlagSet("tortui doctor", flag.ContinueOnError)
-	fs.SetOutput(out)
-
-	configPath := fs.String("config", "", "path to config.toml (overrides the default XDG location)")
+	// doctorFlagSet (completion.go) is the single source of truth for this
+	// flag — see the matching comment in main.go's run().
+	fs, d := doctorFlagSet(out)
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	loadResult, err := config.Load(*configPath)
+	loadResult, err := config.Load(*d.config)
 	if err != nil {
 		if _, werr := fmt.Fprintf(out, "tortui doctor: load config: %v\n", err); werr != nil {
 			return 1

@@ -94,6 +94,7 @@ sudo mv tortui /usr/local/bin/
 ```powershell
 Expand-Archive tortui_*_windows_amd64.zip -DestinationPath "$env:LOCALAPPDATA\Programs\tortui"
 $env:PATH += ";$env:LOCALAPPDATA\Programs\tortui"
+Unblock-File "$env:LOCALAPPDATA\Programs\tortui\tortui.exe"   # see Troubleshooting
 ```
 
 To make the `PATH` change permanent, add that directory under
@@ -425,6 +426,24 @@ only connect outbound and downloads will be slower.
 **macOS: downloads stall with peer errors**
 The default open-file limit (often 256) is too low for a busy swarm. tortui raises it at startup;
 `doctor` shows the before and after. If it's still low, raise the hard limit with `ulimit -n`.
+
+**Windows: "Windows protected your PC" (SmartScreen)**
+Releases aren't code-signed yet (same reason as macOS above). Click **More info**, then
+**Run anyway**. This is a one-time prompt per downloaded file, not per run.
+
+**Windows: Microsoft Defender flags or removes the binary**
+An unsigned executable from an uncommon publisher is exactly what Defender's heuristics are
+tuned to flag — this is a false positive, not a report of actual malicious behaviour. Verify the
+download first with `gh attestation verify` (above), then either allow it once from Defender's
+notification, or add an exclusion for the install directory under
+*Windows Security → Virus & threat protection → Manage settings → Exclusions*.
+
+**Windows: the binary won't run, or PowerShell warns the file is blocked**
+Anything downloaded through a browser or `Expand-Archive` from a downloaded zip is marked with
+Windows' own "Mark of the Web". Clear it before running:
+```powershell
+Unblock-File "$env:LOCALAPPDATA\Programs\tortui\tortui.exe"
+```
 
 **Search returns nothing**
 Check Settings (`5`) → select the source → `t` to test it. Distinguishes *unreachable* from

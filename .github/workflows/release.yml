@@ -4,10 +4,14 @@ name: release
 # on a `v*` tag — pushing that tag is on AGENT.md §12's owner-only list, so
 # this workflow never runs from anything an agent does unattended. The
 # tap/bucket/WinGet steps additionally need secrets (see below) that only
-# the owner can create, so a tag pushed before those exist still produces a
-# working GitHub Release; goreleaser's `skip_upload: auto` on each of those
-# sections just leaves that one channel unpublished rather than failing the
-# whole run (see .goreleaser.yaml's comments).
+# the owner can create; a tag pushed before those exist still produces a
+# working, attested GitHub Release, because .goreleaser.yaml templates each
+# of those three sections' skip_upload directly on its own token being set
+# (PR #54 review finding 2 — goreleaser's own `skip_upload: auto` only skips
+# for a *prerelease* tag, not for a missing token, so a plain tag would
+# otherwise fail the `goreleaser release` step outright and skip the
+# "Attest build provenance" step below it entirely; see .goreleaser.yaml's
+# comments for the mechanism).
 on:
   push:
     tags:
@@ -54,9 +58,11 @@ jobs:
           # *different* repository (the Homebrew tap, the Scoop bucket, and
           # microsoft/winget-pkgs respectively) — GITHUB_TOKEN is scoped
           # only to this repo and cannot push to them. Creating those repos
-          # and minting/adding these tokens is owner-only (AGENT.md §12);
-          # until they exist, goreleaser's `skip_upload: auto` on each
-          # section just skips that channel (see .goreleaser.yaml).
+          # and minting/adding these tokens is owner-only (AGENT.md §12).
+          # An unconfigured secret still becomes an empty (not absent)
+          # environment variable here, which is exactly what
+          # .goreleaser.yaml's per-section `skip_upload` template needs to
+          # skip that one channel without failing the release.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
           SCOOP_BUCKET_GITHUB_TOKEN: ${{ secrets.SCOOP_BUCKET_GITHUB_TOKEN }}
           WINGET_GITHUB_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}

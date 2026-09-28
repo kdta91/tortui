@@ -89,8 +89,25 @@ signs:
 # All three below need a GitHub token with write access to the *target*
 # repo, supplied as a secret to the release workflow -- creating those repos
 # and adding that secret is owner-only (AGENT.md §12) and is left as a
-# checklist in TASK_TRACKER.md's T-092 notes; without it goreleaser skips
-# the section rather than failing the whole release (`skip_upload: auto`).
+# checklist in TASK_TRACKER.md's T-092 notes.
+#
+# `skip_upload: auto` (goreleaser's own "skip when unconfigured" shortcut)
+# does NOT mean what it sounds like: confirmed against the installed
+# v2.18.2's internal/pipe/{cask,scoop,winget} -- "auto" only skips the
+# upload for a *prerelease* tag (Semver.Prerelease != ""); on a plain
+# v1.0.0 tag with no token it still attempts the push, the client call
+# fails, `goreleaser release` exits non-zero, and the release workflow's
+# later "Attest build provenance" step never runs (PR #54 review finding
+# 2). Each section below instead templates skip_upload directly on its own
+# token's presence -- true (skip) when the corresponding env var is empty,
+# false (attempt the real push) once the owner adds the secret -- so a tag
+# pushed before those secrets exist still produces a complete, attested
+# GitHub Release; only the three optional channels are absent until then.
+# `make release-check` exports all three as empty by default so a local
+# snapshot run (which still executes each section's Run() step, though
+# never Publish() under --skip=publish) never hits Go template's
+# `missingkey=error` on an unset variable.
+#
 # `brews` (a Homebrew Formula) is soft-deprecated by goreleaser v2.18 in
 # favor of `homebrew_casks` -- verified against the installed goreleaser
 # v2.18.2's own pkg/config (Project.Brews' doc comment: "Deprecated: use
@@ -106,13 +123,24 @@ homebrew_casks:
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    skip_upload: auto
+    skip_upload: '{{ if .Env.HOMEBREW_TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
     homepage: "https://github.com/kdta91/tortui"
     description: "Terminal UI for searching torrent indexers and downloading, all in one place"
     completions:
       bash: completions/tortui.bash
       zsh: completions/tortui.zsh
       fish: completions/tortui.fish
+    # PR #54 review finding 4: releases are unsigned (AGENT.md §16, T-092
+    # acceptance), so Gatekeeper would otherwise quarantine the extracted
+    # binary the same way it does the manually-downloaded archive (README's
+    # Troubleshooting section). goreleaser's own cask.rb template comment
+    # names this exact fix; `staged_path` is Homebrew Cask's own DSL
+    # variable for the cask's staging directory, always available in a
+    # postflight block.
+    hooks:
+      post:
+        install: |
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/tortui"]
 
 scoops:
   - name: tortui
@@ -121,7 +149,7 @@ scoops:
       name: scoop-bucket
       branch: main
       token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
-    skip_upload: auto
+    skip_upload: '{{ if .Env.SCOOP_BUCKET_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
     homepage: "https://github.com/kdta91/tortui"
     description: "Terminal UI for searching torrent indexers and downloading, all in one place"
     license: MIT
@@ -129,8 +157,8 @@ scoops:
 # WinGet manifest PR to microsoft/winget-pkgs. Moderated (AGENT.md §16), and
 # opening/merging that PR happens on whatever cadence the moderators run --
 # goreleaser only prepares and pushes the manifest branch/PR when
-# WINGET_GITHUB_TOKEN is set. skip_upload leaves this a no-op until the
-# owner supplies that token (owner-only, AGENT.md §12).
+# WINGET_GITHUB_TOKEN is set (skip_upload templated the same way as the two
+# sections above; owner supplies that token, AGENT.md §12).
 winget:
   - name: tortui
     publisher: kdta91
@@ -153,7 +181,7 @@ winget:
           owner: microsoft
           name: winget-pkgs
           branch: master
-    skip_upload: auto
+    skip_upload: '{{ if .Env.WINGET_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
 
 release:
   github:
