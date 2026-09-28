@@ -46,6 +46,11 @@ type Session struct {
 	// Close did not finish in time (seal). Every later Save and
 	// SetTorrent sees it once it holds mu and touches nothing.
 	closed atomic.Bool
+
+	// afterUnlock, when set, runs each time a method lets go of mu, on
+	// that method's goroutine, before it returns. Test seam only: it lets
+	// a test take the lock at the exact moment it is released (T-9008).
+	afterUnlock func()
 }
 
 // ErrSessionClosed is returned by SetTorrent after Close.
@@ -91,7 +96,7 @@ type ResumeReport struct {
 // store is left untouched.
 func (s *Session) Resume(ctx context.Context) (ResumeReport, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 
 	var report ResumeReport
 
@@ -177,7 +182,7 @@ func (s *Session) Resume(ctx context.Context) (ResumeReport, error) {
 // Concurrent calls run one at a time.
 func (s *Session) Save() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 
 	if s.closed.Load() {
 		s.logger.Debug("lifecycle: session closed; not saving")
@@ -196,7 +201,7 @@ func (s *Session) Save() error {
 // through here (tui.TorrentStore).
 func (s *Session) SetTorrent(rec store.TorrentRecord) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 
 	if s.closed.Load() {
 		return ErrSessionClosed
@@ -223,7 +228,7 @@ func (s *Session) GetTorrent(id string) (store.TorrentRecord, bool) {
 // again does nothing.
 func (s *Session) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 
 	if s.closed.Load() {
 		return nil
@@ -233,6 +238,15 @@ func (s *Session) Close() error {
 	s.closed.Store(true)
 
 	return err
+}
+
+// unlock releases mu, then runs the afterUnlock test seam, if any.
+func (s *Session) unlock() {
+	s.mu.Unlock()
+
+	if s.afterUnlock != nil {
+		s.afterUnlock()
+	}
 }
 
 // seal makes every Save or Close that has not yet taken the lock do
