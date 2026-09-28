@@ -37,7 +37,7 @@ func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Disca
 func registryIDs(t *testing.T, cfg config.Config, defsDir string) map[string]bool {
 	t.Helper()
 
-	reg := buildRegistry(cfg, defsDir, discardLogger(), &recordingTransport{})
+	reg := buildSources(cfg, defsDir, discardLogger(), &recordingTransport{}).reg
 
 	ids := make(map[string]bool)
 	for _, ix := range reg.Enabled() {
