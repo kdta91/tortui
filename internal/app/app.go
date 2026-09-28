@@ -71,6 +71,7 @@ type App struct {
 	store    *store.Store
 	engine   *anacrolix.Engine
 	registry *indexer.Registry
+	settings *settingsManager
 	session  *lifecycle.Session
 	report   lifecycle.ResumeReport
 	model    tui.Model
@@ -167,7 +168,9 @@ func (a *App) start(opts Options, level string) error {
 		return fmt.Errorf("app: start engine: %w", err)
 	}
 
-	a.registry = buildRegistry(cfg, paths.DefinitionsDir, logger, opts.transport)
+	live := buildSources(cfg, paths.DefinitionsDir, logger, opts.transport)
+	a.registry = live.reg
+	a.settings = newSettingsManager(paths.ConfigFile, cfg, live, a.engine, logger)
 	a.session = lifecycle.NewSession(a.engine, st, logger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultResumeTimeout)
@@ -198,6 +201,8 @@ func (a *App) buildModel(opts Options, storeRecovered string) tui.Model {
 		tui.WithSavedDestinations(absPaths(cfg.SavedDestinations, a.logger)),
 		tui.WithMinFreeSpace(minFreeSpace(cfg.MinFreeSpace, a.logger)),
 		tui.WithSessionSaver(a.session),
+		tui.WithSourceManager(a.settings),
+		tui.WithPreferencesManager(a.settings),
 		tui.WithStartupLatest(true),
 		tui.WithStartupNotice(startupNotices(a.loaded, storeRecovered, a.report)...),
 	}

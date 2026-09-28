@@ -3859,6 +3859,41 @@ Tests: temp `TORTUI_HOME`, offline engine, recording transport, goleak. `make ch
 
 ---
 
+### T-096 · Settings wiring
+```
+status: done
+depends: T-095
+tier: H
+```
+**Scope (owner, 2026-09-28, DEC-128):** folds Backlog `T-975` and the runtime half of `T-970`.
+
+**Acceptance**
+- A concrete `tui.SourceManager` in the composition root, built over `internal/config`
+  (load/`Save`), the indexer registry (add/remove/enable/disable at runtime, no restart),
+  the scraper `Loader`/`Importer`, and the torznab/scraper constructors for `TestSource`. Passed
+  via `tui.WithSourceManager`.
+- Its `ListAggregatorIndexers` uses `prowlarr.ListIndexers` and fills each
+  `tui.AggregatorIndexer.FeedURL` via `prowlarr.FeedURL(baseURL, idx.ID)`; never an empty URL.
+- A concrete `tui.PreferencesManager` over `internal/config`, passed via
+  `tui.WithPreferencesManager`; a saved destination added at runtime is admitted as an engine root
+  via `engine.RootAdder.AddRoot`.
+- Saving writes `config.toml` at mode 0600 (AGENT.md §6.6); credentials never reach the log.
+- Tests against a temp `TORTUI_HOME` and `httptest` servers only: add a torznab source → it is
+  searchable without restart; disable/remove → gone from the registry; connection test
+  classifies auth/timeout; a preferences save round-trips through `config.Load`.
+
+**Notes:** `internal/app/settings.go`: one `settingsManager` implements both `tui.SourceManager` and
+`tui.PreferencesManager` over a mutex-guarded copy of config.toml; saves go through `config.Save`
+(0600) before any live change. `liveSources.sync` (registry.go) keeps the registry equal to
+bundled + enabled entries, rebuilding only changed specs; new `indexer.Registry.Unregister` drops
+the source and its cache, and an in-flight fetch from a replaced source is never cached. Torznab
+test = `torznab.Discover`; scraper test = one search. `SaveConfig` keeps the manager's own
+`Indexers` and admits download_dir + every saved destination via `AddRoot` after a successful
+write (DEC-130). Tests: temp `TORTUI_HOME`, httptest servers, offline engine. `make check`,
+`make race` (app, indexer), `make cover` green. Backlog T-995, T-996 added.
+
+---
+
 ## Blocked — Resolved
 
 

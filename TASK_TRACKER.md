@@ -85,32 +85,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 9 — Release readiness
 
-**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite · `T-092` Build and release · `T-093` Final hardening pass · `T-095` Composition root.
-
----
-
-### T-096 · Settings wiring
-```
-status: todo
-depends: T-095
-tier: H
-```
-**Scope (owner, 2026-09-28, DEC-128):** folds Backlog `T-975` and the runtime half of `T-970`.
-
-**Acceptance**
-- A concrete `tui.SourceManager` in the composition root, built over `internal/config`
-  (load/`Save`), the indexer registry (add/remove/enable/disable at runtime, no restart),
-  the scraper `Loader`/`Importer`, and the torznab/scraper constructors for `TestSource`. Passed
-  via `tui.WithSourceManager`.
-- Its `ListAggregatorIndexers` uses `prowlarr.ListIndexers` and fills each
-  `tui.AggregatorIndexer.FeedURL` via `prowlarr.FeedURL(baseURL, idx.ID)`; never an empty URL.
-- A concrete `tui.PreferencesManager` over `internal/config`, passed via
-  `tui.WithPreferencesManager`; a saved destination added at runtime is admitted as an engine root
-  via `engine.RootAdder.AddRoot`.
-- Saving writes `config.toml` at mode 0600 (AGENT.md §6.6); credentials never reach the log.
-- Tests against a temp `TORTUI_HOME` and `httptest` servers only: add a torznab source → it is
-  searchable without restart; disable/remove → gone from the registry; connection test
-  classifies auth/timeout; a preferences save round-trips through `config.Load`.
+**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite · `T-092` Build and release · `T-093` Final hardening pass · `T-095` Composition root · `T-096` Settings wiring.
 
 ---
 
@@ -591,7 +566,7 @@ when it reaches it and does not start backlog items on its own.
   the launcher only opens/reveals, never writes), but it is not closed. Closing it would mean
   handing the launcher an already-open handle, which none of the three OS launchers accept.
   Found in review of T-073 (PR #46).
-- `T-970` *(startup half resolved by T-095; runtime half scheduled as T-096)* Production wiring for T-074: the composition root (T-950/T-967) must also pass
+- `T-970` *(startup half resolved by T-095; runtime half resolved by T-096)* Production wiring for T-074: the composition root (T-950/T-967) must also pass
   `tui.WithDestinationStore(store)` and `tui.WithMinFreeSpace(<parsed min_free_space>)` into
   `tui.New`, and T-082 must call `engine.RootAdder.AddRoot` when a saved destination is added at
   runtime (config's saved destinations are engine roots only at construction). Found in T-074.
@@ -612,7 +587,7 @@ when it reaches it and does not start backlog items on its own.
   actual `Add` call leaves that root admitted for the rest of the session without ever being
   recorded to `store.Destinations` — a harmless but unrecorded permanent widening of the known-root
   set for one process lifetime. Found in review of T-074 (PR #47).
-- `T-975` *(scheduled as T-096, DEC-128)* Production wiring for T-080: the composition root (T-950/T-967/T-970) needs a concrete
+- `T-975` *(resolved by T-096, DEC-128)* Production wiring for T-080: the composition root (T-950/T-967/T-970) needs a concrete
   `tui.SourceManager` — built over `internal/config` (load/`Save`), `internal/indexer.Registry`
   (add/remove/enable/disable at runtime), `internal/indexer/scraper.Loader`/`Importer`, and
   `internal/indexer/torznab.New`/`internal/indexer/scraper.New` to actually run a `TestSource`
@@ -671,6 +646,14 @@ when it reaches it and does not start backlog items on its own.
   (`Save`'s `GetTorrent`-then-`SetTorrent` is not atomic, so a fresh record's Origin can be
   overwritten). Serialise saves through one owner, or drain in-flight saves before `Shutdown`.
   Found in review of T-095 (PR #56).
+- `T-995` Re-registering a source under the same id (an edit or disable/enable in Settings, T-096)
+  gives it a fresh `indexer.Registry` source, so its per-source minimum refresh interval (§6.13)
+  restarts from zero. Carry `lastFetch` across `Unregister`/`Register` of the same id if the 1s
+  floor ever matters here. Found in T-096.
+- `T-996` `internal/app` tests that make two requests to one httptest host wait out httpx's real
+  1s `DefaultMinHostInterval` (~2s total in T-096's settings tests): the composition root has no
+  seam for `httpx.Config.Clock`/`MinHostInterval`. Add one alongside `Options.transport`. Found in
+  T-096.
 
 ---
 
@@ -810,6 +793,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-127 | 2026-09-28 | T-093: goleak on every package's TestMain with third-party-only ignores; otel bumped to 1.42.0 (adds MIT cespare/xxhash/v2); x/crypto ssh/openpgp findings triaged as not compiled in (bump needs go 1.26, T-990); make cover enforces per-package §9 floors (T-916) |
 | DEC-128 | 2026-09-28 | Owner scheduled the missing composition root (T-095), its settings wiring (T-096) and the Windows engine storage fix (T-097) ahead of T-094; folds Backlog T-950/T-967/T-970/T-975/T-955/T-954 |
 | DEC-129 | 2026-09-28 | T-095: "starts on Latest" read as one Latest fetch per launch against the selected sources (tui.WithStartupLatest), never a timer, not yanking a user who already left Search; session saves after add/remove are a TUI hook (tui.WithSessionSaver) so they follow the add flow's SetTorrent, not an engine wrapper |
+| DEC-130 | 2026-09-28 | T-096: disabling a source unregisters it (as at startup), edits re-register; SaveConfig keeps the manager's own Indexers and admits download_dir plus every saved destination as engine roots only after the write succeeds |
 
 ## Blocked
 
