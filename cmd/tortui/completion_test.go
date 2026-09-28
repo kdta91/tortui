@@ -101,11 +101,16 @@ func TestFlagNamesMatchesFlagSet(t *testing.T) {
 // walks every name completion advertises and feeds it to the real run()/
 // runDoctor(), asserting the exit code is never 2 ("flag provided but not
 // defined") — the failure mode that let --demo drift unnoticed. A bool flag
-// is passed bare; anything else gets an empty value via "=".
+// is passed bare; anything else gets an empty value via "=". Every subtest
+// runs under sandboxHome(t): runDoctor calls config.Load, which would
+// otherwise write config.toml and a downloads folder into the real home
+// (PR #54 review finding 7; TestMain's home guard now fails on that).
 func TestRunAndDoctorAcceptEveryAdvertisedFlag(t *testing.T) {
 	globalFS, _ := globalFlagSet(os.Stderr)
 	for _, arg := range flagArgs(globalFS) {
 		t.Run("run/"+arg, func(t *testing.T) {
+			sandboxHome(t)
+
 			_, code := captureOutput(t, func(w *os.File) int {
 				return run([]string{arg}, w)
 			})
@@ -118,6 +123,8 @@ func TestRunAndDoctorAcceptEveryAdvertisedFlag(t *testing.T) {
 	doctorFS, _ := doctorFlagSet(os.Stderr)
 	for _, arg := range flagArgs(doctorFS) {
 		t.Run("doctor/"+arg, func(t *testing.T) {
+			sandboxHome(t)
+
 			_, code := captureOutput(t, func(w *os.File) int {
 				return run([]string{"doctor", arg}, w)
 			})

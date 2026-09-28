@@ -336,6 +336,11 @@ test-integration:
 # everything an agent may run unattended (AGENT.md §12) — pushing a tag,
 # `goreleaser release` for real, and the tap/bucket/WinGet repos it would
 # write to stay owner-only.
+# Pipes release-check's snapshot run skips. Override on a machine without
+# cosign (signing needs CI's OIDC identity anyway):
+# `make release-check RELEASE_SKIP=publish,sign`.
+RELEASE_SKIP ?= publish
+
 release-check:
 	@set -eu; command -v goreleaser >/dev/null 2>&1 || { \
 		echo "make release-check: goreleaser is not installed."; \
@@ -358,4 +363,4 @@ release-check:
 		: "$${SCOOP_BUCKET_GITHUB_TOKEN:=}"; \
 		: "$${WINGET_GITHUB_TOKEN:=}"; \
 		export HOMEBREW_TAP_GITHUB_TOKEN SCOOP_BUCKET_GITHUB_TOKEN WINGET_GITHUB_TOKEN; \
-		goreleaser release --snapshot --skip=publish --clean
+		goreleaser release --snapshot --skip=$(RELEASE_SKIP) --clean

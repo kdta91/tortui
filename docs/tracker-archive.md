@@ -3775,29 +3775,15 @@ tier: M
 - Shell completions for zsh, bash, fish, and PowerShell generated from the flag set and shipped
   in every archive, with per-shell install instructions.
 
-**Notes:** `.goreleaser.yaml` (six targets, `homebrew_casks`/`scoops`/`winget`, `skip_upload:
-auto`, cosign keyless `signs`), `.github/workflows/release.yml` (`v*`-tag only, GitHub build
-attestations). New `tortui completion <shell>` subcommand walks the real flag set; `make
-completions`/`make release-check` added. ldflags/`--version`/`go install` already worked.
-Verified locally: `goreleaser check` plus a full `--snapshot --skip=publish[,sign]` run
-(archives/checksums/cask/scoop/winget all render; `sign` itself needs cosign + CI's OIDC).
-Owner-only checklist (PR body): create the tap/bucket repos and their secrets, push the `v*`
-tag, verify all three OSes green first, confirm the WinGet PR, smoke-test per OS.
-
-**Review remediation (PR #54):** (1) `run()`/`runDoctor()` had each declared their own separate
-`flag.FlagSet` instead of using `globalFlagSet`/`doctorFlagSet` — a flag renamed in one was
-invisible to the other and every test still passed. Both now parse argv through those exact
-constructors (DEC-126); `TestRunAndDoctorAcceptEveryAdvertisedFlag` fails the build on future
-drift. (2) `skip_upload: auto` only skips a publisher for a *prerelease* tag, not for a missing
-token, so a plain release tag with no secret would have failed `goreleaser release` outright and
-skipped `actions/attest-build-provenance` entirely. Each of `homebrew_casks`/`scoops`/`winget` now
-templates `skip_upload` on its own token env var directly; `make release-check` exports all three
-as empty-if-unset so a local snapshot run doesn't hit Go template's `missingkey=error`. (3) Added
-Windows Troubleshooting entries (SmartScreen, Defender, `Unblock-File`). (4) The Homebrew cask
-gained a `postflight` hook clearing the macOS quarantine attribute. (5) `/completions/` added to
-`.gitignore`. (6) The owner-only checklist now names the existing `T-908`/`T-909` Backlog items
-instead of "file as T-9NN". `make check`, `make race` (`./cmd/tortui/...`), `goreleaser check`, and
-a full local snapshot run all green.
+**Notes:** `.goreleaser.yaml` (six targets, checksums, `homebrew_casks`/`scoops`/`winget` each
+`skip_upload`-templated on its own token, cosign keyless `signs` over `checksums.txt`) and
+`.github/workflows/release.yml` (`v*` tags, `attest-build-provenance`). `tortui completion <shell>`
+walks the same `globalFlagSet`/`doctorFlagSet` that `run()` parses with (DEC-126). New `make
+completions`, `make release-check` (`RELEASE_SKIP=publish,sign` without cosign). ldflags, `--version`,
+`go install` pre-existed. PR #54 review fixes (detail in PR body): flag-set drift, token-gated uploads,
+Windows Troubleshooting, mac-only cask quarantine hook, sandboxed cmd tests plus a `TestMain` home guard.
+Owner-only (PR body checklist): tap/bucket repos and secrets, three-OS green, `v*` tag, WinGet PR,
+clean-machine smoke test per OS; `T-908`/`T-909` cover notarisation and code signing.
 
 ---
 

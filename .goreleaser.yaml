@@ -136,11 +136,15 @@ homebrew_casks:
     # Troubleshooting section). goreleaser's own cask.rb template comment
     # names this exact fix; `staged_path` is Homebrew Cask's own DSL
     # variable for the cask's staging directory, always available in a
-    # postflight block.
+    # postflight block. The same cask also installs under Homebrew on Linux,
+    # where neither /usr/bin/xattr nor the quarantine attribute exists, so
+    # the call is guarded by Homebrew's own `OS.mac?` (PR #54 finding 9).
     hooks:
       post:
         install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/tortui"]
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/tortui"]
+          end
 
 scoops:
   - name: tortui

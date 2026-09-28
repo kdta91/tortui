@@ -115,7 +115,8 @@ scoop install tortui
 
 ### Verifying a download
 
-Every release artifact is signed with Sigstore and carries a GitHub build attestation:
+Every release archive carries a GitHub build attestation, and `checksums.txt` (which covers every
+archive) is signed with Sigstore keyless signing (`checksums.txt.sig` / `.pem`):
 
 ```sh
 gh attestation verify tortui_*.tar.gz --repo kdta91/tortui
@@ -151,8 +152,8 @@ go build -o bin\tortui.exe .\cmd\tortui
 
 Every release archive ships a completion script per shell under `completions/`, generated from
 tortui's actual flag set (`tortui completion <shell>`, also runnable by hand on any installed
-binary). Homebrew and Scoop installs wire these up automatically; everyone else installs the one
-matching their shell:
+binary). Homebrew installs wire up bash, zsh, and fish automatically; everyone else (Scoop
+included) installs the one matching their shell:
 
 **bash**
 ```sh
@@ -174,7 +175,7 @@ cp completions/tortui.fish ~/.config/fish/completions/tortui.fish
 
 **PowerShell**
 ```powershell
-completions\tortui.powershell | Out-File -Append $PROFILE
+Get-Content completions\tortui.powershell | Out-File -Append $PROFILE
 # or, without the archive, straight from an installed binary:
 tortui completion powershell | Out-File -Append $PROFILE
 ```
