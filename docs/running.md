@@ -28,6 +28,17 @@ completion. Every screen, keybind, and dialog is reachable. No network, no disk 
 a temp dir, nothing to clean up. **This is the primary way to eyeball the UI after a build** and
 the only way an agent can meaningfully self-verify rendering.
 
+**Bare `tortui`** (T-095) is the real app, built by `internal/app`'s composition root: config
+load (defaults written on first run) → rotating file log → single-instance lock (a second
+instance against the same state directory refuses with a message and exit 1) → fd soft limit
+raised → store → anacrolix engine over every known destination root → registry of the bundled
+sources plus enabled `[[indexer]]` entries → session resume → TUI. It opens with one Latest
+fetch and, on first run, the welcome overlay. `q`, `SIGINT`, and `SIGTERM` all run the lifecycle
+shutdown (pause, save session, flush, close) and release the lock; `--ascii` or `ascii = true`
+selects the ASCII glyphs. **`make run`** is the same binary with `--config ./dev-config.toml`
+(written with defaults the first time); only the config file moves, so combine it with
+`TORTUI_HOME` to sandbox state and downloads too.
+
 **`TORTUI_HOME`** redirects config, state, and downloads under one directory. Use it for any
 manual testing so real config is never touched:
 

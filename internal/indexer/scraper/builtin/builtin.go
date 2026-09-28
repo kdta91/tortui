@@ -91,9 +91,9 @@ func Definitions() ([]*scraper.Definition, error) {
 // never depends on which side of the merge a definition came from.
 //
 // Merge does not itself decide whether a bundled source is enabled; that
-// is a first-run/config concern for the composition root that does not
-// exist yet (T-090+, following the same pattern T-002/T-003 used to ship a
-// package's full behaviour ahead of the task that wires it in).
+// is the composition root's concern (internal/app, T-095): every bundled
+// source is enabled unless an [[indexer]] entry of the same id says
+// otherwise.
 func Merge(user []*scraper.Definition) ([]*scraper.Definition, error) {
 	bundled, err := Definitions()
 	if err != nil {

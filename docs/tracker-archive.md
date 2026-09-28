@@ -3811,6 +3811,54 @@ via `scripts/check-coverage.sh` (resolves T-916); all pass (lowest: indexer/scra
 
 ---
 
+### T-095 · Composition root
+```
+status: done
+depends: T-093
+tier: H
+```
+**Scope (owner, 2026-09-28, DEC-128):** folds Backlog `T-950`, `T-967` and the startup half of
+`T-970`. Plain `tortui` must become the real app; today it prints "not yet implemented".
+
+**Acceptance**
+- `internal/app` gains the production composition root; `cmd/tortui/main.go` stays wiring only
+  (AGENT.md §4, ~80 lines) and the "not yet implemented" stub and its test are gone.
+- Startup order: config load (creating defaults on first run) → rotating log sink (never
+  stdout/stderr; anacrolix logger routed into it) → single-instance lock (`internal/lifecycle`
+  lock; a second instance refuses with a clear message) → raise the fd soft limit (darwin/linux)
+  → `store.OpenStore` → anacrolix engine with every known destination root (default, saved
+  destinations, `store.Destinations`) → indexer registry with the bundled definitions plus the
+  user's `[[indexer]]` entries → `lifecycle.Session.Resume` (show `ResumeReport.Missing` on first
+  render) → `tui.New` → run.
+- `tui.New` receives every production option that exists today: `WithSearcher`, `WithHistory`,
+  `WithTorrentStore`, `WithDownloadDir`, `WithSavedDestinations`, `WithDestinationStore`,
+  `WithMinFreeSpace`, `WithFirstRun` (first run only), plus theme/ASCII from config.
+- `--ascii` is a real flag, and it and `ascii = true` select the ASCII glyph fallback (AGENT.md §14).
+- Shutdown runs the existing `lifecycle` sequence on quit, SIGINT and SIGTERM, with
+  `ShutdownOptions.Session`, `Save` after every add/remove, and releases the lock. The terminal is
+  restored on every exit path, including a panic.
+- With an empty `TORTUI_HOME` and no config, `tortui` starts on Latest with the bundled sources
+  enabled and no prompt beyond the first-run overlay (AGENT.md §1 standalone contract).
+- Unit tests build the real root against a temp `TORTUI_HOME` with zero network (injected HTTP
+  transport or fixture registry, AGENT.md §6.7): defaults written, lock taken, a second instance
+  refused, a clean shutdown saves the session and releases the lock, goleak clean.
+- `internal/app`'s `TestZeroConfigStandaloneSearchAddDownload` (T-091) goes through this root
+  instead of assembling pieces itself (compile-verified; running it stays owner-only).
+- README Status notice and `docs/running.md` updated: `make run` and bare `tortui` now work.
+
+**Notes:** `internal/app.New`/`App.Run`/`Close` (`app.go`, `registry.go`, `startup.go`) run the
+startup order above; any failed step undoes the earlier ones. Registry: every bundled source
+(user override via `builtin.Merge`) plus enabled `[[indexer]]` entries; an entry with a bundled id
+replaces it. Three new `tui` options (`startup.go`): `WithSessionSaver` (a `tea.Cmd` after each
+successful add, after its `SetTorrent`, and each remove), `WithStartupNotice` (first-run config
+path, config problems, store recovery, `ResumeReport.Missing`/`Failed`), and `WithStartupLatest`
+(one Latest fetch per launch, DEC-129). Signals go through `lifecycle.NotifySignals` +
+`tea.WithContext`; bubbletea restores the terminal, and a panic becomes an error after shutdown.
+Tests: temp `TORTUI_HOME`, offline engine, recording transport, goleak. `make check`, `make race`
+(app, tui, cmd), `make cover` green. Integration test compile-verified only (owner-only run).
+
+---
+
 ## Blocked — Resolved
 
 

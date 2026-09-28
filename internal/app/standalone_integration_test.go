@@ -19,10 +19,7 @@ import (
 
 	"github.com/kdta91/tortui/internal/config"
 	"github.com/kdta91/tortui/internal/engine"
-	"github.com/kdta91/tortui/internal/engine/anacrolix"
 	"github.com/kdta91/tortui/internal/indexer"
-	"github.com/kdta91/tortui/internal/indexer/scraper"
-	"github.com/kdta91/tortui/internal/indexer/scraper/builtin"
 )
 
 // maxStandaloneDownloadBytes bounds which live result this test will choose
@@ -40,32 +37,17 @@ const downloadCompleteTimeout = 10 * time.Minute
 
 // TestZeroConfigStandaloneSearchAddDownload is the executable form of the
 // standalone contract (AGENT.md §1, T-091): on an empty $TORTUI_HOME, with
-// no user configuration and nothing installed but tortui's own packages, it
-// loads defaults, merges in the bundled source definitions exactly as a
-// fresh install would, searches with no keyword (Latest), adds the smallest
-// suitable result to a real engine, and drives it to completion. It then
-// proves resume-across-restart: the same torrent is restored into a brand
-// new, fully offline engine instance and is immediately complete from disk
-// alone, with no network subsystem even enabled.
-//
-// This exercises every package a real run wires together (config, the
-// bundled scraper definitions, the indexer registry, and the real
-// anacrolix engine) without going through cmd/tortui: production wiring of
-// these into main (Backlog T-950) is a separate, later task, and this test
-// does not anticipate it.
+// no user configuration and nothing installed but tortui itself, the
+// production composition root (New, T-095) writes defaults, registers the
+// bundled sources, and resumes an empty session; the test searches with no
+// keyword (Latest), adds the smallest suitable result to the root's real
+// engine, and drives it to completion. It then proves resume-across-restart
+// through the root too: Close saves the session and releases the lock, and
+// a second root — fully offline, no network subsystem even enabled — resumes
+// the same torrent and finds it complete from disk alone.
 func TestZeroConfigStandaloneSearchAddDownload(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("TORTUI_HOME", home)
-
-	// Step 1: zero-config load, exactly like a fresh install's first run.
-	loaded, err := config.Load("")
-	if err != nil {
-		t.Fatalf("config.Load: %v", err)
-	}
-
-	if !loaded.FirstRun {
-		t.Fatal("want FirstRun=true under a fresh $TORTUI_HOME")
-	}
 
 	// Pin the seed policy rather than leave config.Default's "ratio" 1.0 in
 	// effect: on a tiny, well-seeded item this test's own client can satisfy
@@ -76,38 +58,36 @@ func TestZeroConfigStandaloneSearchAddDownload(t *testing.T) {
 	// additionally treats Paused as terminal so either timing is accepted
 	// (PR #53 review — the same "don't wait for one exact intermediate/next
 	// state a background tick can skip" rule AGENT.md's T-034 note states).
-	loaded.Config.SeedPolicy = "off"
+	seedOff := func(c *config.Config) { c.SeedPolicy = "off" }
 
-	// Step 2: the bundled source definitions, merged with no user-supplied
-	// ones — "no configuration" means literally none here.
-	defs, err := builtin.Merge(nil)
+	// Step 1: the production root, exactly like a fresh install's first run.
+	a, err := New(Options{configure: seedOff})
 	if err != nil {
-		t.Fatalf("builtin.Merge: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 
-	if len(defs) == 0 {
-		t.Fatal("no bundled source definitions to search")
+	closed := false
+	defer func() {
+		if !closed {
+			_ = a.Close()
+		}
+	}()
+
+	if !a.Loaded().FirstRun {
+		t.Fatal("want FirstRun=true under a fresh $TORTUI_HOME")
 	}
 
-	reg := indexer.NewRegistry(indexer.Config{})
-
-	for _, def := range defs {
-		a, err := scraper.New(scraper.Options{Definition: def})
-		if err != nil {
-			t.Fatalf("build adapter for %s: %v", def.ID, err)
-		}
-
-		if err := reg.Register(a); err != nil {
-			t.Fatalf("register %s: %v", def.ID, err)
-		}
+	// Step 2: the root registered the bundled sources with no configuration.
+	if len(a.Registry().Enabled()) == 0 {
+		t.Fatal("no bundled source is enabled")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Step 3: search with no keyword — Latest, exactly as a first-time user
-	// would before typing anything.
-	results, sourceErrs, err := reg.SearchAll(ctx, indexer.Query{Mode: indexer.ModeLatest, Limit: 50})
+	// sees it.
+	results, sourceErrs, err := a.Registry().SearchAll(ctx, indexer.Query{Mode: indexer.ModeLatest, Limit: 50})
 	if err != nil {
 		t.Fatalf("SearchAll: %v", err)
 	}
@@ -128,7 +108,7 @@ func TestZeroConfigStandaloneSearchAddDownload(t *testing.T) {
 		t.Fatalf("no result at or under %d bytes among %d candidates; every live result was larger than this test's cap", maxStandaloneDownloadBytes, len(results))
 	}
 
-	src, ok := reg.Get(chosen.IndexerID)
+	src, ok := a.Registry().Get(chosen.IndexerID)
 	if !ok {
 		t.Fatalf("chosen result names indexer %q, which is not registered", chosen.IndexerID)
 	}
@@ -151,74 +131,48 @@ func TestZeroConfigStandaloneSearchAddDownload(t *testing.T) {
 
 	t.Logf("downloading %q (%d bytes) from %s", resolved.Title, resolved.SizeBytes, resolved.IndexerID)
 
-	// Step 5: a real engine, real network, downloading to a directory
-	// under $TORTUI_HOME — nothing touches the caller's real config/state.
-	eng, err := anacrolix.New(anacrolix.Options{Config: loaded.Config})
-	if err != nil {
-		t.Fatalf("anacrolix.New: %v", err)
-	}
-
-	closed := false
-	defer func() {
-		if !closed {
-			_ = eng.Close()
-		}
-	}()
-
+	// Step 5: the root's real engine, real network, downloading to a
+	// directory under $TORTUI_HOME — nothing touches the caller's real
+	// config/state.
 	addCtx, addCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer addCancel()
 
-	id, err := eng.Add(addCtx, addSrc)
+	id, err := a.Engine().Add(addCtx, addSrc)
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
-	status := waitForTerminalState(t, eng, id, downloadCompleteTimeout)
+	status := waitForTerminalState(t, a.Engine(), id, downloadCompleteTimeout)
 	assertDownloadComplete(t, status, downloadCompleteTimeout)
 
 	assertFilesExistUnder(t, status.SavePath, status.Name)
 
-	// Step 6: resume across a restart. Save what a real session would
-	// persist, close this engine, and restore into a brand new one that
-	// has every network subsystem disabled (Offline) — if the restored
-	// torrent still shows complete without a single network call being
-	// possible, the data was verified from disk alone, not re-downloaded.
-	resumer, ok := any(eng).(engine.Resumer)
-	if !ok {
-		t.Fatal("anacrolix.Engine does not implement engine.Resumer")
-	}
-
-	resumeData, err := resumer.ResumeData(id)
-	if err != nil {
-		t.Fatalf("ResumeData: %v", err)
-	}
-
-	if err := eng.Close(); err != nil {
+	// Step 6: resume across a restart, through the root. Close runs the
+	// shutdown sequence (save the session, flush the store, release the
+	// lock); the second root is offline, so a torrent that shows complete
+	// was verified from disk alone, not re-downloaded.
+	if err := a.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
 	closed = true
 
-	eng2, err := anacrolix.New(anacrolix.Options{Config: loaded.Config, Offline: true})
+	a2, err := New(Options{configure: seedOff, offline: true})
 	if err != nil {
-		t.Fatalf("anacrolix.New (offline restore): %v", err)
+		t.Fatalf("New (offline restart): %v", err)
 	}
-	defer func() { _ = eng2.Close() }()
+	defer func() { _ = a2.Close() }()
 
-	resumer2, ok := any(eng2).(engine.Resumer)
-	if !ok {
-		t.Fatal("restored anacrolix.Engine does not implement engine.Resumer")
-	}
-
-	restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer restoreCancel()
-
-	restoredID, err := resumer2.Restore(restoreCtx, resumeData)
-	if err != nil {
-		t.Fatalf("Restore: %v", err)
+	if got := a2.ResumeReport().Restored; got != 1 {
+		t.Fatalf("restart restored %d torrents, want 1", got)
 	}
 
-	restoredStatus := waitForTerminalState(t, eng2, restoredID, 30*time.Second)
+	restored := a2.Engine().List()
+	if len(restored) != 1 {
+		t.Fatalf("restarted engine tracks %d torrents, want 1", len(restored))
+	}
+
+	restoredStatus := waitForTerminalState(t, a2.Engine(), restored[0].ID, 30*time.Second)
 	assertDownloadComplete(t, restoredStatus, 30*time.Second)
 }
 

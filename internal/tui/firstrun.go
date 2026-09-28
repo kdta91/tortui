@@ -30,10 +30,10 @@ const firstRunSourcesNotice = "A couple of lawful default sources (public archiv
 // WithFirstRun marks the Model to open on ContextFirstRun instead of
 // ScreenSearch: a one-time welcome overlay carrying the sources notice
 // above and LegalNotice, dismissed by any key. The composition root
-// (Backlog T-950 — no such root exists yet, see T-090's notes) is expected
-// to pass this only when internal/config.LoadResult.FirstRun is true, i.e.
-// exactly the run that just wrote a default config; every later launch
-// omits it and starts on ScreenSearch as before.
+// (internal/app, T-095) passes this only when
+// internal/config.LoadResult.FirstRun is true, i.e. exactly the run that
+// just wrote a default config; every later launch omits it and starts on
+// ScreenSearch as before.
 func WithFirstRun(b bool) Option {
 	return func(m *Model) { m.firstRun = b }
 }

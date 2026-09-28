@@ -35,8 +35,8 @@ var ErrAlreadyRunning = errors.New("lifecycle: tortui is already running against
 
 // Lock is a held single-instance lock. The zero value is not usable;
 // obtain one with AcquireLock. Release (or Close) must be called exactly
-// once when the process is shutting down — Shutdown does this as its final
-// step, but a caller not using Shutdown must do it directly.
+// once when the process is shutting down. Shutdown does not take a Lock;
+// the caller releases it after Shutdown returns (internal/app does).
 type Lock struct {
 	path string
 	file *os.File

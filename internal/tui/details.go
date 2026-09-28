@@ -361,7 +361,7 @@ func (m Model) handleAddResult(msg addResultMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.statusBar, cmd = m.statusBar.Push("added " + msg.name)
 
-	return m, tea.Batch(persistErrCmd, destErrCmd, cmd)
+	return m, tea.Batch(persistErrCmd, destErrCmd, cmd, saveSessionCmd(m.sessionSaver))
 }
 
 // openSourceCmd returns the tea.Cmd that calls open(rawURL) and reports any
