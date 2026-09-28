@@ -85,26 +85,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 9 — Release readiness
 
-**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run.
-
----
-
-### T-091 · Integration suite
-```
-status: todo
-depends: T-041, T-072
-tier: M
-```
-**Acceptance**
-- `//go:build integration` tests covering a real end-to-end download of a small,
-  freely-distributable test torrent, plus resume across a restart.
-- **Zero-config standalone test**: on a clean machine with an empty `TORTUI_HOME` and no other
-  software installed, run a scripted search against the bundled sources, add a result, and
-  download it to completion. This is the executable form of the standalone contract
-  (AGENT.md §1) — if it fails, the release is blocked regardless of what else passes.
-- A reachability check against every bundled source, so a rotted default fails CI.
-- Excluded from `make check`; separate `make test-integration` target and a manual CI job.
-- Documented prerequisites and expected runtime.
+**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite.
 
 ---
 
@@ -203,6 +184,20 @@ when it reaches it and does not start backlog items on its own.
 
 ## Backlog (not scheduled)
 
+- `T-989` T-091's `TestZeroConfigStandaloneSearchAddDownload` (`internal/app`) picks the smallest
+  live result under its 25 MiB cap dynamically rather than a pinned identifier, so it never
+  invents knowledge of the bundled source's catalogue. If a specific, durable public-domain item
+  can be identified as guaranteed to stay small and long-lived (verified against the source's own
+  documentation, not guessed), pinning it would make the test's runtime and item identity fully
+  deterministic instead of catalogue-dependent. Non-blocking finding from the T-091 review (PR #53).
+- `T-988` README's preferences-restart Troubleshooting entry ends on a confusing sentence
+  ("`ascii = true` is the one exception this mirrors…"). Reword for clarity. Non-blocking finding
+  from the T-090 review (PR #52).
+- `T-987` The `e` binding's Help string ("view source errors, if any (T-052; DEC-092)") leaks
+  internal task/decision ids into the README's generated keymap table and the `?` overlay, which
+  are user-facing surfaces. Strip the parenthetical from `GlobalBindings()`
+  (`internal/tui/keymap.go:368`) and regenerate the README table. Non-blocking finding from the
+  T-090 review (PR #52).
 - `T-986` `theme.Truncate` (`internal/tui/theme/width.go:140`) is not escape-sequence-aware: it
   walks `s` grapheme cluster by grapheme cluster (`uniseg.NewGraphemes`) and cuts once `Width`'s
   budget is spent, with no notion that an ANSI SGR sequence (`\x1b[38;2;r;g;bm`) is one atomic,
@@ -777,6 +772,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-122 | 2026-09-26 | T-082: preferences panel (p key) applies download_dir/saved_destinations/min_free_space live (TUI-owned state); rate limits/peers/port/seed policy/search timeout/theme/ascii have no live-reconfigure path against the frozen Engine interface, so they're persisted and named "restart to apply" instead; destination-removal warning reuses engine.ContainedIn — the known-roots set was never actually at risk since tracked torrents' own SavePaths already widen it regardless of SavedDestinations |
 | DEC-123 | 2026-09-28 | T-083 narrowed by the owner to Prowlarr only; Jackett and NZBHydra2 aggregator import deferred to Backlog T-984 pending API verification |
 | DEC-124 | 2026-09-28 | T-090: first-run overlay wording corrected against AGENT.md §2 (bundled sources do ship, T-024) instead of the stale acceptance text; README's Status notice now states precisely what's wired today (`--version`/`doctor`/`--demo`) vs. pending the composition root (Backlog T-950), and concrete false claims (`--ascii` flag, ten MPL modules not yet in `NOTICE`) were fixed |
+| DEC-125 | 2026-09-28 | T-091: one combined suite (search + add + real download + offline restore) covers both the download/resume and zero-config-standalone acceptance items; reachability checked generically across every bundled source; seed_policy pinned to "off" and the wait accepts Seeding-or-Paused (T-034-class race), and the 25 MiB size cap is actually enforced (PR #53 remediation) |
 
 ## Blocked
 

@@ -3720,6 +3720,36 @@ fixture data, generic `/tmp` path. `make check`, `make race` (tui), `make cover`
 
 ---
 
+### T-091 · Integration suite
+```
+status: done
+depends: T-041, T-072
+tier: M
+```
+**Notes:** `TestZeroConfigStandaloneSearchAddDownload` (`internal/app`) covers both the
+download/resume and zero-config-standalone acceptance items in one live run (DEC-125): fresh
+`$TORTUI_HOME`, bundled-only search, downloads the smallest live result strictly under 25 MiB
+(no fallback past the cap), then restores into a fully `Offline` engine to prove resume needs no
+network. Seed policy is pinned to `"off"` for a deterministic terminal state, and the poll
+accepts Seeding *or* Paused (ratio-based seeding can satisfy and pause before a poll ever
+observes Seeding — the same class of race AGENT.md's T-034 note warns about).
+`TestBundledSourcesAreReachable` (`builtin`) checks every bundled source generically. New `make
+test-integration` target, `workflow_dispatch`-only CI job; see `docs/testing-integration.md`.
+`main.go` wiring stays Backlog `T-950`.
+
+**Acceptance**
+- `//go:build integration` tests covering a real end-to-end download of a small,
+  freely-distributable test torrent, plus resume across a restart.
+- **Zero-config standalone test**: on a clean machine with an empty `TORTUI_HOME` and no other
+  software installed, run a scripted search against the bundled sources, add a result, and
+  download it to completion. This is the executable form of the standalone contract
+  (AGENT.md §1) — if it fails, the release is blocked regardless of what else passes.
+- A reachability check against every bundled source, so a rotted default fails CI.
+- Excluded from `make check`; separate `make test-integration` target and a manual CI job.
+- Documented prerequisites and expected runtime.
+
+---
+
 ## Blocked — Resolved
 
 

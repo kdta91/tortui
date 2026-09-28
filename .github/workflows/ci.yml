@@ -13,6 +13,14 @@ on:
       - ".claude/**"
   pull_request:
     branches: ["**"]
+  # T-091: lets the owner dispatch the "integration" job by hand from the
+  # Actions tab. Never fires from a push or a pull_request, so it adds no
+  # required check and never runs unattended. Intentionally not scoped to
+  # only the integration job: a manual dispatch runs the whole workflow
+  # (check/build-all/licenses alongside integration), which is the owner
+  # choosing to exercise everything together, not an accidental extra run
+  # (PR #53 review).
+  workflow_dispatch: {}
 
 # A newer push to the same PR cancels the superseded run. Main runs are grouped per commit, so
 # they are never cancelled or replaced while pending.
@@ -242,3 +250,28 @@ jobs:
           scripts/check-indexer-hostnames.sh \
             "${{ github.event.pull_request.base.sha }}" \
             "${{ github.event.pull_request.head.sha }}"
+
+  integration:
+    # T-091: the //go:build integration suite (docs/testing-integration.md)
+    # — a real download over the real BitTorrent network plus a
+    # reachability check against every bundled source. It is manual only:
+    # this job never fires on a push or a pull_request (see workflow_dispatch
+    # above), is not in branch protection's required checks, and its outcome
+    # depends on conditions outside this repository's control (a source's
+    # live catalogue, DHT reachability from the runner's network), so a red
+    # result here is investigated, not treated as a merge blocker.
+    name: make test-integration (manual, real network)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: make test-integration
+        run: make test-integration

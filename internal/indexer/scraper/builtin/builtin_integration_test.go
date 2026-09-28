@@ -62,6 +62,58 @@ func TestInternetArchiveLiveSearchAndLatest(t *testing.T) {
 	})
 }
 
+// TestBundledSourcesAreReachable is the T-091 reachability check: it probes
+// every bundled definition, not just Internet Archive by name, so a source
+// bundled in the future is covered automatically and a rotted default fails
+// CI's integration job without needing its own hand-written test. It
+// asserts less than TestInternetArchiveLiveSearchAndLatest above — only that
+// the source answers at all and returns at least one well-formed result —
+// since that is all a definition-agnostic check can assume.
+func TestBundledSourcesAreReachable(t *testing.T) {
+	defs, err := Definitions()
+	if err != nil {
+		t.Fatalf("Definitions: %v", err)
+	}
+
+	if len(defs) == 0 {
+		t.Fatal("no bundled source definitions to check")
+	}
+
+	for _, def := range defs {
+		t.Run(def.ID, func(t *testing.T) {
+			a, err := scraper.New(scraper.Options{Definition: def})
+			if err != nil {
+				t.Fatalf("build adapter: %v", err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+
+			// Prefer Latest when the definition offers it — a fresh
+			// install's first search needs no keyword (release
+			// criterion in TASK_TRACKER.md's v1.0 list) — and fall back
+			// to a generic keyword search otherwise.
+			q := indexer.Query{Mode: indexer.ModeSearch, Text: "a", Limit: 5}
+			if a.Caps().Latest {
+				q = indexer.Query{Mode: indexer.ModeLatest, Limit: 5}
+			}
+
+			results, err := a.Search(ctx, q)
+			if err != nil {
+				t.Fatalf("%s: source unreachable or rejected the query: %v", def.ID, err)
+			}
+
+			if len(results) == 0 {
+				t.Fatalf("%s: reachable but returned zero results", def.ID)
+			}
+
+			if results[0].Title == "" {
+				t.Fatalf("%s: first result has no title", def.ID)
+			}
+		})
+	}
+}
+
 // assertLiveResults checks the shape a live response must have without
 // asserting on any specific item, since the Internet Archive's contents
 // change continuously.

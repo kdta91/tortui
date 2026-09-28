@@ -106,7 +106,12 @@ ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
 ALLOWED_MPL_MODULES := github.com/anacrolix/torrent,github.com/anacrolix/dht/v2,github.com/anacrolix/generics,github.com/anacrolix/log,github.com/anacrolix/mmsg,github.com/anacrolix/multiless,github.com/anacrolix/sync,github.com/anacrolix/upnp,github.com/anacrolix/utp,github.com/go-llsqlite/adapter
 NOTICE_TMP := .notice.tmp
 
-.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames check-goos-scope test-scripts race lint-cross vuln next
+.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames check-goos-scope test-scripts race lint-cross vuln next test-integration
+
+# T-091's integration timeout for the same reason downloadCompleteTimeout is
+# generous in the test itself: DHT peer discovery for a magnet with no
+# embedded tracker can take a while even for a well-seeded, small item.
+INTEGRATION_TIMEOUT := 20m
 
 # T-945: `go install`ed tools (go-licenses, govulncheck) land in $(go env GOPATH)/bin, which is
 # not always on an agent shell's PATH. Prepend it so every target finds them. Skipped on Windows,
@@ -293,3 +298,12 @@ build-all:
 
 clean:
 	set -eu; rm -rf bin dist $(COVERPROFILE)
+
+# T-091: the //go:build integration suite. Real network, real BitTorrent
+# peers — never part of `make check` (AGENT.md §6.7), never run
+# unattended by an agent (AGENT.md §12). The owner runs this by hand, or
+# dispatches the "integration" CI job (.github/workflows/ci.yml), which
+# only runs on workflow_dispatch. See docs/testing-integration.md for
+# prerequisites and expected runtime.
+test-integration:
+	set -eu; go test -tags integration -timeout $(INTEGRATION_TIMEOUT) $(PKG)
