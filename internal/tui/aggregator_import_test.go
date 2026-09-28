@@ -136,12 +136,25 @@ func TestAggregatorImportSecondEnterWhileSavingIsRefused(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // must be refused: a save is in flight
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlS}) // must also be refused
 
-	waitForPredicate(t, func() bool { return sm.saveCallCount() > 0 })
+	// Wait for the first save's result to reach Update() (the wizard
+	// closes and reports the import), not for a fixed interval. The two
+	// refused keys were queued ahead of that result, so by now Update()
+	// has already handled them: a missing guard would have dispatched a
+	// second save and grown the snapshot synchronously, before this point.
+	waitForOutput(t, tm, "imported 1 source(s) from aggregator")
 
-	// The delayed save has not necessarily returned to Update() yet the
-	// instant saveCallCount first turns non-zero; give the result message
-	// a moment to land before asserting the final call count and content.
-	time.Sleep(250 * time.Millisecond)
+	if err := tm.Quit(); err != nil {
+		t.Fatal(err)
+	}
+
+	final := tm.FinalModel(t, teatest.WithFinalTimeout(3*time.Second)).(Model)
+	if final.settings.aggImport != nil {
+		t.Fatal("expected the wizard to be closed after the import's save result")
+	}
+
+	if rows := final.sourceRows(); len(rows) != 1 || rows[0].ID != "first-indexer" {
+		t.Fatalf("source snapshot = %#v, want exactly [first-indexer] (no second, suffixed duplicate)", rows)
+	}
 
 	if calls := sm.saveCallCount(); calls != 1 {
 		t.Fatalf("SaveSources was called %d times, want exactly 1", calls)

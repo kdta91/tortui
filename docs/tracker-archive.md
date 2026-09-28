@@ -3674,26 +3674,15 @@ added later without changing the TUI flow.
 This targets self-hosted aggregator software the user already runs. It is not a source list and
 it does not put any indexer into the repo.
 
-**Notes:** Verified against Prowlarr's own source (not inferred): `GET /api/v1/indexer` via
-`ProviderControllerBase`, `IndexerResource`'s `Id`/`Name` fields, `X-Api-Key` auth (its own
-`AuthenticationBuilderExtensions.cs`/test client), and the `{base}/{id}/api` per-indexer Torznab
-feed pattern (its own frontend's "copy RSS URL"). New `internal/indexer/prowlarr` client (httpx-
-backed, `ParseError`/`*httpx.StatusError` duck-typed into T-081's taxonomy). `SourceManager` grew
-`ListAggregatorIndexers`; new `internal/tui/aggregator_import.go` is a wizard reached from the
-blank add form's new torznab-and-new-only field (`fieldAggregatorImport`), replacing the form
-rather than stacking a second modal (never more than one modal deep). Composition-root wiring is
-Backlog `T-975`, same gap T-080/081/082 already left. `make check`, `make race` (tui, prowlarr),
-`make cover` (prowlarr 90.0%, tui 91.3%) green.
-
-**Review remediation (PR #51):** a second enter/ctrl+s while a fetch or import is already in
-flight is now refused (guarded on `f.fetching`/`f.importing`; reproduced the duplicate-import bug
-with a test first). `ListIndexers` now decodes `protocol`/`enable` from Prowlarr's own
-`openapi.json` schema and drops any non-torrent or disabled indexer (Backlog `T-985` for importing
-a disabled one on request) instead of producing a broken source. `AggregatorIndexer` gained
-`FeedURL`, filled by the `SourceManager` side — `internal/tui` no longer builds Prowlarr's own URL
-pattern or names it in the wizard's header, so a second aggregator needs no TUI change. The API key
-is trimmed once and reused, not re-trimmed inconsistently. `make check`, `make race` (tui,
-prowlarr), `make cover` (prowlarr 91.7%, tui 91.3%) green.
+**Notes:** Verified against Prowlarr's own source, not inferred: `GET /api/v1/indexer`, `X-Api-Key`
+auth, `IndexerResource` `id`/`name`/`protocol`/`enable` (its `openapi.json`), `{base}/{id}/api` feed.
+New `internal/indexer/prowlarr` client keeps only enabled torrent indexers (Backlog `T-985`); its
+errors classify into T-081's taxonomy. `SourceManager.ListAggregatorIndexers` returns
+`AggregatorIndexer` with a ready `FeedURL`, so `internal/tui` never builds an aggregator's URL and a
+second aggregator needs no TUI change. `aggregator_import.go` replaces the blank add form (one modal
+deep), multi-selects, saves ordinary torznab entries with slugified, deduped ids; a second
+enter/ctrl+s while fetching or saving is refused. Wiring is Backlog `T-975`. Escalated M→H after
+two review FAILs (PR #51). `make check`, `make race` (tui, prowlarr), `make cover` green.
 
 ---
 

@@ -615,7 +615,9 @@ when it reaches it and does not start backlog items on its own.
   `internal/indexer/torznab.New`/`internal/indexer/scraper.New` to actually run a `TestSource`
   probe — passed via `tui.WithSourceManager` into `tui.New`. `cmd/tortui/main.go` itself has no
   composition root yet (T-950's own scope), so this stays a Backlog item rather than this task's
-  work. Found in T-080.
+  work. Found in T-080. Its `ListAggregatorIndexers` (T-083) must fill each
+  `tui.AggregatorIndexer.FeedURL` itself via `prowlarr.FeedURL(baseURL, idx.ID)`, since
+  `prowlarr.Indexer` has no `FeedURL` field; an empty `FeedURL` would save a torznab source with no URL.
 - `T-976` `config.Save` (T-002) round-trips through `toml.Encoder` over the whole `Config` struct,
   so it does not preserve a hand-edited file's comments or original key order — T-080's "preserving
   existing comments and key order where practical" acceptance is satisfied only in the sense that
