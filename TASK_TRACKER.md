@@ -184,6 +184,12 @@ when it reaches it and does not start backlog items on its own.
 
 ## Backlog (not scheduled)
 
+- `T-989` T-091's `TestZeroConfigStandaloneSearchAddDownload` (`internal/app`) picks the smallest
+  live result under its 25 MiB cap dynamically rather than a pinned identifier, so it never
+  invents knowledge of the bundled source's catalogue. If a specific, durable public-domain item
+  can be identified as guaranteed to stay small and long-lived (verified against the source's own
+  documentation, not guessed), pinning it would make the test's runtime and item identity fully
+  deterministic instead of catalogue-dependent. Non-blocking finding from the T-091 review (PR #53).
 - `T-988` README's preferences-restart Troubleshooting entry ends on a confusing sentence
   ("`ascii = true` is the one exception this mirrors…"). Reword for clarity. Non-blocking finding
   from the T-090 review (PR #52).
@@ -766,7 +772,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-122 | 2026-09-26 | T-082: preferences panel (p key) applies download_dir/saved_destinations/min_free_space live (TUI-owned state); rate limits/peers/port/seed policy/search timeout/theme/ascii have no live-reconfigure path against the frozen Engine interface, so they're persisted and named "restart to apply" instead; destination-removal warning reuses engine.ContainedIn — the known-roots set was never actually at risk since tracked torrents' own SavePaths already widen it regardless of SavedDestinations |
 | DEC-123 | 2026-09-28 | T-083 narrowed by the owner to Prowlarr only; Jackett and NZBHydra2 aggregator import deferred to Backlog T-984 pending API verification |
 | DEC-124 | 2026-09-28 | T-090: first-run overlay wording corrected against AGENT.md §2 (bundled sources do ship, T-024) instead of the stale acceptance text; README's Status notice now states precisely what's wired today (`--version`/`doctor`/`--demo`) vs. pending the composition root (Backlog T-950), and concrete false claims (`--ascii` flag, ten MPL modules not yet in `NOTICE`) were fixed |
-| DEC-125 | 2026-09-28 | T-091: one combined suite (search + add + real download + offline restore) covers both the download/resume and zero-config-standalone acceptance items instead of two separate live-network tests; reachability is checked generically across every bundled source, not just Internet Archive by name |
+| DEC-125 | 2026-09-28 | T-091: one combined suite (search + add + real download + offline restore) covers both the download/resume and zero-config-standalone acceptance items; reachability checked generically across every bundled source; seed_policy pinned to "off" and the wait accepts Seeding-or-Paused (T-034-class race), and the 25 MiB size cap is actually enforced (PR #53 remediation) |
 
 ## Blocked
 

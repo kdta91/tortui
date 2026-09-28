@@ -67,6 +67,17 @@ func TestZeroConfigStandaloneSearchAddDownload(t *testing.T) {
 		t.Fatal("want FirstRun=true under a fresh $TORTUI_HOME")
 	}
 
+	// Pin the seed policy rather than leave config.Default's "ratio" 1.0 in
+	// effect: on a tiny, well-seeded item this test's own client can satisfy
+	// a 1.0 ratio and move Seeding -> Paused inside a single policy tick
+	// (applyPolicyLocked), sometimes before waitForTerminalState's poll ever
+	// observes Seeding. "off" makes that same Paused transition happen
+	// immediately and deterministically instead of racily; waitForTerminalState
+	// additionally treats Paused as terminal so either timing is accepted
+	// (PR #53 review — the same "don't wait for one exact intermediate/next
+	// state a background tick can skip" rule AGENT.md's T-034 note states).
+	loaded.Config.SeedPolicy = "off"
+
 	// Step 2: the bundled source definitions, merged with no user-supplied
 	// ones — "no configuration" means literally none here.
 	defs, err := builtin.Merge(nil)
@@ -163,18 +174,7 @@ func TestZeroConfigStandaloneSearchAddDownload(t *testing.T) {
 	}
 
 	status := waitForTerminalState(t, eng, id, downloadCompleteTimeout)
-
-	if status.State == engine.StateErrored {
-		t.Fatalf("download errored: %v", status.Err)
-	}
-
-	if status.State != engine.StateSeeding {
-		t.Fatalf("download did not reach StateSeeding within %s: last state %v, progress %.4f", downloadCompleteTimeout, status.State, status.Progress)
-	}
-
-	if status.Progress != 1.0 {
-		t.Fatalf("StateSeeding with progress %.4f, want 1.0", status.Progress)
-	}
+	assertDownloadComplete(t, status, downloadCompleteTimeout)
 
 	assertFilesExistUnder(t, status.SavePath, status.Name)
 
@@ -219,52 +219,81 @@ func TestZeroConfigStandaloneSearchAddDownload(t *testing.T) {
 	}
 
 	restoredStatus := waitForTerminalState(t, eng2, restoredID, 30*time.Second)
+	assertDownloadComplete(t, restoredStatus, 30*time.Second)
+}
 
-	if restoredStatus.State == engine.StateErrored {
-		t.Fatalf("restored torrent errored (offline, so this can never be a network problem): %v", restoredStatus.Err)
+// assertDownloadComplete fails the test unless status is a successfully
+// completed download: no Err, and Progress == 1.0. It accepts either
+// StateSeeding or StatePaused as the terminal state — see
+// waitForTerminalState's doc comment for why both are valid outcomes of a
+// real completed download, not just Seeding.
+func assertDownloadComplete(t *testing.T, status engine.TorrentStatus, timeout time.Duration) {
+	t.Helper()
+
+	if status.State == engine.StateErrored {
+		t.Fatalf("download errored: %v", status.Err)
 	}
 
-	if restoredStatus.Progress != 1.0 {
-		t.Fatalf("restored torrent progress %.4f, want 1.0 — a fully offline engine should never need to redownload anything", restoredStatus.Progress)
+	if status.Err != nil {
+		t.Fatalf("download in state %v carries an unexpected error: %v", status.State, status.Err)
+	}
+
+	if status.State != engine.StateSeeding && status.State != engine.StatePaused {
+		t.Fatalf("download did not reach a terminal state within %s: last state %v, progress %.4f", timeout, status.State, status.Progress)
+	}
+
+	if status.Progress != 1.0 {
+		t.Fatalf("terminal state %v with progress %.4f, want 1.0", status.State, status.Progress)
 	}
 }
 
 // pickSmallest returns the result with the smallest SizeBytes at or under
-// cap, or, failing that, the smallest positive SizeBytes among all of
-// results. ok is false only when nothing in results has a usable size.
+// cap. ok is false when no result in results has a usable, in-budget size —
+// there is deliberately no fallback to a result over cap: the cap exists to
+// keep this test's runtime bounded, and silently ignoring it would make that
+// bound a fiction (PR #53 review).
+//
+// It picks the smallest in-budget live result rather than a specific,
+// pinned identifier because pinning one would mean inventing knowledge of
+// the bundled source's catalogue this repository has no other reason to
+// have (AGENT.md §2's spirit: verify behaviour against the source's own
+// documented API, never guess or hardcode its content). A specific,
+// verified-durable item could still be a worthwhile follow-up — see
+// Backlog T-989.
 func pickSmallest(results []indexer.Result, cap int64) (chosen indexer.Result, ok bool) {
-	var underCap, smallestOverall indexer.Result
-	haveUnderCap, haveAny := false, false
+	have := false
 
 	for _, r := range results {
-		if r.SizeBytes <= 0 {
+		if r.SizeBytes <= 0 || r.SizeBytes > cap {
 			continue
 		}
 
-		if !haveAny || r.SizeBytes < smallestOverall.SizeBytes {
-			smallestOverall = r
-			haveAny = true
-		}
-
-		if r.SizeBytes <= cap && (!haveUnderCap || r.SizeBytes < underCap.SizeBytes) {
-			underCap = r
-			haveUnderCap = true
+		if !have || r.SizeBytes < chosen.SizeBytes {
+			chosen = r
+			have = true
 		}
 	}
 
-	if haveUnderCap {
-		return underCap, true
-	}
-
-	return smallestOverall, haveAny
+	return chosen, have
 }
 
-// waitForTerminalState polls eng.List() for id until it reaches StateSeeding
-// or StateErrored — the two states a download run to completion can end in
-// — or timeout elapses. It never waits for one exact intermediate state
-// (StateDownloading, StateChecking): those can be skipped entirely for data
-// already partially or fully verified, and polling for one exactly would be
-// a race (see AGENT.md's T-034 note on this same class of bug).
+// waitForTerminalState polls eng.List() for id until it reaches StateSeeding,
+// StatePaused, or StateErrored, or timeout elapses.
+//
+// Seeding and Paused are both "download finished" outcomes here, not just
+// Seeding: applyPolicyLocked can move a completed torrent from Seeding to
+// Paused inside the very next policy tick once the configured seed policy is
+// satisfied (T-091 pins seed_policy to "off", which is satisfied
+// immediately on completion), and this poll has no way to observe the
+// instant in between. Waiting on Seeding alone would be exactly the race
+// AGENT.md's T-034 note warns about — a background loop skipping past the
+// one state a test insists on. assertDownloadComplete is what actually
+// checks the outcome (Progress == 1.0, no Err) once a terminal state is
+// reached, regardless of which of the two it was.
+//
+// It never waits for one exact intermediate state (StateDownloading,
+// StateChecking) either: those can be skipped entirely for data already
+// partially or fully verified.
 func waitForTerminalState(t *testing.T, eng engine.Engine, id string, timeout time.Duration) engine.TorrentStatus {
 	t.Helper()
 
@@ -276,7 +305,7 @@ func waitForTerminalState(t *testing.T, eng engine.Engine, id string, timeout ti
 				continue
 			}
 
-			if s.State == engine.StateSeeding || s.State == engine.StateErrored {
+			if s.State == engine.StateSeeding || s.State == engine.StatePaused || s.State == engine.StateErrored {
 				return s
 			}
 		}

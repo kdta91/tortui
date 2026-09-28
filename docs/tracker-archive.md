@@ -3726,22 +3726,16 @@ status: done
 depends: T-041, T-072
 tier: M
 ```
-**Notes:** One suite in `internal/app/standalone_integration_test.go`
-(`TestZeroConfigStandaloneSearchAddDownload`) covers both the real
-download-plus-resume acceptance item and the zero-config standalone item
-together, since the standalone flow already needs a real download and a
-restart to prove itself — a second, separately-scoped download test would
-have been the same steps twice (DEC-125). It loads config under a fresh
-`$TORTUI_HOME`, merges bundled definitions with none user-supplied, runs a
-keyword-less Latest search, downloads the smallest live result under 25
-MiB, then restores it into a brand-new fully offline (`Offline: true`)
-engine to prove resume needs no network. Reachability against every
-bundled source (not just Internet Archive by name) is
-`TestBundledSourcesAreReachable` in the existing `builtin` integration test
-file. `make test-integration` (new Makefile target) and a `workflow_dispatch`-only
-CI job run the `integration`-tagged suite; prerequisites and runtime are in
-`docs/testing-integration.md`. `main.go`'s real-mode composition root
-remains Backlog `T-950` and is untouched here.
+**Notes:** `TestZeroConfigStandaloneSearchAddDownload` (`internal/app`) covers both the
+download/resume and zero-config-standalone acceptance items in one live run (DEC-125): fresh
+`$TORTUI_HOME`, bundled-only search, downloads the smallest live result strictly under 25 MiB
+(no fallback past the cap), then restores into a fully `Offline` engine to prove resume needs no
+network. Seed policy is pinned to `"off"` for a deterministic terminal state, and the poll
+accepts Seeding *or* Paused (ratio-based seeding can satisfy and pause before a poll ever
+observes Seeding — the same class of race AGENT.md's T-034 note warns about).
+`TestBundledSourcesAreReachable` (`builtin`) checks every bundled source generically. New `make
+test-integration` target, `workflow_dispatch`-only CI job; see `docs/testing-integration.md`.
+`main.go` wiring stays Backlog `T-950`.
 
 **Acceptance**
 - `//go:build integration` tests covering a real end-to-end download of a small,

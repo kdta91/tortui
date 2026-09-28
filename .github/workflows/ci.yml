@@ -15,7 +15,11 @@ on:
     branches: ["**"]
   # T-091: lets the owner dispatch the "integration" job by hand from the
   # Actions tab. Never fires from a push or a pull_request, so it adds no
-  # required check and never runs unattended.
+  # required check and never runs unattended. Intentionally not scoped to
+  # only the integration job: a manual dispatch runs the whole workflow
+  # (check/build-all/licenses alongside integration), which is the owner
+  # choosing to exercise everything together, not an accidental extra run
+  # (PR #53 review).
   workflow_dispatch: {}
 
 # A newer push to the same PR cancels the superseded run. Main runs are grouped per commit, so
