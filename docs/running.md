@@ -80,7 +80,7 @@ sh   -c  './bin/tortui --version'
 make check                # fmt + lint + vet + unit tests — the commit gate
 go test -race ./...       # concurrency
 make cover                # thresholds from §9
-make test-integration     # build-tagged, real network, manual
+make test-integration     # build-tagged, real network, manual — see docs/testing-integration.md
 ```
 
 TUI rendering is covered by `teatest` golden files driven by `engine/fake`, at 80×24, 120×40,

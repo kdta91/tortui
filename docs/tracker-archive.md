@@ -3720,6 +3720,42 @@ fixture data, generic `/tmp` path. `make check`, `make race` (tui), `make cover`
 
 ---
 
+### T-091 · Integration suite
+```
+status: done
+depends: T-041, T-072
+tier: M
+```
+**Notes:** One suite in `internal/app/standalone_integration_test.go`
+(`TestZeroConfigStandaloneSearchAddDownload`) covers both the real
+download-plus-resume acceptance item and the zero-config standalone item
+together, since the standalone flow already needs a real download and a
+restart to prove itself — a second, separately-scoped download test would
+have been the same steps twice (DEC-125). It loads config under a fresh
+`$TORTUI_HOME`, merges bundled definitions with none user-supplied, runs a
+keyword-less Latest search, downloads the smallest live result under 25
+MiB, then restores it into a brand-new fully offline (`Offline: true`)
+engine to prove resume needs no network. Reachability against every
+bundled source (not just Internet Archive by name) is
+`TestBundledSourcesAreReachable` in the existing `builtin` integration test
+file. `make test-integration` (new Makefile target) and a `workflow_dispatch`-only
+CI job run the `integration`-tagged suite; prerequisites and runtime are in
+`docs/testing-integration.md`. `main.go`'s real-mode composition root
+remains Backlog `T-950` and is untouched here.
+
+**Acceptance**
+- `//go:build integration` tests covering a real end-to-end download of a small,
+  freely-distributable test torrent, plus resume across a restart.
+- **Zero-config standalone test**: on a clean machine with an empty `TORTUI_HOME` and no other
+  software installed, run a scripted search against the bundled sources, add a result, and
+  download it to completion. This is the executable form of the standalone contract
+  (AGENT.md §1) — if it fails, the release is blocked regardless of what else passes.
+- A reachability check against every bundled source, so a rotted default fails CI.
+- Excluded from `make check`; separate `make test-integration` target and a manual CI job.
+- Documented prerequisites and expected runtime.
+
+---
+
 ## Blocked — Resolved
 
 
