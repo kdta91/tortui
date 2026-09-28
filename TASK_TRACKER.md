@@ -85,25 +85,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 9 — Release readiness
 
-
-### T-090 · Documentation and first run
-```
-status: todo
-depends: T-072, T-082
-tier: L
-```
-**Acceptance**
-- `README.md` already exists at the repo root. This task **verifies and completes** it against
-  shipped behaviour — it does not rewrite it from scratch.
-- Every command, flag, path, and keybind in the README is executed and confirmed correct.
-  Anything that drifted during the build is corrected here.
-- Replace the Status notice at the top once the app is functional.
-- Keymap table regenerated from the actual keymap definition (T-051), not hand-edited.
-- Troubleshooting section extended with anything hit during the build.
-- First-run screen explains that no sources ship with the binary and points at the docs, and
-  carries the same legal notice as the README (AGENT.md §2).
-- `docs/indexer-definitions.md` complete and verified against the real loader.
-- Screenshot or asciinema cast added, captured from `--demo` so it contains no real content.
+**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run.
 
 ---
 
@@ -784,6 +766,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-121 | 2026-09-26 | T-081 review remediation: settings list esc/d now guarded against quit-confirm/error-detail (regression test added); classifyProbeError also matches net.Error's Timeout() bool; httpx.StatusError and torznab.APIError now implement the auth marker for real, narrowing Backlog T-981 to parse-failed only |
 | DEC-122 | 2026-09-26 | T-082: preferences panel (p key) applies download_dir/saved_destinations/min_free_space live (TUI-owned state); rate limits/peers/port/seed policy/search timeout/theme/ascii have no live-reconfigure path against the frozen Engine interface, so they're persisted and named "restart to apply" instead; destination-removal warning reuses engine.ContainedIn — the known-roots set was never actually at risk since tracked torrents' own SavePaths already widen it regardless of SavedDestinations |
 | DEC-123 | 2026-09-28 | T-083 narrowed by the owner to Prowlarr only; Jackett and NZBHydra2 aggregator import deferred to Backlog T-984 pending API verification |
+| DEC-124 | 2026-09-28 | T-090: first-run overlay wording corrected against AGENT.md §2 (bundled sources do ship, T-024) instead of the stale acceptance text; README's Status notice now states precisely what's wired today (`--version`/`doctor`/`--demo`) vs. pending the composition root (Backlog T-950), and concrete false claims (`--ascii` flag, ten MPL modules not yet in `NOTICE`) were fixed |
 
 ## Blocked
 

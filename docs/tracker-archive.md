@@ -3686,6 +3686,43 @@ two review FAILs (PR #51). `make check`, `make race` (tui, prowlarr), `make cove
 
 ---
 
+## Phase 9 — Release readiness
+
+### T-090 · Documentation and first run
+```
+status: done
+depends: T-072, T-082
+tier: L
+```
+**Acceptance**
+- `README.md` already exists at the repo root. This task **verifies and completes** it against
+  shipped behaviour — it does not rewrite it from scratch.
+- Every command, flag, path, and keybind in the README is executed and confirmed correct.
+  Anything that drifted during the build is corrected here.
+- Replace the Status notice at the top once the app is functional.
+- Keymap table regenerated from the actual keymap definition (T-051), not hand-edited.
+- Troubleshooting section extended with anything hit during the build.
+- First-run screen explains that no sources ship with the binary and points at the docs, and
+  carries the same legal notice as the README (AGENT.md §2).
+- `docs/indexer-definitions.md` complete and verified against the real loader.
+- Screenshot or asciinema cast added, captured from `--demo` so it contains no real content.
+
+**Notes:** Ran every documented command/flag; fixed real drift: bare `tortui` and `--ascii` are
+not wired yet (composition root, Backlog `T-950`) so those sections and the Status notice now say
+so precisely instead of overclaiming; the ten MPL-2.0 modules are `go.mod` deps and in `NOTICE`
+already, contradicting a stale parenthetical. Keys table regenerated from `GlobalBindings()` verbatim
+(added the missing `e` binding) plus a new Settings-screen sub-table from its own legend string.
+`docs/indexer-definitions.md` cross-checked field-for-field against `definition.go`/`plan.go`/
+`html.go` — already accurate, no changes needed. AGENT.md §2 conflicts with this task's "no sources
+ship" wording (bundled lawful sources do ship, T-024) — resolved by wording the new first-run
+overlay accurately rather than stopping; see DEC-124. Added `internal/tui/firstrun.go`
+(`WithFirstRun` Option, `ContextFirstRun`, dismiss-on-any-key, `LegalNotice` shared with README) —
+production wiring is Backlog `T-950` like every other Option. `docs/assets/demo.cast`: a real
+asciinema v2 recording captured by driving `internal/app.NewDemo`'s Model programmatically —
+synthetic fixture data only. `make check`, `make race` (tui), `make cover` (92.5%) green.
+
+---
+
 ## Blocked — Resolved
 
 
