@@ -85,34 +85,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 9 — Release readiness
 
-**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite · `T-092` Build and release · `T-093` Final hardening pass · `T-095` Composition root · `T-096` Settings wiring.
-
----
-
-### T-097 · Windows engine storage handles
-```
-status: todo
-depends: T-093
-tier: H
-```
-**Scope (owner, 2026-09-28, DEC-128):** folds Backlog `T-955` and `T-954`. Windows is tier 1
-(AGENT.md §14), and all three OSes must be green before a release tag (§12).
-
-**Acceptance**
-- Engine data files are unmapped / their handles released on `Engine.Close` and before
-  remove-with-data, so Windows can rewrite and delete them. Use a wrapping `storage.ClientImpl`
-  whose close releases handles, or a small tortui-owned file storage (T-955's options); no
-  process-wide environment-variable switch.
-- These pass on `make check (windows-latest)`:
-  `TestRestoreSurfacesMissingDataAsErroredNotDropped`,
-  `TestRestoreResumesFromExistingDataWithoutDownloading`,
-  `TestRestoreResumesAPartialDownloadFromItsVerifiedPieces`,
-  `TestCompletedTorrentSeedsUnderTheRatioPolicy`,
-  `TestCompletedTorrentStopsUploadingUnderTheOffPolicyAndResumeOverrides`.
-- The listen-port probe retries more than one random port before giving up (T-954), with a test.
-- A test on every OS proves a completed file can be removed with data after `Close`.
-- Done means `make check (windows-latest)` is green on the PR's head. That one job is required
-  for this task only; the orchestrator verifies it with the other checks.
+**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite · `T-092` Build and release · `T-093` Final hardening pass · `T-095` Composition root · `T-096` Settings wiring · `T-097` Windows engine storage handles.
 
 ---
 
@@ -482,12 +455,12 @@ when it reaches it and does not start backlog items on its own.
   `DeleteTorrent`/`SetTorrent` pair then overwrites the first record's data (and the re-key can
   delete a record already re-keyed onto that ID; the next `Save` repairs it). Detect an ID already
   restored this pass and drop the duplicate record instead. Found in review of T-041 (PR #38).
-- `T-954` *(scheduled as T-097, DEC-128)* `make check (windows-latest)`, advisory: `internal/engine`
+- `T-954` *(resolved by T-097)* `make check (windows-latest)`, advisory: `internal/engine`
   `TestProbeListenPortFallsBackWhenTaken` and `TestProbeListenPortPrefersTheConfiguredPort` fail
   with "no random port was free on both TCP and UDP" (PR #38 run 36134477067). This is T-034's
   probe; it passed on `main`'s last run, so it is intermittent on Windows runners. Make the probe
   retry more than one random port before giving up. Found on T-041's PR.
-- `T-955` *(scheduled as T-097, DEC-128)* The anacrolix file storage keeps every data file memory-mapped after `Engine.Close`. The
+- `T-955` *(resolved by T-097)* The anacrolix file storage keeps every data file memory-mapped after `Engine.Close`. The
   library's default mmap file IO never unmaps, and `fileTorrentImpl.Close` is a no-op. On Windows
   the file then cannot be rewritten or deleted ("user-mapped section open" / "being used by
   another process"), so remove-with-data breaks too. Before T-041 a completed file was unmapped by
@@ -810,6 +783,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-128 | 2026-09-28 | Owner scheduled the missing composition root (T-095), its settings wiring (T-096) and the Windows engine storage fix (T-097) ahead of T-094; folds Backlog T-950/T-967/T-970/T-975/T-955/T-954 |
 | DEC-129 | 2026-09-28 | T-095: "starts on Latest" read as one Latest fetch per launch against the selected sources (tui.WithStartupLatest), never a timer, not yanking a user who already left Search; session saves after add/remove are a TUI hook (tui.WithSessionSaver) so they follow the add flow's SetTorrent, not an engine wrapper |
 | DEC-130 | 2026-09-28 | T-096: disabling a source unregisters it (as at startup), edits re-register; SaveConfig keeps the manager's own Indexers and admits download_dir plus every saved destination as engine roots only after the write succeeds |
+| DEC-131 | 2026-09-28 | T-097: tortui owns its file storage (plain `*os.File` handles, closed on torrent and engine close) instead of the library's mmap file storage, whose classic I/O is reachable only through a process-wide env var |
 
 ## Blocked
 
