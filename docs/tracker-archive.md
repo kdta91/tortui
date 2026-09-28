@@ -3964,6 +3964,33 @@ is spelled out. Reworded the resize-check paragraph: goldens use a test-side col
 
 ---
 
+## Phase 10 — Release hardening follow-ups
+
+### T-993 · Engine destination-roots test
+```
+status: done
+depends: T-094
+tier: H
+```
+**Acceptance**
+- A test records a destination in the store, adds a torrent under it, then closes and restarts
+  the composition root, and asserts `Restored == 1` with nothing in `Failed`/`Errored`.
+- Dropping either root source from `internal/app/app.go`'s engine config —
+  `st.Destinations()` or `cfg.SavedDestinations` out of `engCfg.SavedDestinations` — must fail
+  this test (AGENT.md §6.12: destination roots are the security boundary, and neither source may
+  go untested).
+
+**Notes:** Promoted from Backlog `T-993` (found in review of T-095, PR #56).
+`TestEngineRootsIncludeEveryDestinationSource` (`internal/app/roots_test.go`) runs one case per
+root source: a destination recorded in the store only, and one saved in config only. Each adds a
+torrent under a destination outside download_dir, closes and restarts the root, and asserts
+`Restored == 1`, no `Failed`/`Missing`, nothing `StateErrored`, SavePath kept. Found: the restart
+alone cannot catch dropping `st.Destinations()`, since `Session.Resume` re-admits every recorded
+destination itself (T-074); a new test seam `Options.beforeResume` probes the freshly built
+engine before Resume, which pins that source (DEC-133). Both mutations quoted in the PR fail.
+
+---
+
 ## Blocked — Resolved
 
 

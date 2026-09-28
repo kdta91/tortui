@@ -91,21 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-### T-993 · Engine destination-roots test
-```
-status: todo
-depends: T-094
-tier: H
-```
-**Acceptance**
-- A test records a destination in the store, adds a torrent under it, then closes and restarts
-  the composition root, and asserts `Restored == 1` with nothing in `Failed`/`Errored`.
-- Dropping either root source from `internal/app/app.go`'s engine config —
-  `st.Destinations()` or `cfg.SavedDestinations` out of `engCfg.SavedDestinations` — must fail
-  this test (AGENT.md §6.12: destination roots are the security boundary, and neither source may
-  go untested).
-
-**Notes:** Promoted from Backlog `T-993` (found in review of T-095, PR #56).
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test.
 
 ### T-994 · Serialise session saves
 ```
@@ -673,6 +659,15 @@ when it reaches it and does not start backlog items on its own.
   file I/O while holding that torrent's exclusive lock whenever the handle is not already open,
   serialising unrelated file reads/writes on the same torrent behind one open-and-I/O. Performance
   only. Found in review of T-097 (PR #58), non-blocking.
+- `T-9005` *(owner decision)* `docs/platforms.md`'s tier table still says macOS and Windows are
+  "verified by hand ... before release", but DEC-132 waives the manual Windows (and Linux) pass
+  for v1.0. It needs an explicit note pointing at DEC-132 / Backlog `T-9004`; editing
+  `docs/platforms.md` (AGENT.md §14's full text) is the owner's call. Found in review of T-094
+  (PR #60), non-blocking.
+- `T-9006` `docs/terminal-matrix.md`'s non-TTY refusal row (`printf '' | ./bin/tortui`) marks
+  alignment and colour `PASS`, but a one-line refusal has no table to align and no colour to
+  degrade; `N/A` fits those two columns better (exit and restore stay `PASS`). Found in review of
+  T-094 (PR #60), non-blocking.
 
 ---
 
@@ -815,6 +810,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-130 | 2026-09-28 | T-096: disabling a source unregisters it (as at startup), edits re-register; SaveConfig keeps the manager's own Indexers and admits download_dir plus every saved destination as engine roots only after the write succeeds |
 | DEC-131 | 2026-09-28 | T-097: tortui owns its file storage (plain `*os.File` handles, closed on torrent and engine close) instead of the library's mmap file storage, whose classic I/O is reachable only through a process-wide env var |
 | DEC-132 | 2026-09-28 | v1.0 manual verification is macOS-only (owner has no Windows/Linux device); Windows/Linux terminal matrix and manual download/fresh-install checks deferred to Backlog T-9004 — CI and cross-builds on all three OSes unchanged |
+| DEC-133 | 2026-09-28 | T-993: Session.Resume re-admits recorded destinations, so a restart alone cannot pin app.go's st.Destinations() root source; test seam Options.beforeResume probes the freshly built engine before Resume; the duplicate admission is kept |
 
 ## Blocked
 
