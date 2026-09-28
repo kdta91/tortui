@@ -304,11 +304,32 @@ func (r *Registry) SetEnabled(id string, enabled bool) error {
 	return nil
 }
 
+// Unregister removes the source registered under id, and every cached answer
+// it gave, so a source later registered under the same id (an edited
+// configuration, T-096) starts clean. It returns ErrUnknownIndexer for an id
+// that is not registered. A fan-out already under way keeps the adapter it
+// selected until that search returns.
+func (r *Registry) Unregister(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.sources[id]; !ok {
+		return fmt.Errorf("indexer %q: %w", id, ErrUnknownIndexer)
+	}
+	delete(r.sources, id)
+	r.order = slices.DeleteFunc(r.order, func(o string) bool { return o == id })
+	for k := range r.cache {
+		if k.indexerID == id {
+			delete(r.cache, k)
+		}
+	}
+	return nil
+}
+
 // selection is one entry of a fan-out. A nil ix means the caller named an id
 // no source is registered under.
 type selection struct {
-	id string
-	ix Indexer
+	id  string
+	src *source
 }
 
 // selectSources resolves the fan-out's targets. With no ids it is every
@@ -323,7 +344,7 @@ func (r *Registry) selectSources(ids []string) []selection {
 		out := make([]selection, 0, len(r.order))
 		for _, id := range r.order {
 			if s := r.sources[id]; s.enabled {
-				out = append(out, selection{id: id, ix: s.ix})
+				out = append(out, selection{id: id, src: s})
 			}
 		}
 		return out
@@ -337,7 +358,7 @@ func (r *Registry) selectSources(ids []string) []selection {
 		}
 		seen[id] = true
 		if s, ok := r.sources[id]; ok {
-			out = append(out, selection{id: id, ix: s.ix})
+			out = append(out, selection{id: id, src: s})
 			continue
 		}
 		out = append(out, selection{id: id})
@@ -387,14 +408,14 @@ func (r *Registry) SearchAll(ctx context.Context, q Query, ids ...string) ([]Res
 		wg        sync.WaitGroup
 	)
 	for i, sel := range selected {
-		if sel.ix == nil {
+		if sel.src == nil {
 			errs[i] = &SourceError{IndexerID: sel.id, Err: ErrUnknownIndexer}
 			continue
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			groups[i], fromCache[i], errs[i] = r.searchOne(ctx, sel.ix, q)
+			groups[i], fromCache[i], errs[i] = r.searchOne(ctx, sel.src, q)
 		}()
 	}
 	wg.Wait()
@@ -430,7 +451,8 @@ func (r *Registry) SearchAll(ctx context.Context, q Query, ids ...string) ([]Res
 // refresh floor, then the request itself. It returns either results or a
 // SourceError, never both, plus whether those results came from the cache
 // (ExtraKeyCacheHit) rather than a fresh fetch.
-func (r *Registry) searchOne(ctx context.Context, ix Indexer, q Query) ([]Result, bool, *SourceError) {
+func (r *Registry) searchOne(ctx context.Context, src *source, q Query) ([]Result, bool, *SourceError) {
+	ix := src.ix
 	id := ix.ID()
 
 	if err := supports(ix.Caps(), q.Mode); err != nil {
@@ -457,7 +479,7 @@ func (r *Registry) searchOne(ctx context.Context, ix Indexer, q Query) ([]Result
 	if err != nil {
 		return nil, false, &SourceError{IndexerID: id, Err: err}
 	}
-	r.storeResults(key, results)
+	r.storeResults(key, src, results)
 	return results, false, nil
 }
 
@@ -581,10 +603,16 @@ func (r *Registry) cachedResults(key cacheKey) ([]Result, bool) {
 // entry that has aged out, so the map cannot grow across a long session.
 //
 // Only a successful fetch is cached. A failure is not: caching it would keep a
-// source dark for the whole TTL over one transient error.
-func (r *Registry) storeResults(key cacheKey, results []Result) {
+// source dark for the whole TTL over one transient error. Nor is the answer of
+// a source that was unregistered (or replaced under the same id) while its
+// fetch was in flight: owner must still be the registered source.
+func (r *Registry) storeResults(key cacheKey, owner *source, results []Result) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.sources[key.indexerID] != owner {
+		return
+	}
 
 	now := r.now()
 	for k, entry := range r.cache {

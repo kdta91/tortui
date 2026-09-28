@@ -223,6 +223,85 @@ func TestRegistrySetEnabled(t *testing.T) {
 	}
 }
 
+func TestRegistryUnregister(t *testing.T) {
+	alpha := okSource("alpha", hit("alpha", "1", "alpha one", 6))
+	r, _ := newTestRegistry(t, Config{CacheTTL: time.Hour}, alpha, okSource("beta"))
+
+	q := Query{Text: "cached"}
+	if _, _, err := r.SearchAll(context.Background(), q, "alpha"); err != nil {
+		t.Fatalf("SearchAll: %v", err)
+	}
+
+	if err := r.Unregister("alpha"); err != nil {
+		t.Fatalf("Unregister(alpha): %v", err)
+	}
+	if names := ids(r.List()); joined(names) != "beta" {
+		t.Errorf("List() = %v after Unregister(alpha), want [beta]", names)
+	}
+	if _, ok := r.Get("alpha"); ok {
+		t.Error("Get(alpha) still finds the source after Unregister")
+	}
+	if err := r.Unregister("alpha"); !errors.Is(err, ErrUnknownIndexer) {
+		t.Errorf("second Unregister(alpha) = %v, want ErrUnknownIndexer", err)
+	}
+
+	// A source re-registered under the same id starts clean: the old
+	// adapter's cached answer must not be served for the new one.
+	replacement := okSource("alpha", hit("alpha", "2", "alpha two", 3))
+	if err := r.Register(replacement); err != nil {
+		t.Fatalf("Register(replacement): %v", err)
+	}
+	got, _, err := r.SearchAll(context.Background(), q, "alpha")
+	if err != nil {
+		t.Fatalf("SearchAll after re-register: %v", err)
+	}
+	if joined(titles(got)) != "alpha two" || replacement.calls.Load() != 1 {
+		t.Errorf("SearchAll after re-register = %v (replacement called %d times), want the replacement's own answer",
+			titles(got), replacement.calls.Load())
+	}
+	if names := ids(r.List()); joined(names) != "beta,alpha" {
+		t.Errorf("List() = %v after re-register, want [beta alpha]", names)
+	}
+}
+
+func TestRegistryDropsAnAnswerFromASourceUnregisteredMidFetch(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	old := &stubIndexer{id: "alpha", caps: bothCaps, fn: func(_ context.Context, _ Query) ([]Result, error) {
+		close(entered)
+		<-release
+		return []Result{hit("alpha", "1", "stale", 9)}, nil
+	}}
+	r, _ := newTestRegistry(t, Config{CacheTTL: time.Hour}, old)
+	q := Query{Text: "in flight"}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, _, err := r.SearchAll(context.Background(), q); err != nil {
+			t.Errorf("in-flight SearchAll: %v", err)
+		}
+	}()
+	<-entered
+
+	if err := r.Unregister("alpha"); err != nil {
+		t.Fatalf("Unregister: %v", err)
+	}
+	replacement := okSource("alpha", hit("alpha", "2", "fresh", 1))
+	if err := r.Register(replacement); err != nil {
+		t.Fatalf("Register(replacement): %v", err)
+	}
+	close(release)
+	<-done
+
+	got, _, err := r.SearchAll(context.Background(), q)
+	if err != nil {
+		t.Fatalf("SearchAll: %v", err)
+	}
+	if joined(titles(got)) != "fresh" {
+		t.Errorf("SearchAll = %v, want the replacement's answer, not the unregistered source's cached one", titles(got))
+	}
+}
+
 func TestRegistryListReturnsACopy(t *testing.T) {
 	r, _ := newTestRegistry(t, Config{}, okSource("alpha"), okSource("beta"))
 
@@ -1002,9 +1081,9 @@ func TestCachedResultsHandsOutPrivateCopies(t *testing.T) {
 	// cachedResults is the single door out of the cache; whatever comes
 	// through it must be the caller's alone, whether or not today's only
 	// caller happens to copy again downstream.
-	r := NewRegistry(Config{CacheTTL: time.Hour})
+	r, _ := newTestRegistry(t, Config{CacheTTL: time.Hour}, okSource("alpha"))
 	key := newCacheKey("alpha", Query{Text: "x"})
-	r.storeResults(key, []Result{{IndexerID: "alpha", ID: "1", Title: "alpha one", Extra: map[string]string{"quality": "original"}}})
+	r.storeResults(key, r.sources["alpha"], []Result{{IndexerID: "alpha", ID: "1", Title: "alpha one", Extra: map[string]string{"quality": "original"}}})
 
 	first, ok := r.cachedResults(key)
 	if !ok {
