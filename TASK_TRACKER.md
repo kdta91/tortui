@@ -79,35 +79,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 8 — Settings
 
-**Done (archived in `docs/tracker-archive.md`):** `T-080` Indexer management · `T-081` Connection test · `T-082` Preferences.
-
----
-
-### T-083 · Bulk import from a Torznab aggregator
-```
-status: todo
-depends: T-080, T-081
-tier: M
-```
-**Scope (owner, 2026-09-28, DEC-123):** Prowlarr only. Jackett has no API-key-authenticated
-endpoint that lists indexers, and NZBHydra2's could not be verified without a running instance, so
-both move to Backlog `T-984`. The aggregator import must be shaped so a second aggregator can be
-added later without changing the TUI flow.
-**Acceptance**
-- From the add form, an "import from aggregator" path takes a base URL and API key for a
-  self-hosted Prowlarr instance, lists the indexers that instance exposes
-  (`GET /api/v1/indexer`, per Prowlarr's own API documentation), and lets the user multi-select
-  which to add. Jackett and NZBHydra2 are out of scope for this task (Backlog `T-984`).
-- Each import becomes an ordinary `[[indexer]]` entry — nothing special-cased afterwards.
-- Names come from the aggregator; ids are slugified and de-duplicated against existing entries.
-- A failed or unauthenticated probe reports the distinct reason, same taxonomy as T-081.
-- **Verify the aggregator's API shape against its official documentation before implementing.**
-  Do not infer endpoint paths or response fields. If the documentation cannot be reached,
-  mark this task `blocked` rather than guessing — a wrong endpoint here silently produces
-  broken sources.
-
-This targets self-hosted aggregator software the user already runs. It is not a source list and
-it does not put any indexer into the repo.
+**Done (archived in `docs/tracker-archive.md`):** `T-080` Indexer management · `T-081` Connection test · `T-082` Preferences · `T-083` Bulk import from a Torznab aggregator.
 
 ---
 

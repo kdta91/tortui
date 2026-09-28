@@ -52,6 +52,13 @@ type fakeSourceManager struct {
 	// Searcher double and prove the TUI's own refresh (root.go's
 	// refreshSearchSources) actually reads it back.
 	registrySync func([]config.Indexer)
+
+	// aggregatorItems/aggregatorErr script ListAggregatorIndexers (T-083).
+	aggregatorItems   []AggregatorIndexer
+	aggregatorErr     error
+	aggregatorCalls   int
+	aggregatorBaseURL string
+	aggregatorAPIKey  string
 }
 
 func (f *fakeSourceManager) Sources() []config.Indexer {
@@ -140,6 +147,21 @@ func (f *fakeSourceManager) ImportDefinition(_ context.Context, _ string) (strin
 	}
 
 	return f.importID, nil
+}
+
+func (f *fakeSourceManager) ListAggregatorIndexers(_ context.Context, baseURL, apiKey string) ([]AggregatorIndexer, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.aggregatorCalls++
+	f.aggregatorBaseURL = baseURL
+	f.aggregatorAPIKey = apiKey
+
+	if f.aggregatorErr != nil {
+		return nil, f.aggregatorErr
+	}
+
+	return append([]AggregatorIndexer(nil), f.aggregatorItems...), nil
 }
 
 func (f *fakeSourceManager) ReloadDefinitions() error {
