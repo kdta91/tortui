@@ -3707,19 +3707,16 @@ tier: L
 - `docs/indexer-definitions.md` complete and verified against the real loader.
 - Screenshot or asciinema cast added, captured from `--demo` so it contains no real content.
 
-**Notes:** Ran every documented command/flag; fixed real drift: bare `tortui` and `--ascii` are
-not wired yet (composition root, Backlog `T-950`) so those sections and the Status notice now say
-so precisely instead of overclaiming; the ten MPL-2.0 modules are `go.mod` deps and in `NOTICE`
-already, contradicting a stale parenthetical. Keys table regenerated from `GlobalBindings()` verbatim
-(added the missing `e` binding) plus a new Settings-screen sub-table from its own legend string.
-`docs/indexer-definitions.md` cross-checked field-for-field against `definition.go`/`plan.go`/
-`html.go` — already accurate, no changes needed. AGENT.md §2 conflicts with this task's "no sources
-ship" wording (bundled lawful sources do ship, T-024) — resolved by wording the new first-run
-overlay accurately rather than stopping; see DEC-124. Added `internal/tui/firstrun.go`
-(`WithFirstRun` Option, `ContextFirstRun`, dismiss-on-any-key, `LegalNotice` shared with README) —
-production wiring is Backlog `T-950` like every other Option. `docs/assets/demo.cast`: a real
-asciinema v2 recording captured by driving `internal/app.NewDemo`'s Model programmatically —
-synthetic fixture data only. `make check`, `make race` (tui), `make cover` (92.5%) green.
+**Notes:** Fixed real drift (bare `tortui`/`--ascii` unwired pending `T-950`; ten MPL modules
+already in `NOTICE`). Keys table is now *generated*: `GlobalKeymapReadmeTable()` (new
+`keymap_docs.go`) renders it from `GlobalBindings()`, pasted between README markers, and
+`TestReadmeKeysTableMatchesGlobalBindings` fails the build on any drift; a second test pins
+README's Legal notice to `LegalNotice`. `internal/tui/firstrun.go` adds `WithFirstRun`
+(`ContextFirstRun`, dismiss-on-any-key) — wording corrected against AGENT.md §2 (bundled sources
+do ship, T-024) rather than the stale acceptance text (DEC-124); wiring is Backlog `T-950`.
+Troubleshooting gained two entries (`min_free_space` pause/refuse, T-034/DEC-117; preferences
+restart requirement, DEC-122). `docs/assets/demo.cast`: real asciinema v2 recording, synthetic
+fixture data, generic `/tmp` path. `make check`, `make race` (tui), `make cover` (92.5%) green.
 
 ---
 

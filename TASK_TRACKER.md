@@ -203,6 +203,16 @@ when it reaches it and does not start backlog items on its own.
 
 ## Backlog (not scheduled)
 
+- `T-986` `theme.Truncate` (`internal/tui/theme/width.go:140`) is not escape-sequence-aware: it
+  walks `s` grapheme cluster by grapheme cluster (`uniseg.NewGraphemes`) and cuts once `Width`'s
+  budget is spent, with no notion that an ANSI SGR sequence (`\x1b[38;2;r;g;bm`) is one atomic,
+  zero-width unit — a cut landing inside one leaves a dangling, unterminated escape code in the
+  rendered output. Observed in T-090's `docs/assets/demo.cast`: the status bar's rate/peer text is
+  colour-styled then truncated to the terminal width, and several captured frames show a broken
+  `[38;2;155;155;15...` tail. Fix: either skip escape sequences whole during the walk (matching
+  `\x1b\[[0-9;]*m` verbatim, contributing 0 width) or truncate on the plain text and re-wrap the
+  active style afterwards. Needs a fixture string containing an unterminated multi-byte SGR
+  sequence right at the cut boundary.
 - `T-984` Aggregator import (T-083) for Jackett and NZBHydra2, split out of T-083 by the owner
   (DEC-123). **Blocked on API verification, same rule as T-083:** do not infer endpoints. Jackett
   lists configured indexers only through `/api/v2.0/indexers`, which needs a browser session rather

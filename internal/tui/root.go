@@ -669,6 +669,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// while it is open: any key dismisses it, the same "modal owns every
 	// key" pattern the destination picker and settings forms use below, so
 	// it can never fall through to a real action on the very first frame.
+	// This includes q and ctrl+c: pressing either here only dismisses the
+	// overlay rather than quitting, since it is the very first frame and
+	// there is nothing running yet to confirm quitting over (unlike
+	// ActionQuit's own "prompts if downloads active" below, which only
+	// ever runs once this overlay is gone). A second q/ctrl+c, after
+	// dismissal, quits normally.
 	if m.firstRun {
 		m.firstRun = false
 		return m, nil

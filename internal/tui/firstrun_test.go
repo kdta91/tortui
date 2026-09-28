@@ -82,6 +82,49 @@ func TestFirstRunDismissedByAnyKey(t *testing.T) {
 	}
 }
 
+// TestFirstRunCtrlCOnlyDismissesOverlay confirms ctrl+c — normally the
+// global quit shortcut (AGENT.md §7: "q / ctrl+c | Quit") — only dismisses
+// the first-run overlay rather than quitting the program outright: it never
+// returns a tea.Quit command, and a second ctrl+c after dismissal quits
+// normally (found in review of PR #52).
+func TestFirstRunCtrlCOnlyDismissesOverlay(t *testing.T) {
+	m := New(fake.New(), theme.New("", theme.Capability{}), WithFirstRun(true))
+
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model := mm.(Model)
+
+	mm, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	model = mm.(Model)
+
+	if model.firstRun {
+		t.Fatal("firstRun still true after ctrl+c")
+	}
+
+	if cmd != nil && isQuitCmd(cmd) {
+		t.Fatal("ctrl+c on the first-run overlay returned a quit command; it should only dismiss")
+	}
+
+	// A second ctrl+c, now that the overlay is gone, quits normally (no
+	// active downloads on a fresh fake.Engine, so no confirm prompt).
+	_, cmd = model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if !isQuitCmd(cmd) {
+		t.Fatal("a second ctrl+c after dismissal did not quit")
+	}
+}
+
+// isQuitCmd reports whether cmd, once run, produces bubbletea's own
+// QuitMsg — the only reliable way to recognise tea.Quit's result, since
+// tea.Cmd is just a func.
+func isQuitCmd(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+
+	_, ok := cmd().(tea.QuitMsg)
+
+	return ok
+}
+
 // TestFirstRunTakesPriorityOverOtherModals confirms the overlay is what
 // renders even if some other modal flag happens to be set, since it can
 // only ever be true on the very first frame before anything else has had a

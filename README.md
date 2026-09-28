@@ -284,32 +284,42 @@ commit it anywhere.
 
 ## Keys
 
-Regenerated from `internal/tui/keymap.go`'s `GlobalBindings` — the single source of truth key
-routing and the `?` overlay are both built from — so this table can't drift from what the app
-actually does. Some rows only apply on the screen noted; everything else is global.
+Generated from `internal/tui/keymap.go`'s `GlobalBindings` — the same data key routing and the
+`?` overlay are both built from — by `internal/tui.GlobalKeymapReadmeTable()`.
+`TestReadmeKeysTableMatchesGlobalBindings` (`internal/tui/keymap_docs_test.go`) fails `make check`
+if the block below and that function's output ever differ, so this table cannot drift silently.
+Some rows only apply on the screen noted; everything else is global. Do not hand-edit between the
+markers — regenerate and paste instead.
 
+<!-- keymap:start -->
 | Key | Action | Screen |
 |---|---|---|
-| `/` | Focus search input | global |
-| `L` | Latest — recent additions across sources, no keyword | global |
-| `R` | Refresh current results | global |
-| `tab` / `shift+tab` | Next / previous screen | global |
-| `1`–`5` | Jump to search / results / details / downloads / settings | global |
-| `j` `k` / `↑` `↓` | Move selection | global |
-| `enter` | Add torrent | results |
-| `enter` | Open details | downloads |
-| `d` | Details | global |
-| `s` | Cycle sort column | results |
-| `S` | Reverse sort | results |
-| `t` | Toggle trust filter — restrict results to Trusted and above | results |
-| `o` | Open downloaded file | downloads |
-| `f` | Open containing folder | downloads |
-| `u` | Open source page in browser | global |
-| `p` | Pause / resume | downloads |
-| `x` | Remove (opens keep/delete data confirm) | downloads |
-| `e` | View source errors, if any, from the last search | search, results, details, downloads |
-| `?` | Toggle this help overlay | global |
-| `q` / `ctrl+c` | Quit (prompts if downloads active) | global |
+| `/` | focus search input | global |
+| `L` | latest — recent additions, no keyword | global |
+| `R` | refresh current results | global |
+| `tab` | next screen | global |
+| `shift+tab` | previous screen | global |
+| `1` | jump to search | global |
+| `2` | jump to results | global |
+| `3` | jump to details | global |
+| `4` | jump to downloads | global |
+| `5` | jump to settings | global |
+| `j` / `down` | move selection down | global |
+| `k` / `up` | move selection up | global |
+| `enter` | add torrent (results) / open details (downloads) | global |
+| `d` | details | global |
+| `s` | cycle sort column | results |
+| `S` | reverse sort | results |
+| `t` | toggle trust filter (Trusted and above) | results |
+| `o` | open downloaded file | downloads |
+| `f` | open containing folder | downloads |
+| `u` | open source page in browser | global |
+| `p` | pause/resume | downloads |
+| `x` | remove (opens keep/delete data confirm) | downloads |
+| `?` | toggle this help overlay | global |
+| `q` / `ctrl+c` | quit (prompts if downloads active) | global |
+| `e` | view source errors, if any (T-052; DEC-092) | search, results, details, downloads |
+<!-- keymap:end -->
 
 ### Settings screen
 
@@ -392,6 +402,20 @@ Parse failures on a scraper source usually mean the site changed its markup — 
 **Some sources fail but others work**
 Intended. A failing source never blocks the rest; the status bar shows `2/4 sources failed` and
 `tab` expands the detail.
+
+**A download is refused, or an active one pauses itself with no peer error**
+Intended — `min_free_space` (default 1GB). Adding a torrent that would leave less than that much
+free at its destination is refused up front; one already downloading is re-checked every 10s and
+paused, not left to fill the disk, if free space drops below the margin partway through. Free up
+space at that destination (or lower `min_free_space` in Settings' preferences panel) and resume it
+with `p`.
+
+**I changed a setting in the preferences panel and nothing happened**
+Most fields need a restart to take effect — the save confirmation names exactly which ones
+("restart to apply: ..."). Only the download directory, saved destinations, and the free-space
+margin apply immediately; rate limits, peer/port limits, seed policy, search timeout, theme, and
+ASCII mode are read once at startup and take a restart. `ascii = true` is the one exception this
+mirrors: forcing it live has no code path yet either (Backlog `T-982`).
 
 **Columns are misaligned or the table looks garbled**
 Usually a font without block-glyph coverage. Try `ascii = true` in `config.toml`. If it happens
