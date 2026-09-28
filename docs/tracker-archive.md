@@ -3989,6 +3989,28 @@ alone cannot catch dropping `st.Destinations()`, since `Session.Resume` re-admit
 destination itself (T-074); a new test seam `Options.beforeResume` probes the freshly built
 engine before Resume, which pins that source (DEC-133). Both mutations quoted in the PR fail.
 
+### T-994 · Serialise session saves
+```
+status: done
+depends: T-094, T-993
+tier: H
+```
+**Acceptance**
+- Session saves are serialised through one owner, or in-flight saves are drained before
+  `Shutdown`, so no `Session.Save` runs after `Store` or `Engine` `Close`.
+- A save racing the next add's `SetTorrent` cannot overwrite the new record's `Origin` (T-095's
+  `Save` does a non-atomic `GetTorrent`-then-`SetTorrent`).
+- Both properties are proven under `-race`.
+
+**Notes:** Promoted from Backlog `T-994` (found in review of T-095, PR #56).
+`lifecycle.Session` is now the one owner of the torrents bucket: new `SetTorrent` (the add flow's
+record write, wired as `tui.WithTorrentStore(a.session)`) runs under Save's lock, so a save in
+flight can neither overwrite nor prune a fresh record (the prune was the second, worse loss path).
+New `Close` saves once more behind any save in flight and marks the session closed before it
+unlocks; Shutdown calls it instead of `Save`, then seals the session even if that step timed out.
+Later `Save` is a no-op, `SetTorrent` returns `ErrSessionClosed`. `GetTorrent` reads the store
+without the lock (View never waits). Proven under `-race` in `session_serial_test.go` (DEC-134).
+
 ---
 
 ## Blocked — Resolved
