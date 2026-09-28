@@ -3930,7 +3930,57 @@ too if a handle leaks. `go mod tidy` moved `anacrolix/generics` to indirect; `NO
 
 ---
 
+### T-094 · Terminal compatibility matrix
+```
+status: done
+depends: T-056, T-092, T-093, T-095, T-096, T-097
+tier: M
+```
+**Acceptance**
+- `docs/terminal-matrix.md` records a verified pass for each of: Terminal.app, iTerm2 or
+  Ghostty, Windows Terminal, a common Linux emulator, tmux, `NO_COLOR=1`, `TERM=xterm`,
+  `--ascii`, and non-TTY refusal — per the command list in AGENT.md §15.
+- Windows is tier 1: Windows Terminal must pass, and legacy conhost must produce the clear
+  upgrade message rather than a garbled render.
+- Each entry confirms column alignment, colour degradation, clean exit, and correct terminal
+  restore.
+- Resize to 80×24 and ~60 columns while running; documented column-drop order holds with no
+  garbling.
+- Shell-agnosticism confirmed once under `zsh`, `bash`, `sh`, and PowerShell.
+- **Terminal.app is the pass/fail floor.** A defect visible only in a modern emulator is a
+  bug; a defect visible in Terminal.app is a release blocker.
+- Any failure becomes a `T-9NN` backlog item or blocks the release — agent decides and records
+  which in the decision log.
+
+**Notes:** Owner ran the real-terminal pass on macOS 2026-09-28 ("all pass on macos"):
+`docs/terminal-matrix.md` records `PASS (owner, macOS, 2026-09-28)` for Terminal.app, iTerm2 or
+Ghostty, tmux, `NO_COLOR=1`, `TERM=xterm`, `--ascii`, non-TTY refusal, resize, and zsh/bash/sh.
+Owner decision (DEC-132): v1.0 manual verification is macOS-only (no Windows/Linux device), so
+Windows Terminal, conhost, a Linux emulator, and PowerShell are `DEFERRED (DEC-132)`; Backlog
+`T-9004` tracks that work. Fixed two matrix reviewer notes: a bug-vs-release-blocker call now
+needs its own `DEC-` entry, not only a matrix-file note, and the Terminal.app-floor consequence
+is spelled out. Reworded the resize-check paragraph: goldens use a test-side column-set copy
+(`resultColumns()`) that currently matches `internal/tui/results.go`.
+
+---
+
 ## Blocked — Resolved
+
+
+### T-094 · Terminal compatibility matrix — blocked 2026-09-28
+Owner-only (AGENT.md §12: manual steps needing a human at a real terminal). Everything
+automatable is merged (PR #59): `docs/terminal-matrix.md` holds the owner checklist and the
+unattended evidence (non-TTY/`TERM=dumb` refusal, `NO_COLOR` goldens, 80×24/120×40/60×20 drop
+order). **To unblock (owner):** run the checklist on Terminal.app, iTerm2 or Ghostty, Windows
+Terminal (+ legacy conhost upgrade message), a Linux emulator, tmux, `NO_COLOR=1`, `TERM=xterm`,
+`--ascii`, and zsh/bash/sh/PowerShell; fill in the tables; then flip T-094 per the Protocol.
+Two review notes on the checklist to apply while filling it in: record each failure's
+bug-vs-release-blocker call as a `DEC-` entry (not only in the matrix file), and a defect visible
+in Terminal.app is a release blocker while one seen only in a modern emulator is a bug.
+**Resolved 2026-09-28:** the owner ran the pass on macOS ("all pass on macos") and decided v1.0
+manual verification is macOS-only — no Windows or Linux device available (DEC-132). Windows
+Terminal, conhost, a Linux emulator, and PowerShell are `DEFERRED (DEC-132)` in the matrix file,
+routed to Backlog `T-9004`, rather than run. T-094 flipped to `done`.
 
 
 ### T-083 · Bulk import from a Torznab aggregator — blocked 2026-09-26
