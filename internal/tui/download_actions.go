@@ -341,11 +341,14 @@ func (m Model) handleRemoveResult(msg removeResultMsg) (tea.Model, tea.Cmd) {
 		m.downloads.expandedErr = ""
 	}
 
+	text := fmt.Sprintf("removed %s (data kept)", msg.name)
 	if msg.deleteData {
-		return m.pushStatus(fmt.Sprintf("removed %s and deleted its data", msg.name))
+		text = fmt.Sprintf("removed %s and deleted its data", msg.name)
 	}
 
-	return m.pushStatus(fmt.Sprintf("removed %s (data kept)", msg.name))
+	m, cmd := m.pushStatus(text)
+
+	return m, tea.Batch(cmd, saveSessionCmd(m.sessionSaver))
 }
 
 // downloadSourceURL resolves a torrent's source page: the live Origin when
