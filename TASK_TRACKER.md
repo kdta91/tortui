@@ -85,22 +85,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 9 — Release readiness
 
-**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite · `T-092` Build and release.
-
----
-
-### T-093 · Final hardening pass
-```
-status: todo
-depends: T-091, T-092
-tier: H
-```
-**Acceptance**
-- `go test -race ./...` clean.
-- `goleak` clean on startup/shutdown.
-- `govulncheck` clean; any finding triaged in the decision log.
-- Every `TODO` in the tree has a tracker ID.
-- Coverage thresholds from AGENT.md §9 met.
+**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite · `T-092` Build and release · `T-093` Final hardening pass.
 
 ---
 
@@ -157,6 +142,12 @@ when it reaches it and does not start backlog items on its own.
 
 ## Backlog (not scheduled)
 
+- `T-991` `make cover` enforces AGENT.md §9's per-package floors (T-093) but no CI job runs it,
+  so a regression is caught only when an agent runs its verification row. Add it to a CI job;
+  which checks are required stays the owner's call (AGENT.md §12). From T-093.
+- `T-990` Bump `golang.org/x/crypto` past v0.55.0 (GO-2026-6354/6355, `ssh`) once the module's
+  `go` directive may rise to 1.26: v0.56.0 requires it. Not reachable today — no `x/crypto/ssh` or
+  `openpgp` package is compiled on any OS (DEC-127) — so this is hygiene, not a fix. From T-093.
 - `T-989` T-091's `TestZeroConfigStandaloneSearchAddDownload` (`internal/app`) picks the smallest
   live result under its 25 MiB cap dynamically rather than a pinned identifier, so it never
   invents knowledge of the bundled source's catalogue. If a specific, durable public-domain item
@@ -239,7 +230,7 @@ when it reaches it and does not start backlog items on its own.
   to catch up. It has never existed; `docs/` currently holds only `indexer-hostname-allowlist.md`.
   Found by QA on T-010 (PR #8), disclosed by the T-010 build agent rather than backfilled from one
   task's vantage point.
-- `T-916` Enforce per-package coverage thresholds in `make cover`. `COVER_THRESHOLD := 0` at
+- `T-916` **Resolved by T-093 (DEC-127).** Enforce per-package coverage thresholds in `make cover`. `COVER_THRESHOLD := 0` at
   `Makefile:28`, so the gate currently enforces nothing, and it compares a single repo-wide total.
   AGENT.md §9 mandates per-package floors (`internal/indexer` and `internal/engine` >= 75%,
   `internal/tui` >= 50%) that one global number structurally cannot express. Live as of T-010:
@@ -747,6 +738,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-124 | 2026-09-28 | T-090: first-run overlay wording corrected against AGENT.md §2 (bundled sources do ship, T-024) instead of the stale acceptance text; README's Status notice now states precisely what's wired today (`--version`/`doctor`/`--demo`) vs. pending the composition root (Backlog T-950), and concrete false claims (`--ascii` flag, ten MPL modules not yet in `NOTICE`) were fixed |
 | DEC-125 | 2026-09-28 | T-091: one combined suite (search + add + real download + offline restore) covers both the download/resume and zero-config-standalone acceptance items; reachability checked generically across every bundled source; seed_policy pinned to "off" and the wait accepts Seeding-or-Paused (T-034-class race), and the 25 MiB size cap is actually enforced (PR #53 remediation) |
 | DEC-126 | 2026-09-28 | T-092: goreleaser config uses homebrew_casks, not the deprecated brews pipe; run()/runDoctor() parse argv through the same flag-set constructors completions walk; each publisher's skip_upload is templated on its own token (not `auto`, which only skips prereleases); cask gets a quarantine-clearing postflight hook |
+| DEC-127 | 2026-09-28 | T-093: goleak on every package's TestMain with third-party-only ignores; otel bumped to 1.42.0 (adds MIT cespare/xxhash/v2); x/crypto ssh/openpgp findings triaged as not compiled in (bump needs go 1.26, T-990); make cover enforces per-package §9 floors (T-916) |
 
 ## Blocked
 
