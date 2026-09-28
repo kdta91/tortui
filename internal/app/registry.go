@@ -128,7 +128,9 @@ func userSource(ix config.Indexer, defsDir string, transport http.RoundTripper) 
 
 	switch ix.Type {
 	case "torznab":
-		return torznab.New(torznab.Options{ID: ix.ID, Name: ix.Name, Endpoint: ix.URL, Client: client, RequiresAuth: auth})
+		feed := ix.URL
+
+		return torznab.New(torznab.Options{ID: ix.ID, Name: ix.Name, Endpoint: feed, Client: client, RequiresAuth: auth})
 	case "scraper":
 		def, err := readDefinition(defsDir, ix.Definition)
 		if err != nil {

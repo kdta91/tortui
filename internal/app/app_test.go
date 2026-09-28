@@ -398,7 +398,7 @@ func TestNewRejectsABadLogLevelBeforeWritingAnything(t *testing.T) {
 }
 
 // TestNewUndoesEarlierStepsOnFailure: a failure after the lock is taken
-// (an unusable download_dir stops the engine) releases the lock again.
+// (an unusable seed_policy stops the engine) releases the lock again.
 func TestNewUndoesEarlierStepsOnFailure(t *testing.T) {
 	guardDefaultTransport(t)
 	sandbox(t)

@@ -661,6 +661,17 @@ when it reaches it and does not start backlog items on its own.
   something probes its caps. Run the caps probe once per source off the UI goroutine after startup
   (bounded, AGENT.md §6.2/§6.13) and re-register with the discovered caps. Found in T-095.
 
+- `T-993` No test covers the engine's destination roots in `internal/app/app.go`: dropping
+  `st.Destinations()` or `cfg.SavedDestinations` from `engCfg.SavedDestinations` passes every test,
+  and that is the AGENT.md §6.12 boundary. Add one: record a destination in the store, add a torrent
+  under it, restart the root, assert `Restored == 1` with nothing in `Failed`/`Errored`. Found in
+  review of T-095 (PR #56).
+- `T-994` `tui.saveSessionCmd` (T-095) runs `Session.Save` on a Cmd goroutine, so it can race with
+  shutdown (a Save landing after `Store`/`Engine` Close) and with the next add's `SetTorrent`
+  (`Save`'s `GetTorrent`-then-`SetTorrent` is not atomic, so a fresh record's Origin can be
+  overwritten). Serialise saves through one owner, or drain in-flight saves before `Shutdown`.
+  Found in review of T-095 (PR #56).
+
 ---
 
 ## Decision Log
