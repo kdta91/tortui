@@ -3787,6 +3787,30 @@ clean-machine smoke test per OS; `T-908`/`T-909` cover notarisation and code sig
 
 ---
 
+### T-093 · Final hardening pass
+```
+status: done
+depends: T-091, T-092
+tier: H
+```
+**Acceptance**
+- `go test -race ./...` clean.
+- `goleak` clean on startup/shutdown.
+- `govulncheck` clean; any finding triaged in the decision log.
+- Every `TODO` in the tree has a tracker ID.
+- Coverage thresholds from AGENT.md §9 met.
+
+**Notes:** `make race` (all 21 packages) green. Every package's test binary now ends in a goleak
+check (`leak_test.go` `TestMain`; `cmd/tortui` folds `goleak.Find` into its home guard; anacrolix
+already had one). Fixed the three leaks it found, all in tests: tui fake engines never closed
+(`newTestEngine(t)` closes on cleanup), `hungEngine.Close` never released, one 2s probe left in
+flight. Ignores are third-party only (teatest's signal goroutine, bubbletea's bounded Tick timers).
+govulncheck: otel 1.38.0 -> 1.42.0 (adds MIT `cespare/xxhash/v2`); three x/crypto module-level
+findings triaged in DEC-127. No `TODO` lacks an id. `make cover` now enforces per-package floors
+via `scripts/check-coverage.sh` (resolves T-916); all pass (lowest: indexer/scraper/builtin 83.3%).
+
+---
+
 ## Blocked — Resolved
 
 

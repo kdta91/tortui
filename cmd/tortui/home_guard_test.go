@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"go.uber.org/goleak"
 )
 
 // homeEnvVars are every variable internal/platform or os.UserHomeDir reads
@@ -21,7 +23,8 @@ var homeEnvVars = []string{
 // anything was written there. A test that reaches config.Load without
 // sandboxHome(t) would otherwise create config.toml and a downloads folder
 // in the developer's real home (PR #54 review finding 7); here it fails the
-// run instead, naming what it wrote.
+// run instead, naming what it wrote. It also fails the run if any goroutine
+// outlives the tests (T-093).
 func TestMain(m *testing.M) {
 	os.Exit(runGuarded(m))
 }
@@ -52,6 +55,17 @@ func runGuarded(m *testing.M) int {
 	}
 
 	code := m.Run()
+
+	// T-093: the entrypoint's startup/shutdown paths (doctor, completion,
+	// --demo) must leave no goroutine behind. goleak.VerifyTestMain would
+	// call os.Exit itself and skip the sentinel scan below, so Find is used
+	// directly instead.
+	if code == 0 {
+		if err := goleak.Find(); err != nil {
+			fmt.Fprintf(os.Stderr, "goleak: %v\n", err)
+			code = 1
+		}
+	}
 
 	leaked, err := sentinelContents(sentinel)
 	if err != nil {

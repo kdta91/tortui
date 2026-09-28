@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kdta91/tortui/internal/engine/fake"
 	"github.com/kdta91/tortui/internal/tui/theme"
 )
 
@@ -14,7 +13,7 @@ import (
 // option — starts straight on ScreenSearch, exactly as every pre-T-090
 // caller expects.
 func TestNoFirstRunByDefault(t *testing.T) {
-	m := New(fake.New(), theme.New("", theme.Capability{}))
+	m := New(newTestEngine(t), theme.New("", theme.Capability{}))
 
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	model := mm.(Model)
@@ -33,7 +32,7 @@ func TestNoFirstRunByDefault(t *testing.T) {
 // and explains that only a small bundled set of lawful sources ships,
 // pointing the user at the docs for adding their own.
 func TestFirstRunShowsLegalNoticeAndSourcesNotice(t *testing.T) {
-	m := New(fake.New(), theme.New("", theme.Capability{}), WithFirstRun(true))
+	m := New(newTestEngine(t), theme.New("", theme.Capability{}), WithFirstRun(true))
 
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	model := mm.(Model)
@@ -61,7 +60,7 @@ func TestFirstRunShowsLegalNoticeAndSourcesNotice(t *testing.T) {
 // press — not a specific binding — and control returns to the Model's
 // normal starting screen.
 func TestFirstRunDismissedByAnyKey(t *testing.T) {
-	m := New(fake.New(), theme.New("", theme.Capability{}), WithFirstRun(true))
+	m := New(newTestEngine(t), theme.New("", theme.Capability{}), WithFirstRun(true))
 
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	model := mm.(Model)
@@ -88,7 +87,7 @@ func TestFirstRunDismissedByAnyKey(t *testing.T) {
 // returns a tea.Quit command, and a second ctrl+c after dismissal quits
 // normally (found in review of PR #52).
 func TestFirstRunCtrlCOnlyDismissesOverlay(t *testing.T) {
-	m := New(fake.New(), theme.New("", theme.Capability{}), WithFirstRun(true))
+	m := New(newTestEngine(t), theme.New("", theme.Capability{}), WithFirstRun(true))
 
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	model := mm.(Model)
@@ -130,7 +129,7 @@ func isQuitCmd(cmd tea.Cmd) bool {
 // only ever be true on the very first frame before anything else has had a
 // chance to open.
 func TestFirstRunTakesPriorityOverOtherModals(t *testing.T) {
-	m := New(fake.New(), theme.New("", theme.Capability{}), WithFirstRun(true))
+	m := New(newTestEngine(t), theme.New("", theme.Capability{}), WithFirstRun(true))
 
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	model := mm.(Model)

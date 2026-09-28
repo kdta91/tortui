@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/x/exp/teatest"
 
 	"github.com/kdta91/tortui/internal/engine"
-	"github.com/kdta91/tortui/internal/engine/fake"
 	"github.com/kdta91/tortui/internal/indexer"
 	indexerfake "github.com/kdta91/tortui/internal/indexer/fake"
 	"github.com/kdta91/tortui/internal/store"
@@ -129,7 +128,7 @@ func TestHandleOpenDetailsSelectsTheHighlightedRow(t *testing.T) {
 		{IndexerID: "alpha", ID: "2", Title: "second.iso", Seeders: 100, Magnet: "magnet:?xt=urn:btih:bbbb"},
 	}
 
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.lastResults = results
 	m.results = m.results.setResults(results, indexer.ModeSearch, now)
 	m.screen = ScreenResults
@@ -179,7 +178,7 @@ func TestHandleOpenDetailsSelectsTheHighlightedRow(t *testing.T) {
 }
 
 func TestHandleOpenDetailsNoRowsIsNoop(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.screen = ScreenResults
 
 	updated, cmd := m.handleOpenDetails()
@@ -203,7 +202,7 @@ func TestActionDetailsOnlyActsOnResultsScreen(t *testing.T) {
 	now := time.Now()
 	results := []indexer.Result{{IndexerID: "alpha", ID: "1", Title: "x.iso", Magnet: "magnet:?xt=urn:btih:aaaa"}}
 
-	base := New(fake.New(), testTheme())
+	base := New(newTestEngine(t), testTheme())
 	base.lastResults = results
 	base.results = base.results.setResults(results, indexer.ModeSearch, now)
 
@@ -232,7 +231,7 @@ func TestActionDetailsOnlyActsOnResultsScreen(t *testing.T) {
 // --- renderDetailsScreen --------------------------------------------------
 
 func TestRenderDetailsScreenEmptyState(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
 
@@ -263,7 +262,7 @@ func TestRenderDetailsScreenShowsEveryAcceptanceField(t *testing.T) {
 		Extra:     map[string]string{indexer.ExtraKeyFiles: "movie.mkv\nsubs.srt"},
 	}
 
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
 	m.details = m.details.withResult(r)
@@ -287,7 +286,7 @@ func TestRenderDetailsScreenShowsEveryAcceptanceField(t *testing.T) {
 func TestRenderDetailsScreenFilesNotAvailableWhenIndexerProvidesNone(t *testing.T) {
 	r := indexer.Result{IndexerID: "alpha", ID: "1", Title: "no-files.iso", Magnet: "magnet:?xt=urn:btih:aaaa"}
 
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
 	m.details = m.details.withResult(r)
@@ -304,7 +303,7 @@ func TestRenderDetailsScreenFilesNotAvailableWhenIndexerProvidesNone(t *testing.
 func TestRenderDetailsScreenMissingFieldsShowDash(t *testing.T) {
 	r := indexer.Result{IndexerID: "alpha", ID: "1", Title: "sparse.iso", Magnet: "magnet:?xt=urn:btih:aaaa"}
 
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
 	m.details = m.details.withResult(r)
@@ -326,7 +325,7 @@ func TestRenderDetailsScreenMissingFieldsShowDash(t *testing.T) {
 func TestRenderDetailsScreenWrapsLongTitleWithoutTruncating(t *testing.T) {
 	title := strings.Repeat("Words.1080p.2.", 8) + "Tail" // 116 columns, no spaces
 
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
 	m.details = m.details.withResult(indexer.Result{Title: title, Magnet: "magnet:?xt=urn:btih:aaaa"})
@@ -351,7 +350,7 @@ func TestRenderDetailsScreenWrapsLongTitleWithoutTruncating(t *testing.T) {
 func TestRenderDetailsScreenWrapsLongSourceURLWithoutTruncating(t *testing.T) {
 	url := "https://example.org/torrents/" + strings.Repeat("a", 90)
 
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
 	m.details = m.details.withResult(indexer.Result{
@@ -382,7 +381,7 @@ func TestRenderDetailsScreenWrapsLongSourceURLWithoutTruncating(t *testing.T) {
 // --- handleAddFromDetails / handleAddResult (enter) -----------------------
 
 func TestHandleAddFromDetailsNoResultIsNoop(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 
 	updated, cmd := m.handleAddFromDetails()
 	m = updated.(Model)
@@ -408,7 +407,7 @@ func TestHandleAddFromDetailsNoEngineConfigured(t *testing.T) {
 }
 
 func TestHandleAddFromDetailsInvalidResultPushesError(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.details = m.details.withResult(indexer.Result{Title: "no-link.iso"}) // no Magnet or TorrentURL
 
 	updated, _ := m.handleAddFromDetails()
@@ -426,7 +425,7 @@ func TestHandleAddFromDetailsInvalidResultPushesError(t *testing.T) {
 // switches to downloads and the torrent is genuinely tracked by the engine
 // — T-063's acceptance text verified end to end, not just at one seam.
 func TestActionSelectOnDetailsScreenAddsTorrentAndSwitchesToDownloads(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	m := New(eng, testTheme())
@@ -476,7 +475,7 @@ func TestActionSelectOnDetailsScreenAddsTorrentAndSwitchesToDownloads(t *testing
 // screen on a failed add would be worse than staying put with a readable
 // error.
 func TestHandleAddResultReportsEngineFailureWithoutSwitchingScreen(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	if err := eng.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -636,7 +635,7 @@ var _ engine.Engine = (*stubDedupEngine)(nil)
 // "Calls Resolve first when the result lacks a magnet." The magnet a
 // successful Resolve fills in is what actually reaches engine.Add.
 func TestStartAddResolvesWhenMagnetIsEmpty(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	const resolvedMagnet = "magnet:?xt=urn:btih:resolved00"
@@ -709,7 +708,7 @@ func TestStartAddResolvesWhenMagnetIsEmpty(t *testing.T) {
 // first acceptance line's second half: a Resolve failure is a status-bar
 // message, never a panic, and engine.Add is never reached.
 func TestStartAddResolveFailureSurfacesAsStatusBarErrorNotACrash(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	resolveErr := errors.New("example.org: resolve failed")
@@ -744,7 +743,7 @@ func TestStartAddResolveFailureSurfacesAsStatusBarErrorNotACrash(t *testing.T) {
 // at all): the add is refused with a readable reason instead of panicking
 // on a nil lookup.
 func TestStartAddNoSourceAvailableToResolvePushesCantAdd(t *testing.T) {
-	m := New(fake.New(), testTheme()) // no WithSearcher
+	m := New(newTestEngine(t), testTheme()) // no WithSearcher
 	m.details = m.details.withResult(indexer.Result{Title: "orphan.iso", IndexerID: "gone"})
 
 	updated, _ := m.handleAddFromDetails()
@@ -797,7 +796,7 @@ func TestStartAddDuplicateInfoHashSelectsExistingDownloadInsteadOfAddingTwice(t 
 // treated as a duplicate of anything, however it fails afterwards — dedup
 // activates only on a genuine, known infohash match.
 func TestStartAddEmptyInfoHashNeverMatchesADuplicate(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	m := New(eng, testTheme())
@@ -885,7 +884,7 @@ func TestFinishAddDetectsADuplicateDiscoveredByResolve(t *testing.T) {
 // line: a successful add records IndexerID and SourceURL via the wired
 // TorrentStore.
 func TestHandleAddResultPersistsOriginViaTheStore(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	ts := &stubTorrentStore{}
@@ -930,7 +929,7 @@ func TestHandleAddResultPersistsOriginViaTheStore(t *testing.T) {
 // broken TorrentStore is surfaced as a status-bar message but never blocks
 // or reverses the already-successful engine.Add.
 func TestHandleAddResultReportsAPersistFailureWithoutUndoingTheAdd(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	ts := &stubTorrentStore{failWith: errors.New("disk full")}
@@ -966,7 +965,7 @@ func TestHandleAddResultReportsAPersistFailureWithoutUndoingTheAdd(t *testing.T)
 // configured default only); T-074 replaces it with an interactive
 // per-torrent choice on top of the same flow.
 func TestFinishAddResolvesTheConfiguredDownloadDirIntoSavePath(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	dir := filepath.Join(t.TempDir(), "downloads")
@@ -999,7 +998,7 @@ func TestFinishAddResolvesTheConfiguredDownloadDirIntoSavePath(t *testing.T) {
 // path is refused (it would otherwise resolve against the process working
 // directory), rather than the add silently landing somewhere unchosen.
 func TestFinishAddWithNoDownloadDirOffersOnlyTheTypedPath(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	m := New(eng, testTheme())
@@ -1036,7 +1035,7 @@ func TestFinishAddWithNoDownloadDirOffersOnlyTheTypedPath(t *testing.T) {
 // makes enter on the results screen a no-op, exactly like the details
 // screen with nothing selected.
 func TestHandleAddFromResultsNoSelectionIsNoop(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 
 	updated, cmd := m.handleAddFromResults()
 	m = updated.(Model)
@@ -1054,7 +1053,7 @@ func TestHandleAddFromResultsNoSelectionIsNoop(t *testing.T) {
 // (results)"): enter on ScreenResults with a populated table adds the
 // currently selected row's result.
 func TestActionSelectOnResultsScreenAddsTheSelectedResult(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	m := New(eng, testTheme())
@@ -1097,7 +1096,7 @@ func TestActionSelectOnResultsScreenAddsTheSelectedResult(t *testing.T) {
 // --- handleOpenSource / openSourceCmd ('u') --------------------------------
 
 func TestHandleOpenSourceNoResultIsNoop(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 
 	updated, cmd := m.handleOpenSource()
 	m = updated.(Model)
@@ -1111,7 +1110,7 @@ func TestHandleOpenSourceNoResultIsNoop(t *testing.T) {
 }
 
 func TestHandleOpenSourceEmptySourceURLPushesMessage(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.details = m.details.withResult(indexer.Result{Title: "no-source.iso"})
 
 	updated, _ := m.handleOpenSource()
@@ -1133,7 +1132,7 @@ func TestHandleOpenSourceCallsOpenURLWithTheResultsSourceURL(t *testing.T) {
 		return nil
 	}
 
-	m := New(fake.New(), testTheme(), WithOpenURL(stub))
+	m := New(newTestEngine(t), testTheme(), WithOpenURL(stub))
 	m.details = m.details.withResult(indexer.Result{SourceURL: "https://example.org/torrents/1"})
 
 	updated, cmd := m.handleOpenSource()
@@ -1160,7 +1159,7 @@ func TestActionOpenSourceOnlyActsOnDetailsScreen(t *testing.T) {
 		var calls int
 		stub := func(string) error { calls++; return nil }
 
-		m := New(fake.New(), testTheme(), WithOpenURL(stub))
+		m := New(newTestEngine(t), testTheme(), WithOpenURL(stub))
 		m.screen = screen
 		m.details = m.details.withResult(indexer.Result{SourceURL: "https://example.org/x"})
 
@@ -1234,7 +1233,7 @@ func TestDetailsScreenEndToEndSelectAndAdd(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	m := New(eng, testTheme(), WithSearcher(reg), WithDownloadDir(t.TempDir()))

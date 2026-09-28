@@ -10,7 +10,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 
-	"github.com/kdta91/tortui/internal/engine/fake"
 	"github.com/kdta91/tortui/internal/indexer"
 	indexerfake "github.com/kdta91/tortui/internal/indexer/fake"
 )
@@ -591,7 +590,7 @@ func TestResultsScreenRefreshShowsCacheHintOnSecondFetch(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	m := New(fake.New(), testTheme(), WithSearcher(reg))
+	m := New(newTestEngine(t), testTheme(), WithSearcher(reg))
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	t.Cleanup(func() { _ = tm.Quit() })
 
@@ -712,7 +711,7 @@ func TestRefreshDoesNotRecordHistory(t *testing.T) {
 // a status-bar hint, rather than dispatching an empty/zero-value query.
 func TestHandleRefreshWithNoPriorSearchPushesHint(t *testing.T) {
 	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
-	m := New(fake.New(), testTheme(), WithSearcher(searcher))
+	m := New(newTestEngine(t), testTheme(), WithSearcher(searcher))
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)

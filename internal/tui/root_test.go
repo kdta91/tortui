@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/x/exp/teatest"
 
 	"github.com/kdta91/tortui/internal/engine"
-	"github.com/kdta91/tortui/internal/engine/fake"
 	"github.com/kdta91/tortui/internal/tui/theme"
 )
 
@@ -39,7 +38,7 @@ func waitForOutput(tb testing.TB, tm *teatest.TestModel, substr string) {
 // in order (T-051 acceptance: "teatest covers navigation between all
 // screens").
 func TestNavigationAllScreensViaNumberKeys(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 
 	t.Cleanup(func() { _ = tm.Quit() })
@@ -68,7 +67,7 @@ func TestNavigationAllScreensViaNumberKeys(t *testing.T) {
 // TestNavigationTabCyclesForwardAndBack confirms tab and shift+tab cycle
 // through screenOrder, including wraparound at both ends.
 func TestNavigationTabCyclesForwardAndBack(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 
 	t.Cleanup(func() { _ = tm.Quit() })
@@ -99,7 +98,7 @@ func TestNavigationTabCyclesForwardAndBack(t *testing.T) {
 // the screen body (T-051 acceptance: "teatest covers ... the help
 // overlay").
 func TestHelpOverlayTogglesAndShowsScreenBindings(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 
 	t.Cleanup(func() { _ = tm.Quit() })
@@ -119,7 +118,7 @@ func TestHelpOverlayTogglesAndShowsScreenBindings(t *testing.T) {
 // TestHelpOverlayClosesWithEscape confirms esc, not just ?, closes the
 // overlay.
 func TestHelpOverlayClosesWithEscape(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 
 	t.Cleanup(func() { _ = tm.Quit() })
@@ -134,7 +133,7 @@ func TestHelpOverlayClosesWithEscape(t *testing.T) {
 // TestQuitWithNoActiveDownloadsIsImmediate confirms q exits the program
 // directly when nothing is downloading.
 func TestQuitWithNoActiveDownloadsIsImmediate(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 
 	tm.Send(keyRune("q"))
@@ -145,7 +144,7 @@ func TestQuitWithNoActiveDownloadsIsImmediate(t *testing.T) {
 // confirmation instead of quitting immediately while a torrent is actively
 // transferring, and that confirming with y then quits.
 func TestQuitWithActiveDownloadPromptsThenConfirms(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	if _, err := eng.Add(context.Background(), engine.AddSource{Magnet: "magnet:?xt=urn:btih:deadbeef"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -175,7 +174,7 @@ func TestQuitWithActiveDownloadPromptsThenConfirms(t *testing.T) {
 // rather than a cached one from construction (AGENT.md: "no cached widths
 // survive a resize").
 func TestWindowResizeRecomputesLayout(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	mm := updated.(Model)
@@ -201,7 +200,7 @@ func TestWindowResizeRecomputesLayout(t *testing.T) {
 // is genuinely a pure function of state: with no WindowSizeMsg delivered
 // yet, it renders nothing rather than guessing a width.
 func TestViewIsEmptyBeforeFirstResize(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	if v := m.View(); v != "" {
 		t.Fatalf("expected empty view before any WindowSizeMsg, got %q", v)
 	}
@@ -210,7 +209,7 @@ func TestViewIsEmptyBeforeFirstResize(t *testing.T) {
 // TestUnboundKeyIsANoOp confirms a key with no binding in the current
 // context changes nothing.
 func TestUnboundKeyIsANoOp(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	updated, cmd := m.Update(keyRune("z"))
 	mm := updated.(Model)
 
@@ -223,7 +222,7 @@ func TestUnboundKeyIsANoOp(t *testing.T) {
 // closed=true (Engine.Updates channel closed) does not panic and does not
 // re-subscribe.
 func TestEngineUpdateClosedChannelIsHandled(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 
 	updated, cmd := m.Update(engineUpdateMsg{closed: true})
 	if cmd != nil {
@@ -251,7 +250,7 @@ func TestNilEngineInitIsSafe(t *testing.T) {
 // acceptance: "esc always cancels; focus returns to the originating screen
 // and selection").
 func TestQuitConfirmEscRestoresScreenAndSelection(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	if _, err := eng.Add(context.Background(), engine.AddSource{Magnet: "magnet:?xt=urn:btih:deadbeef"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -336,7 +335,7 @@ func TestQuitConfirmEscRestoresScreenAndSelection(t *testing.T) {
 // quit-confirm from ScreenSettings exactly as it does from every other
 // screen.
 func TestQuitConfirmEscOnSettingsScreenClosesDialog(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	if _, err := eng.Add(context.Background(), engine.AddSource{Magnet: "magnet:?xt=urn:btih:deadbeef"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -383,7 +382,7 @@ func TestQuitConfirmEscOnSettingsScreenClosesDialog(t *testing.T) {
 // are one of the two places a box border is allowed) rather than a
 // screen's own ad hoc frame.
 func TestQuitConfirmRendersInsideAModalBorder(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	if _, err := eng.Add(context.Background(), engine.AddSource{Magnet: "magnet:?xt=urn:btih:deadbeef"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -414,7 +413,7 @@ func TestQuitConfirmRendersInsideAModalBorder(t *testing.T) {
 // TestRenderTabsHighlightsCurrentScreen is a lightweight non-teatest check
 // that the tab bar text contains every screen's label.
 func TestRenderTabsHighlightsCurrentScreen(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.width, m.height = 80, 24
 
 	tabs := m.renderTabs()

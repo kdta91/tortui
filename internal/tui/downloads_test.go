@@ -143,7 +143,7 @@ func TestDownloadQueueReasonFallsBackToSnapshotPosition(t *testing.T) {
 
 	// fake.Engine does not implement queueProvider, so this exercises the
 	// fallback path.
-	got := downloadQueueReason(fake.New(), statuses, "q2")
+	got := downloadQueueReason(newTestEngine(t), statuses, "q2")
 	if !strings.Contains(got, "position 2 of 2") {
 		t.Errorf("downloadQueueReason = %q, want it to name position 2 of 2", got)
 	}
@@ -163,7 +163,7 @@ func (e *stubQueueSeedEngine) Queue() []string               { return e.queue }
 func (e *stubQueueSeedEngine) SeedPolicy() engine.SeedPolicy { return e.policy }
 
 func TestDownloadQueueReasonPrefersRealQueuer(t *testing.T) {
-	eng := &stubQueueSeedEngine{Engine: fake.New(), queue: []string{"x", "y", "z"}}
+	eng := &stubQueueSeedEngine{Engine: newTestEngine(t), queue: []string{"x", "y", "z"}}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	got := downloadQueueReason(eng, nil, "y")
@@ -173,7 +173,7 @@ func TestDownloadQueueReasonPrefersRealQueuer(t *testing.T) {
 }
 
 func TestDownloadSeedPolicyTextFallsBackWithoutProvider(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	if got := downloadSeedPolicyText(eng); !strings.Contains(got, "not reported") {
@@ -182,7 +182,7 @@ func TestDownloadSeedPolicyTextFallsBackWithoutProvider(t *testing.T) {
 }
 
 func TestDownloadSeedPolicyTextUsesRealProvider(t *testing.T) {
-	eng := &stubQueueSeedEngine{Engine: fake.New(), policy: engine.SeedPolicy{Mode: engine.SeedOff}}
+	eng := &stubQueueSeedEngine{Engine: newTestEngine(t), policy: engine.SeedPolicy{Mode: engine.SeedOff}}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	if got := downloadSeedPolicyText(eng); got != eng.policy.String() {
@@ -194,7 +194,7 @@ func TestDownloadOriginPrefersLiveOriginOverStore(t *testing.T) {
 	ts := &stubTorrentStore{}
 	_ = ts.SetTorrent(store.TorrentRecord{ID: "t1", IndexerID: "store-id", AddedAt: time.Now()})
 
-	m := New(fake.New(), testTheme(), WithTorrentStore(ts))
+	m := New(newTestEngine(t), testTheme(), WithTorrentStore(ts))
 
 	s := engine.TorrentStatus{ID: "t1", Origin: engine.Origin{IndexerID: "live-id"}}
 	gotID, _ := m.downloadOrigin(s)
@@ -214,7 +214,7 @@ func TestDownloadOriginFallsBackToStoreRecord(t *testing.T) {
 	ts := &stubTorrentStore{}
 	_ = ts.SetTorrent(store.TorrentRecord{ID: "t1", IndexerID: "archive-src", AddedAt: addedAt})
 
-	m := New(fake.New(), testTheme(), WithTorrentStore(ts))
+	m := New(newTestEngine(t), testTheme(), WithTorrentStore(ts))
 
 	s := engine.TorrentStatus{ID: "t1"} // zero Origin, as Add leaves it
 	gotID, gotAt := m.downloadOrigin(s)
@@ -228,7 +228,7 @@ func TestDownloadOriginFallsBackToStoreRecord(t *testing.T) {
 }
 
 func TestDownloadOriginNilStoreIsSafe(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 
 	gotID, gotAt := m.downloadOrigin(engine.TorrentStatus{ID: "t1"})
 	if gotID != "" || !gotAt.IsZero() {
@@ -369,7 +369,7 @@ func addFakeTorrent(t *testing.T, eng *fake.Engine, magnet string, script fake.S
 }
 
 func TestDownloadsScreenCursorNavigationAndClamping(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	addFakeTorrent(t, eng, "magnet:?xt=urn:btih:aaaa", nil) // stays StateQueued
@@ -406,7 +406,7 @@ func TestDownloadsScreenCursorNavigationAndClamping(t *testing.T) {
 }
 
 func TestEnterTogglesErrorDetailOnDownloadsScreen(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	wantErr := errors.New("not enough free space at /data: 1.0 GB short")
@@ -437,7 +437,7 @@ func TestEnterTogglesErrorDetailOnDownloadsScreen(t *testing.T) {
 }
 
 func TestEngineUpdateClampsDownloadsCursorWhenRowsShrink(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	addFakeTorrent(t, eng, "magnet:?xt=urn:btih:1111", nil)
@@ -466,7 +466,7 @@ func TestEngineUpdateClampsDownloadsCursorWhenRowsShrink(t *testing.T) {
 }
 
 func TestRenderDownloadsScreenEmptyState(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.width, m.height = 80, 24
 
 	view := m.renderDownloadsScreen()
@@ -476,7 +476,7 @@ func TestRenderDownloadsScreenEmptyState(t *testing.T) {
 }
 
 func TestRenderDownloadsScreenShowsQueuedActiveAndCompletedSections(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	addFakeTorrent(t, eng, "magnet:?xt=urn:btih:queued&dn=queued.iso", nil)
@@ -512,7 +512,7 @@ func TestRenderDownloadsScreenShowsQueuedActiveAndCompletedSections(t *testing.T
 // Updates() subscription wired in root.go actually reaches this screen's
 // render, not just the pure helpers above.
 func TestDownloadsScreenEndToEndDownloadCompleteError(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	m := New(eng, testTheme())

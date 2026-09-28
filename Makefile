@@ -26,6 +26,10 @@ BINARY := bin/tortui
 PKG := ./...
 COVERPROFILE := coverage.out
 COVER_THRESHOLD := 0
+# T-093 (resolves T-916): AGENT.md section 9's per-package floors, which the
+# single repo-wide COVER_THRESHOLD above cannot express. Every package under
+# each prefix is checked on its own by scripts/check-coverage.sh.
+COVER_FLOORS := github.com/kdta91/tortui/internal/indexer=75 github.com/kdta91/tortui/internal/engine=75 github.com/kdta91/tortui/internal/tui=50
 
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -255,6 +259,7 @@ test-scripts:
 	set -eu; scripts/check-indexer-hostnames_test.sh
 	set -eu; scripts/check-license-scope_test.sh
 	set -eu; scripts/check-goos-scope_test.sh
+	set -eu; scripts/check-coverage_test.sh
 	set -eu; scripts/next-task_test.sh
 
 # T-945: gates wrapped as targets so they need no env-prefixed command (which the agent
@@ -289,6 +294,7 @@ cover:
 	echo "total coverage: $$total percent (threshold $(COVER_THRESHOLD) percent)"; \
 	awk -v t="$$total" -v thresh="$(COVER_THRESHOLD)" 'BEGIN { if (t+0 < thresh+0) { exit 1 } }' \
 		|| (echo "coverage $$total percent is below threshold $(COVER_THRESHOLD) percent"; exit 1)
+	set -eu; scripts/check-coverage.sh $(COVERPROFILE) $(COVER_FLOORS)
 
 completions: build
 	@set -eu; rm -rf $(COMPLETIONS_DIR)

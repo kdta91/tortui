@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/x/exp/teatest"
 
 	"github.com/kdta91/tortui/internal/config"
-	"github.com/kdta91/tortui/internal/engine/fake"
 	"github.com/kdta91/tortui/internal/indexer"
 	indexerfake "github.com/kdta91/tortui/internal/indexer/fake"
 )
@@ -279,7 +278,7 @@ func (s *dynamicSearcher) setEnabled(list []indexer.Indexer) {
 func newSettingsTestModel(t *testing.T, sm SourceManager) *teatest.TestModel {
 	t.Helper()
 
-	m := New(fake.New(), testTheme(), WithSourceManager(sm))
+	m := New(newTestEngine(t), testTheme(), WithSourceManager(sm))
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	t.Cleanup(func() { _ = tm.Quit() })
 
@@ -590,7 +589,7 @@ func TestCancelDirtyFormAsksToConfirm(t *testing.T) {
 // intact, rather than losing it.
 func TestDiscardConfirmNoKeepsTheFormAndItsContent(t *testing.T) {
 	sm := &fakeSourceManager{}
-	m := New(fake.New(), testTheme(), WithSourceManager(sm))
+	m := New(newTestEngine(t), testTheme(), WithSourceManager(sm))
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
@@ -830,7 +829,12 @@ func TestListTestKeyCancellable(t *testing.T) {
 
 	// A fresh `t` right after is not refused: a second TestSource call
 	// starts immediately rather than being blocked by leftover in-flight
-	// state.
+	// state. That probe returns at once, so it does not outlive the test
+	// (goleak, T-093).
+	sm.mu.Lock()
+	sm.testDelay = 0
+	sm.mu.Unlock()
+
 	tm.Send(keyRune("t"))
 
 	deadline := time.Now().Add(500 * time.Millisecond)
@@ -926,7 +930,7 @@ func TestImportDefinitionPrefillsForm(t *testing.T) {
 // names the way out and "a" jumps straight into the settings add form.
 func TestSearchScreenEmptyStateJumpsToAddForm(t *testing.T) {
 	sm := &fakeSourceManager{}
-	m := New(fake.New(), testTheme(), WithSourceManager(sm))
+	m := New(newTestEngine(t), testTheme(), WithSourceManager(sm))
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	t.Cleanup(func() { _ = tm.Quit() })
 
@@ -965,7 +969,7 @@ func TestDisablingLastSourceUpdatesSearchScreenLive(t *testing.T) {
 		searcher.setEnabled(live)
 	}
 
-	m := New(fake.New(), testTheme(), WithSourceManager(sm), WithSearcher(searcher))
+	m := New(newTestEngine(t), testTheme(), WithSourceManager(sm), WithSearcher(searcher))
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	t.Cleanup(func() { _ = tm.Quit() })
 
@@ -987,7 +991,7 @@ func TestDisablingLastSourceUpdatesSearchScreenLive(t *testing.T) {
 // cursor position isn't otherwise observable from rendered text alone.
 func TestFormArrowKeysMoveBetweenFields(t *testing.T) {
 	sm := &fakeSourceManager{}
-	m := New(fake.New(), testTheme(), WithSourceManager(sm))
+	m := New(newTestEngine(t), testTheme(), WithSourceManager(sm))
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)

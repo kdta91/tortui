@@ -122,7 +122,7 @@ func stateOf(t *testing.T, m Model, id string) engine.State {
 // StatePaused before any engine call runs, and — once the call has
 // returned — the next snapshot is authoritative.
 func TestPauseIsOptimisticThenReconciledOnNextSnapshot(t *testing.T) {
-	eng := &recordingEngine{Engine: fake.New()}
+	eng := &recordingEngine{Engine: newTestEngine(t)}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	id := addFakeTorrent(t, eng.Engine, "magnet:?xt=urn:btih:p1&dn=a.iso", fake.Downloading(30*time.Second))
@@ -169,7 +169,7 @@ func TestPauseIsOptimisticThenReconciledOnNextSnapshot(t *testing.T) {
 // arrives before the engine call has returned cannot reflect it, so the
 // optimistic state is kept over it.
 func TestPauseOptimisticStateSurvivesSnapshotsWhileInFlight(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	id := addFakeTorrent(t, eng, "magnet:?xt=urn:btih:p2&dn=b.iso", fake.Downloading(30*time.Second))
@@ -187,7 +187,7 @@ func TestPauseOptimisticStateSurvivesSnapshotsWhileInFlight(t *testing.T) {
 }
 
 func TestResumeIsOptimisticAndCallsResume(t *testing.T) {
-	eng := &recordingEngine{Engine: fake.New()}
+	eng := &recordingEngine{Engine: newTestEngine(t)}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	id := addFakeTorrent(t, eng.Engine, "magnet:?xt=urn:btih:r1&dn=c.iso", fake.Downloading(30*time.Second))
@@ -212,7 +212,7 @@ func TestResumeIsOptimisticAndCallsResume(t *testing.T) {
 func TestResumeCompletedTorrentIsOptimisticallySeeding(t *testing.T) {
 	statuses := []engine.TorrentStatus{{ID: "done", Name: "done.iso", State: engine.StatePaused, Progress: 1}}
 
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.screen = ScreenDownloads
 	m.torrentStatuses = statuses
 
@@ -229,7 +229,7 @@ func TestResumeCompletedTorrentIsOptimisticallySeeding(t *testing.T) {
 // TestPauseFailureRevertsOptimisticState: a failed engine call puts the row
 // back and says why.
 func TestPauseFailureRevertsOptimisticState(t *testing.T) {
-	eng := &recordingEngine{Engine: fake.New(), failPause: errors.New("engine busy")}
+	eng := &recordingEngine{Engine: newTestEngine(t), failPause: errors.New("engine busy")}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	id := addFakeTorrent(t, eng.Engine, "magnet:?xt=urn:btih:f1&dn=d.iso", fake.Downloading(30*time.Second))
@@ -254,7 +254,7 @@ func TestPauseFailureRevertsOptimisticState(t *testing.T) {
 // goroutines have no ordering guarantee, so p is not re-issued until the
 // first returns.
 func TestSecondPauseWhileInFlightIsIgnored(t *testing.T) {
-	eng := &recordingEngine{Engine: fake.New()}
+	eng := &recordingEngine{Engine: newTestEngine(t)}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	id := addFakeTorrent(t, eng.Engine, "magnet:?xt=urn:btih:d1&dn=e.iso", fake.Downloading(30*time.Second))
@@ -291,7 +291,7 @@ func TestSecondPauseWhileInFlightIsIgnored(t *testing.T) {
 }
 
 func TestPauseOnErroredTorrentDoesNothing(t *testing.T) {
-	eng := &recordingEngine{Engine: fake.New()}
+	eng := &recordingEngine{Engine: newTestEngine(t)}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	id := addFakeTorrent(t, eng.Engine, "magnet:?xt=urn:btih:e1&dn=f.iso", fake.Errored(time.Second, errors.New("disk full")))
@@ -312,7 +312,7 @@ func TestPauseOnErroredTorrentDoesNothing(t *testing.T) {
 }
 
 func TestActionsOnEmptyDownloadsScreenAreNoOps(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.screen = ScreenDownloads
 
 	for _, k := range []string{"p", "x", "u"} {
@@ -333,7 +333,7 @@ func TestActionsOnEmptyDownloadsScreenAreNoOps(t *testing.T) {
 // no longer knows the ID. No panic, the optimistic state is dropped, the
 // failure is reported, and the next snapshot removes the row.
 func TestPauseOnVanishedTorrentFailsGracefully(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	id := addFakeTorrent(t, eng, "magnet:?xt=urn:btih:v1&dn=gone.iso", fake.Downloading(30*time.Second))
@@ -365,7 +365,7 @@ func TestPauseOnVanishedTorrentFailsGracefully(t *testing.T) {
 // TestPendingDroppedWhenTorrentLeavesSnapshot: an in-flight toggle whose
 // torrent disappears from the snapshot leaves nothing behind.
 func TestPendingDroppedWhenTorrentLeavesSnapshot(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	addFakeTorrent(t, eng, "magnet:?xt=urn:btih:v2&dn=gone2.iso", fake.Downloading(30*time.Second))
@@ -390,7 +390,7 @@ func TestPendingDroppedWhenTorrentLeavesSnapshot(t *testing.T) {
 // --- x: remove ------------------------------------------------------------
 
 func TestRemoveOpensDialogDefaultingToCancel(t *testing.T) {
-	eng := &recordingEngine{Engine: fake.New()}
+	eng := &recordingEngine{Engine: newTestEngine(t)}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	addFakeTorrent(t, eng.Engine, "magnet:?xt=urn:btih:x1&dn=g.iso", nil)
@@ -438,7 +438,7 @@ func TestRemoveDialogChoices(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			eng := &recordingEngine{Engine: fake.New()}
+			eng := &recordingEngine{Engine: newTestEngine(t)}
 			t.Cleanup(func() { _ = eng.Close() })
 
 			id := addFakeTorrent(t, eng.Engine, "magnet:?xt=urn:btih:x2&dn=h.iso", nil)
@@ -468,7 +468,7 @@ func TestRemoveDialogChoices(t *testing.T) {
 }
 
 func TestRemoveDialogEscCancels(t *testing.T) {
-	eng := &recordingEngine{Engine: fake.New()}
+	eng := &recordingEngine{Engine: newTestEngine(t)}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	addFakeTorrent(t, eng.Engine, "magnet:?xt=urn:btih:x3&dn=i.iso", nil)
@@ -499,7 +499,7 @@ func TestRemoveDialogEscCancels(t *testing.T) {
 // while the dialog is open must not redirect the removal to whatever the
 // cursor now points at.
 func TestRemoveTargetsTorrentCapturedAtOpen(t *testing.T) {
-	eng := &recordingEngine{Engine: fake.New()}
+	eng := &recordingEngine{Engine: newTestEngine(t)}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	first := addFakeTorrent(t, eng.Engine, "magnet:?xt=urn:btih:o1&dn=first.iso", nil)
@@ -526,7 +526,7 @@ func TestRemoveTargetsTorrentCapturedAtOpen(t *testing.T) {
 // snapshot while the dialog is open; confirming reports it instead of
 // calling the engine.
 func TestRemoveOfTorrentThatVanishedWhileDialogOpen(t *testing.T) {
-	eng := &recordingEngine{Engine: fake.New()}
+	eng := &recordingEngine{Engine: newTestEngine(t)}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	addFakeTorrent(t, eng.Engine, "magnet:?xt=urn:btih:g1&dn=vanish.iso", nil)
@@ -551,7 +551,7 @@ func TestRemoveOfTorrentThatVanishedWhileDialogOpen(t *testing.T) {
 // TestRemoveEngineFailureIsReported covers the other half of the vanish
 // race: the model's snapshot still has the row, the engine does not.
 func TestRemoveEngineFailureIsReported(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	id := addFakeTorrent(t, eng, "magnet:?xt=urn:btih:g2&dn=race.iso", nil)
@@ -573,7 +573,7 @@ func TestRemoveEngineFailureIsReported(t *testing.T) {
 }
 
 func TestRemoveSuccessReportsAndClearsRowState(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.downloads.expandedErr = "t1"
 	m.downloads.pending = map[string]pendingToggle{"t1": {optimistic: engine.StatePaused, settled: true}}
 
@@ -594,7 +594,7 @@ func TestOpenSourceOnDownloadsUsesLiveOrigin(t *testing.T) {
 	var got []string
 	open := func(u string) error { got = append(got, u); return nil }
 
-	m := New(fake.New(), testTheme(), WithOpenURL(open))
+	m := New(newTestEngine(t), testTheme(), WithOpenURL(open))
 	m.screen = ScreenDownloads
 	m.torrentStatuses = []engine.TorrentStatus{{
 		ID: "t1", Name: "a.iso", State: engine.StateDownloading,
@@ -615,7 +615,7 @@ func TestOpenSourceOnDownloadsFallsBackToStoreRecord(t *testing.T) {
 
 	ts := &stubTorrentStore{records: []store.TorrentRecord{{ID: "t1", SourceURL: "https://example.org/t/stored"}}}
 
-	m := New(fake.New(), testTheme(), WithOpenURL(open), WithTorrentStore(ts))
+	m := New(newTestEngine(t), testTheme(), WithOpenURL(open), WithTorrentStore(ts))
 	m.screen = ScreenDownloads
 	m.torrentStatuses = []engine.TorrentStatus{{ID: "t1", Name: "a.iso", State: engine.StateDownloading}}
 
@@ -631,7 +631,7 @@ func TestOpenSourceOnDownloadsWithNoPageSaysSo(t *testing.T) {
 	calls := 0
 	open := func(string) error { calls++; return nil }
 
-	m := New(fake.New(), testTheme(), WithOpenURL(open), WithTorrentStore(&stubTorrentStore{}))
+	m := New(newTestEngine(t), testTheme(), WithOpenURL(open), WithTorrentStore(&stubTorrentStore{}))
 	m.screen = ScreenDownloads
 	m.torrentStatuses = []engine.TorrentStatus{{ID: "t1", Name: "bare.iso", State: engine.StateDownloading}}
 
@@ -667,7 +667,7 @@ func TestRemoveConfirmKeymapHasNoConflictsAndNoDeleteShortcut(t *testing.T) {
 // TestDownloadActionsEndToEnd drives pause, resume, and remove-keeping-data
 // through a real teatest program against internal/engine/fake.
 func TestDownloadActionsEndToEnd(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	eng.ScriptFor = func(engine.AddSource) fake.Script { return fake.Downloading(time.Minute) }
