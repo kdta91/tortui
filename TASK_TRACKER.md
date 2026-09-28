@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ### T-094 · Terminal compatibility matrix
 ```
-status: todo
+status: blocked
 depends: T-056, T-092, T-093, T-095, T-096, T-097
 tier: M
 ```
@@ -808,7 +808,16 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 
 ## Blocked
 
-None.
+**T-094 · Terminal compatibility matrix — blocked 2026-09-28**
+Owner-only (AGENT.md §12: manual steps needing a human at a real terminal). Everything
+automatable is merged (PR #59): `docs/terminal-matrix.md` holds the owner checklist and the
+unattended evidence (non-TTY/`TERM=dumb` refusal, `NO_COLOR` goldens, 80×24/120×40/60×20 drop
+order). **To unblock (owner):** run the checklist on Terminal.app, iTerm2 or Ghostty, Windows
+Terminal (+ legacy conhost upgrade message), a Linux emulator, tmux, `NO_COLOR=1`, `TERM=xterm`,
+`--ascii`, and zsh/bash/sh/PowerShell; fill in the tables; then flip T-094 per the Protocol.
+Two review notes on the checklist to apply while filling it in: record each failure's
+bug-vs-release-blocker call as a `DEC-` entry (not only in the matrix file), and a defect visible
+in Terminal.app is a release blocker while one seen only in a modern emulator is a bug.
 
 ---
 
