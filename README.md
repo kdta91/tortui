@@ -146,6 +146,38 @@ On Windows, `make` targets work under Git Bash. Without make:
 go build -o bin\tortui.exe .\cmd\tortui
 ```
 
+### Shell completions
+
+Every release archive ships a completion script per shell under `completions/`, generated from
+tortui's actual flag set (`tortui completion <shell>`, also runnable by hand on any installed
+binary). Homebrew and Scoop installs wire these up automatically; everyone else installs the one
+matching their shell:
+
+**bash**
+```sh
+sudo cp completions/tortui.bash /etc/bash_completion.d/tortui   # Linux
+# or, on macOS with Homebrew's bash-completion@2:
+cp completions/tortui.bash "$(brew --prefix)/etc/bash_completion.d/tortui"
+```
+
+**zsh**
+```sh
+cp completions/tortui.zsh "${fpath[1]}/_tortui"
+# then start a new shell, or run: autoload -U compinit && compinit
+```
+
+**fish**
+```sh
+cp completions/tortui.fish ~/.config/fish/completions/tortui.fish
+```
+
+**PowerShell**
+```powershell
+completions\tortui.powershell | Out-File -Append $PROFILE
+# or, without the archive, straight from an installed binary:
+tortui completion powershell | Out-File -Append $PROFILE
+```
+
 ---
 
 ## Quick start
@@ -442,6 +474,7 @@ make check      # fmt + lint + vet + tests — the commit gate
 make build      # → bin/tortui
 make run        # run against ./dev-config.toml
 make build-all  # cross-compile all six OS/arch targets
+make release-check  # validate .goreleaser.yaml + a local snapshot build (no publish)
 ```
 
 Use a scratch directory so development never touches your real config:

@@ -85,34 +85,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 9 — Release readiness
 
-**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite.
-
----
-
-### T-092 · Build and release
-```
-status: todo
-depends: T-090
-tier: M
-```
-**Acceptance**
-- `goreleaser` config producing darwin/arm64, darwin/amd64, linux/amd64, linux/arm64,
-  windows/amd64, windows/arm64 artifacts with checksums.
-- Version, commit, and build date injected via ldflags and shown by `--version`.
-- CI release job triggered on `v*` tags; artifacts published to GitHub Releases.
-- Binary runs on a clean machine with no Go toolchain present, on all three OSes.
-- Free distribution channels wired up, all automated from the same tag (AGENT.md §16):
-  - Homebrew tap — `goreleaser` commits the formula to `kdta91/homebrew-tap`.
-  - Scoop bucket — formula committed to `kdta91/scoop-bucket` for Windows.
-  - WinGet manifest PR to `microsoft/winget-pkgs` (moderated; may lag the release).
-  - `go install github.com/kdta91/tortui/cmd/tortui@latest` verified working.
-- Provenance: Sigstore keyless signing and GitHub build attestations on every artifact. Both
-  are free. Document the `gh attestation verify` command in the README.
-- Artifacts are **unsigned** for OS trust purposes. README documents the resulting warnings and
-  workarounds on macOS and Windows. Log backlog items for Apple notarisation and Windows code
-  signing, both of which cost money and are out of scope for v1.
-- Shell completions for zsh, bash, fish, and PowerShell generated from the flag set and shipped
-  in every archive, with per-shell install instructions.
+**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite · `T-092` Build and release.
 
 ---
 
@@ -773,6 +746,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-123 | 2026-09-28 | T-083 narrowed by the owner to Prowlarr only; Jackett and NZBHydra2 aggregator import deferred to Backlog T-984 pending API verification |
 | DEC-124 | 2026-09-28 | T-090: first-run overlay wording corrected against AGENT.md §2 (bundled sources do ship, T-024) instead of the stale acceptance text; README's Status notice now states precisely what's wired today (`--version`/`doctor`/`--demo`) vs. pending the composition root (Backlog T-950), and concrete false claims (`--ascii` flag, ten MPL modules not yet in `NOTICE`) were fixed |
 | DEC-125 | 2026-09-28 | T-091: one combined suite (search + add + real download + offline restore) covers both the download/resume and zero-config-standalone acceptance items; reachability checked generically across every bundled source; seed_policy pinned to "off" and the wait accepts Seeding-or-Paused (T-034-class race), and the 25 MiB size cap is actually enforced (PR #53 remediation) |
+| DEC-126 | 2026-09-28 | T-092: goreleaser config uses homebrew_casks, not the deprecated brews pipe; completions come from a new `tortui completion <shell>` subcommand walking the real flag set; Homebrew tap/Scoop bucket/WinGet all skip_upload: auto until the owner adds their secrets and repos |
 
 ## Blocked
 

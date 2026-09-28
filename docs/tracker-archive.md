@@ -3750,6 +3750,42 @@ test-integration` target, `workflow_dispatch`-only CI job; see `docs/testing-int
 
 ---
 
+### T-092 · Build and release
+```
+status: done
+depends: T-090
+tier: M
+```
+**Acceptance**
+- `goreleaser` config producing darwin/arm64, darwin/amd64, linux/amd64, linux/arm64,
+  windows/amd64, windows/arm64 artifacts with checksums.
+- Version, commit, and build date injected via ldflags and shown by `--version`.
+- CI release job triggered on `v*` tags; artifacts published to GitHub Releases.
+- Binary runs on a clean machine with no Go toolchain present, on all three OSes.
+- Free distribution channels wired up, all automated from the same tag (AGENT.md §16):
+  - Homebrew tap — `goreleaser` commits the formula to `kdta91/homebrew-tap`.
+  - Scoop bucket — formula committed to `kdta91/scoop-bucket` for Windows.
+  - WinGet manifest PR to `microsoft/winget-pkgs` (moderated; may lag the release).
+  - `go install github.com/kdta91/tortui/cmd/tortui@latest` verified working.
+- Provenance: Sigstore keyless signing and GitHub build attestations on every artifact. Both
+  are free. Document the `gh attestation verify` command in the README.
+- Artifacts are **unsigned** for OS trust purposes. README documents the resulting warnings and
+  workarounds on macOS and Windows. Log backlog items for Apple notarisation and Windows code
+  signing, both of which cost money and are out of scope for v1.
+- Shell completions for zsh, bash, fish, and PowerShell generated from the flag set and shipped
+  in every archive, with per-shell install instructions.
+
+**Notes:** `.goreleaser.yaml` (six targets, `homebrew_casks`/`scoops`/`winget`, `skip_upload:
+auto`, cosign keyless `signs`), `.github/workflows/release.yml` (`v*`-tag only, GitHub build
+attestations). New `tortui completion <shell>` subcommand walks the real flag set; `make
+completions`/`make release-check` added. ldflags/`--version`/`go install` already worked.
+Verified locally: `goreleaser check` plus a full `--snapshot --skip=publish[,sign]` run
+(archives/checksums/cask/scoop/winget all render; `sign` itself needs cosign + CI's OIDC).
+Owner-only checklist (PR body): create the tap/bucket repos and their secrets, push the `v*`
+tag, verify all three OSes green first, confirm the WinGet PR, smoke-test per OS.
+
+---
+
 ## Blocked — Resolved
 
 

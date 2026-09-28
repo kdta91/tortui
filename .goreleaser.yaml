@@ -1,0 +1,176 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+#
+# T-092: release config. Runs only from the `release` GitHub Actions
+# workflow on a `v*` tag (owner-only: pushing that tag and letting the
+# workflow run `goreleaser release` is on AGENT.md §12's owner-only list).
+# Locally, `make release-check` runs `goreleaser check` plus a
+# --snapshot --skip=publish build — everything an agent may verify without
+# touching GitHub Releases or the tap/bucket/WinGet repos.
+version: 2
+
+project_name: tortui
+
+# Generates completions/tortui.{bash,zsh,fish,powershell} from a native
+# build's own `completion` subcommand (Makefile, cmd/tortui/completion.go)
+# before any cross-compiled build below runs. The script content does not
+# depend on target OS/arch, so one native run covers every archive.
+before:
+  hooks:
+    - make completions
+
+builds:
+  - id: tortui
+    main: ./cmd/tortui
+    binary: tortui
+    # Matches `make build-all` (AGENT.md §14's six tier-1 targets): a
+    # cgo-disabled build so cross-compilation needs no C toolchain per
+    # target. docs/licensing.md's ALLOWED_MPL_MODULES table already accounts
+    # for the cgo-disabled import graph (anacrolix/utp, not anacrolix/mmsg).
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: tortui
+    ids:
+      - tortui
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # Lowercase os/arch to match the install instructions already in
+    # README.md (`tortui_*_darwin_arm64.tar.gz`, `tortui_*_windows_amd64.zip`).
+    name_template: "tortui_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - src: completions/tortui.bash
+        dst: completions/tortui.bash
+      - src: completions/tortui.zsh
+        dst: completions/tortui.zsh
+      - src: completions/tortui.fish
+        dst: completions/tortui.fish
+      - src: completions/tortui.powershell
+        dst: completions/tortui.powershell
+
+checksum:
+  name_template: "checksums.txt"
+
+# Sigstore keyless signing (free, no key material to manage) over the
+# checksum file, which itself covers every archive. `cosign` runs inside the
+# release workflow with OIDC (GitHub Actions' ambient identity), never with
+# a stored private key (AGENT.md §12 -- provenance only, no code signing
+# certificate, which costs money and stays out of scope for v1).
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - --output-signature=${signature}
+      - --output-certificate=${certificate}
+      - ${artifact}
+      - --yes
+    artifacts: checksum
+    output: true
+
+# Free distribution channels (AGENT.md §16, docs/licensing.md, DEC-011).
+# All three below need a GitHub token with write access to the *target*
+# repo, supplied as a secret to the release workflow -- creating those repos
+# and adding that secret is owner-only (AGENT.md §12) and is left as a
+# checklist in TASK_TRACKER.md's T-092 notes; without it goreleaser skips
+# the section rather than failing the whole release (`skip_upload: auto`).
+# `brews` (a Homebrew Formula) is soft-deprecated by goreleaser v2.18 in
+# favor of `homebrew_casks` -- verified against the installed goreleaser
+# v2.18.2's own pkg/config (Project.Brews' doc comment: "Deprecated: use
+# [Project.Casks] instead") and confirmed with `goreleaser check`, which
+# fails on `brews` with "uses deprecated properties". A cask still installs
+# a plain CLI binary (Homebrew casks stopped being GUI-only some time ago);
+# `brew install kdta91/tap/tortui` (README, DEC-011) works unchanged either
+# way, since the formula name is what users type, not the manifest type.
+homebrew_casks:
+  - name: tortui
+    repository:
+      owner: kdta91
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    skip_upload: auto
+    homepage: "https://github.com/kdta91/tortui"
+    description: "Terminal UI for searching torrent indexers and downloading, all in one place"
+    completions:
+      bash: completions/tortui.bash
+      zsh: completions/tortui.zsh
+      fish: completions/tortui.fish
+
+scoops:
+  - name: tortui
+    repository:
+      owner: kdta91
+      name: scoop-bucket
+      branch: main
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+    skip_upload: auto
+    homepage: "https://github.com/kdta91/tortui"
+    description: "Terminal UI for searching torrent indexers and downloading, all in one place"
+    license: MIT
+
+# WinGet manifest PR to microsoft/winget-pkgs. Moderated (AGENT.md §16), and
+# opening/merging that PR happens on whatever cadence the moderators run --
+# goreleaser only prepares and pushes the manifest branch/PR when
+# WINGET_GITHUB_TOKEN is set. skip_upload leaves this a no-op until the
+# owner supplies that token (owner-only, AGENT.md §12).
+winget:
+  - name: tortui
+    publisher: kdta91
+    publisher_url: "https://github.com/kdta91"
+    publisher_support_url: "https://github.com/kdta91/tortui/issues"
+    short_description: "Terminal UI for searching torrent indexers and downloading"
+    license: MIT
+    license_url: "https://github.com/kdta91/tortui/blob/main/LICENSE"
+    homepage: "https://github.com/kdta91/tortui"
+    copyright: "kdta91"
+    path: "manifests/k/kdta91/tortui/{{ .Version }}"
+    repository:
+      owner: kdta91
+      name: winget-pkgs
+      branch: "tortui-{{ .Version }}"
+      token: "{{ .Env.WINGET_GITHUB_TOKEN }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+    skip_upload: auto
+
+release:
+  github:
+    owner: kdta91
+    name: tortui
+  # Sigstore/cosign signatures and certificates plus GitHub build
+  # attestations (added by the release workflow via
+  # actions/attest-build-provenance, not goreleaser itself) are the
+  # provenance story for v1; there is deliberately no `signs`-suppressing
+  # OS code-signing certificate here (AGENT.md's T-092 acceptance: artifacts
+  # ship unsigned for OS trust purposes, documented in README).
+  name_template: "v{{ .Version }}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
