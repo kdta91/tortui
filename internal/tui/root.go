@@ -18,7 +18,10 @@ import (
 
 // TorrentStore is the subset of *store.Store the add flow (T-070, details.go)
 // persists a newly added torrent's origin and destination to, so a restart's
-// Resumer (internal/engine, T-041) can rehydrate them. nil is valid: an
+// Resumer (internal/engine, T-041) can rehydrate them. The composition root
+// passes internal/lifecycle.Session, whose SetTorrent is serialised with its
+// Save so a save in flight cannot overwrite or prune the record (T-994).
+// nil is valid: an
 // added torrent's engine tracking still works, it just is not recorded for
 // the next restart to pick up.
 //

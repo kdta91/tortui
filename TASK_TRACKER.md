@@ -91,22 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test.
-
-### T-994 · Serialise session saves
-```
-status: todo
-depends: T-094, T-993
-tier: H
-```
-**Acceptance**
-- Session saves are serialised through one owner, or in-flight saves are drained before
-  `Shutdown`, so no `Session.Save` runs after `Store` or `Engine` `Close`.
-- A save racing the next add's `SetTorrent` cannot overwrite the new record's `Origin` (T-095's
-  `Save` does a non-atomic `GetTorrent`-then-`SetTorrent`).
-- Both properties are proven under `-race`.
-
-**Notes:** Promoted from Backlog `T-994` (found in review of T-095, PR #56).
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves.
 
 ---
 
@@ -668,6 +653,15 @@ when it reaches it and does not start backlog items on its own.
   alignment and colour `PASS`, but a one-line refusal has no table to align and no colour to
   degrade; `N/A` fits those two columns better (exit and restore stay `PASS`). Found in review of
   T-094 (PR #60), non-blocking.
+- `T-9007` `internal/app/roots_test.go` (T-993): if a `t.Fatalf` fires between `New` and the first
+  `Close`, the first App is never closed (lock, engine and log stay open), which can add a Windows
+  `TempDir` cleanup error on top of the real failure. Register a `t.Cleanup` that closes it once.
+  Found in review of T-993 (PR #61), non-blocking.
+- `T-9008` No test proves `internal/app/app.go` passes the session (not the store) to
+  `tui.WithTorrentStore`: reverting it to `a.store` leaves every test green and reopens T-994's
+  origin race. Same gap class as `T-997`; one teatest add-flow check on the root would cover both.
+  Also, `Shutdown` calling `Session.Save` instead of `Session.Close` is caught only by chance by
+  `TestSessionSavesRacingShutdownNeverOutliveIt`. Found in T-994.
 
 ---
 
@@ -811,6 +805,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-131 | 2026-09-28 | T-097: tortui owns its file storage (plain `*os.File` handles, closed on torrent and engine close) instead of the library's mmap file storage, whose classic I/O is reachable only through a process-wide env var |
 | DEC-132 | 2026-09-28 | v1.0 manual verification is macOS-only (owner has no Windows/Linux device); Windows/Linux terminal matrix and manual download/fresh-install checks deferred to Backlog T-9004 — CI and cross-builds on all three OSes unchanged |
 | DEC-133 | 2026-09-28 | T-993: Session.Resume re-admits recorded destinations, so a restart alone cannot pin app.go's st.Destinations() root source; test seam Options.beforeResume probes the freshly built engine before Resume; the duplicate admission is kept |
+| DEC-134 | 2026-09-28 | T-994: lifecycle.Session owns the torrents bucket — the add flow's SetTorrent runs under Save's lock (a store-level atomic merge would still let a save prune a fresh record); Shutdown calls Session.Close, then seals it even on timeout |
 
 ## Blocked
 

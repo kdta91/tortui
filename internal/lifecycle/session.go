@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kdta91/tortui/internal/engine"
@@ -20,11 +21,18 @@ import (
 //
 // The composition root builds one Session after opening the store and the
 // engine, calls Resume once before the TUI starts, calls Save after every
-// add or remove, and passes it to Shutdown, which saves once more before the
-// final store flush. Save is a no-op until Resume has succeeded, because a
-// save prunes records the engine is not tracking — before Resume that would
-// be every record, and a crash between startup and resume would otherwise
-// wipe the user's session.
+// add or remove, and passes it to Shutdown, which closes it (one last save)
+// before the final store flush. Save is a no-op until Resume has succeeded,
+// because a save prunes records the engine is not tracking — before Resume
+// that would be every record, and a crash between startup and resume would
+// otherwise wipe the user's session.
+//
+// The Session is the one owner of the torrents bucket once it is built
+// (T-994): Resume, Save, SetTorrent, and Close all run under one lock, so a
+// Save in flight on a tea.Cmd goroutine can neither overwrite nor prune a
+// record the add flow writes through SetTorrent meanwhile, and no Save runs
+// after Close — which Shutdown calls before it closes the store or the
+// engine.
 type Session struct {
 	engine engine.Engine
 	store  *store.Store
@@ -33,7 +41,15 @@ type Session struct {
 
 	mu      sync.Mutex
 	resumed bool
+
+	// closed is set by Close under mu, or by Shutdown without it when
+	// Close did not finish in time (seal). Every later Save and
+	// SetTorrent sees it once it holds mu and touches nothing.
+	closed atomic.Bool
 }
+
+// ErrSessionClosed is returned by SetTorrent after Close.
+var ErrSessionClosed = errors.New("lifecycle: session is closed")
 
 // NewSession returns a Session over e and st. A nil logger uses
 // slog.Default().
@@ -156,12 +172,77 @@ func (s *Session) Resume(ctx context.Context) (ResumeReport, error) {
 // engine no longer tracks. The store persists them on its own debounce
 // (AGENT.md §13); Save itself never writes to disk.
 //
-// Save does nothing until Resume has succeeded (see Session), and nothing
-// for an engine that does not implement engine.Resumer.
+// Save does nothing until Resume has succeeded (see Session), nothing after
+// Close, and nothing for an engine that does not implement engine.Resumer.
+// Concurrent calls run one at a time.
 func (s *Session) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.closed.Load() {
+		s.logger.Debug("lifecycle: session closed; not saving")
+		return nil
+	}
+
+	return s.saveLocked()
+}
+
+// SetTorrent records rec in the store, replacing any record for rec.ID. It
+// runs under the same lock as Save, so a Save already in flight finishes
+// before the record lands — it can neither overwrite rec with a record it
+// read earlier nor prune rec as untracked, since the engine accepted the
+// torrent before the add flow calls this. It returns ErrSessionClosed after
+// Close, and the store's error otherwise. The add flow's record write goes
+// through here (tui.TorrentStore).
+func (s *Session) SetTorrent(rec store.TorrentRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed.Load() {
+		return ErrSessionClosed
+	}
+
+	if err := s.store.SetTorrent(rec); err != nil {
+		return fmt.Errorf("lifecycle: record torrent %s: %w", rec.ID, err)
+	}
+
+	return nil
+}
+
+// GetTorrent returns the store's record for id. It reads the store
+// directly, without waiting for a Save in flight, so the downloads screen
+// never blocks on one.
+func (s *Session) GetTorrent(id string) (store.TorrentRecord, bool) {
+	return s.store.GetTorrent(id)
+}
+
+// Close saves the session one last time, after any Save already in flight,
+// then makes every later Save a no-op and every later SetTorrent fail with
+// ErrSessionClosed. Shutdown calls it before it flushes and closes the store
+// and closes the engine, so no save runs after either closes. Calling it
+// again does nothing.
+func (s *Session) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed.Load() {
+		return nil
+	}
+
+	err := s.saveLocked()
+	s.closed.Store(true)
+
+	return err
+}
+
+// seal makes every Save or Close that has not yet taken the lock do
+// nothing. Shutdown calls it after its Close step even when that step timed
+// out waiting behind a hung Save, so the Close left waiting cannot run
+// against the store and engine Shutdown then closes.
+func (s *Session) seal() { s.closed.Store(true) }
+
+// saveLocked is Save's body; the caller holds s.mu.
+func (s *Session) saveLocked() error {
 	if !s.resumed {
 		s.logger.Debug("lifecycle: session not resumed yet; not saving")
 		return nil

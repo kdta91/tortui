@@ -202,7 +202,9 @@ func (a *App) buildModel(opts Options, storeRecovered string) tui.Model {
 	tuiOpts := []tui.Option{
 		tui.WithSearcher(a.registry),
 		tui.WithHistory(a.store),
-		tui.WithTorrentStore(a.store),
+		// Through the session, so an add's record write is serialised with
+		// every session save (T-994).
+		tui.WithTorrentStore(a.session),
 		tui.WithDestinationStore(a.store),
 		tui.WithSavedDestinations(absPaths(cfg.SavedDestinations, a.logger)),
 		tui.WithMinFreeSpace(minFreeSpace(cfg.MinFreeSpace, a.logger)),

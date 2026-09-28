@@ -36,9 +36,11 @@ type ShutdownOptions struct {
 	// Store is flushed and then closed. May be nil.
 	Store *store.Store
 
-	// Session, when set, is saved after torrents are paused and before
-	// the store is flushed, so the final flush carries the session a
-	// restart resumes (T-041). May be nil.
+	// Session, when set, is closed — saved one last time, after any save
+	// in flight — after torrents are paused and before the store is
+	// flushed, so the final flush carries the session a restart resumes
+	// (T-041) and no later save touches the closed store or engine
+	// (T-994). May be nil.
 	Session *Session
 
 	// StopInput, when set, is called first and is expected to stop any
@@ -116,9 +118,14 @@ func Shutdown(opts ShutdownOptions) []error {
 	}
 
 	if opts.Session != nil {
-		if err := runStep(logger, timeout, "save session", opts.Session.Save); err != nil {
+		if err := runStep(logger, timeout, "save session", opts.Session.Close); err != nil {
 			errs = append(errs, err)
 		}
+
+		// Close may have timed out behind a hung Save; seal the session
+		// anyway so nothing still queued on it runs after the store and
+		// the engine close below (T-994).
+		opts.Session.seal()
 	}
 
 	if opts.Store != nil {
