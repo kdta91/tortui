@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ### T-095 · Composition root
 ```
-status: todo
+status: blocked
 depends: T-093
 tier: H
 ```
@@ -832,7 +832,17 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 
 ## Blocked
 
-None.
+### T-095 · Composition root — blocked 2026-09-28
+PR #56 (`task/T-095-composition-root`, head `02271a1`) passed tier-H review at `56f49c3`; every
+required check is green except `check indexer hostname allowlist (T-007)`. The code diff is clean:
+the check fails only because commit `02271a1`'s *message* quotes a struct-field access that the
+scanner's commit-message pass reads as a hostname. Removing it requires rewriting pushed history,
+which AGENT.md §10 forbids on a reviewed PR and the settings deny. A reworded equivalent commit
+(`f9556b4`, identical tree, scanner exit 0) exists on local branch `t095-clean`.
+**To unblock (owner):** either authorise one force-push of `t095-clean` onto
+`task/T-095-composition-root` (`--force-with-lease=...:02271a1`), or authorise closing #56 and
+opening a replacement PR from `t095-clean`, or change the scanner's commit-message pass. Then the
+same reviewer re-reviews the one-line `feed := ix.URL` change plus Backlog T-993/T-994.
 
 ---
 
