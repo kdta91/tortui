@@ -111,6 +111,16 @@ tier: M
 - Any failure becomes a `T-9NN` backlog item or blocks the release — agent decides and records
   which in the decision log.
 
+**Notes:** Manual terminal-at-a-real-keyboard passes are owner-only (AGENT.md §12) — an agent
+cannot fill this task's acceptance criteria in. `docs/terminal-matrix.md` now holds the owner's
+fill-in checklist (one row per required terminal/condition × alignment/colour/exit/restore, plus
+the resize and shell rows) built from the exact command list in AGENT.md §15/`docs/running.md`,
+and a separate "verified unattended" section with quoted evidence for everything provable by
+machine: non-TTY and `TERM=dumb` refusal, `NO_COLOR`/ASCII/colour-degradation unit and golden
+tests, the 80×24/120×40/60×20 table goldens (the resize/drop-order check), and
+zsh/bash/sh `--version` (PowerShell unavailable on this darwin agent). Status stays `todo`; the
+owner flips it to `done` and archives it once the real-terminal rows are filled in.
+
 ---
 
 ## v1.0 release criteria
@@ -643,6 +653,17 @@ when it reaches it and does not start backlog items on its own.
   it; the workaround is binding the value to a local first. Record this as a known false-positive
   class and decide whether the scanner should skip Go selector expressions. Scanner not changed.
   Found in T-096 (PR #57).
+- `T-9001` T-097 review: the every-OS remove-after-`Close` test deletes the data file with
+  `os.Remove` directly rather than restarting the engine and calling `Remove(id, true)`, so it
+  does not exercise the real remove-with-data path through a freshly reopened `fileStore`. Found
+  in review of T-097 (PR #58), non-blocking.
+- `T-9002` T-097 review: on Unix, a data file deleted outside tortui mid-download keeps receiving
+  writes through `fileStore`'s cached handle until `Completion` re-checks it — the same behaviour
+  the old mmap-based storage had. Found in review of T-097 (PR #58), non-blocking.
+- `T-9003` T-097 review: `fileTorrent.withFile` (`internal/engine/anacrolix/filestore.go`) does
+  file I/O while holding that torrent's exclusive lock whenever the handle is not already open,
+  serialising unrelated file reads/writes on the same torrent behind one open-and-I/O. Performance
+  only. Found in review of T-097 (PR #58), non-blocking.
 
 ---
 
