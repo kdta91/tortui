@@ -69,6 +69,13 @@ func (g *gatedEngine) counts() (lists, afterClose int) {
 	return g.lists, g.afterClose
 }
 
+func (g *gatedEngine) isClosed() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	return g.closed
+}
+
 func (g *gatedEngine) List() []engine.TorrentStatus {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -231,6 +238,34 @@ func TestShutdownWaitsForASaveInFlight(t *testing.T) {
 		done <- Shutdown(ShutdownOptions{Engine: eng, Store: st, Session: s, Logger: quietLogger()})
 	}()
 
+	// Shutdown's pause step lists the engine (the third List, after
+	// Resume's and the parked save's); its Close step comes next and must
+	// wait behind the parked save. A Close that does not take the lock
+	// lists the engine again at once, and Shutdown then closes the engine
+	// and returns. The window only gives such a Close time to show itself;
+	// a correct one never gets past the lock before release.
+	waitUntil(t, "Shutdown's pause step", func() bool { lists, _ := eng.counts(); return lists >= 3 })
+
+	window := time.After(100 * time.Millisecond)
+
+	for blocked := true; blocked; {
+		select {
+		case errs := <-done:
+			t.Fatalf("Shutdown returned (%v) while a save was in flight", errs)
+		case <-window:
+			blocked = false
+		case <-time.After(time.Millisecond):
+		}
+
+		if lists, _ := eng.counts(); lists != 3 {
+			t.Fatalf("engine List calls = %d while a save was in flight, want 3: Close saved without waiting for it", lists)
+		}
+
+		if eng.isClosed() {
+			t.Fatal("engine closed while a save was in flight")
+		}
+	}
+
 	close(release)
 
 	if err := <-saved; err != nil {
@@ -301,8 +336,10 @@ func TestShutdownSealsTheSessionWhenItsSaveTimesOut(t *testing.T) {
 
 // TestSessionCloseMakesASaveQueuedBehindItANoOp parks Close's final save,
 // queues a Save behind it, and checks that Save does nothing once Close
-// finishes: Close marks the session closed before it lets go of the lock,
-// leaving no gap for a queued save to run in (T-994).
+// finishes (T-994). Which goroutine takes the lock when Close lets go of it
+// is up to the scheduler, so this does not pin that Close marks the session
+// closed before it unlocks; TestSessionCloseLeavesNoGapBeforeItIsClosed
+// does (T-9008).
 func TestSessionCloseMakesASaveQueuedBehindItANoOp(t *testing.T) {
 	eng := newGatedEngine(t)
 	s, _ := resumedSession(t, eng)
@@ -398,4 +435,103 @@ func TestSessionSetTorrentWaitsForASaveInFlight(t *testing.T) {
 	if !ok || rec.IndexerID != want.IndexerID || rec.SourceURL != want.SourceURL || !rec.AddedAt.Equal(added) {
 		t.Fatalf("record after racing saves = %+v (found %v), want origin %q %q added %v", rec, ok, want.IndexerID, want.SourceURL, added)
 	}
+}
+
+// waitUntil polls cond until it holds, failing the test after 5s.
+func waitUntil(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// gapProbe runs a SetTorrent and a Save the moment the session's lock is
+// first released after arm — exactly what a goroutine queued on the lock
+// would do if it won it then — and records what each did. A session that
+// is closed before it unlocks leaves no gap: the SetTorrent is refused and
+// the Save touches nothing.
+type gapProbe struct {
+	fired     bool
+	setErr    error
+	saveErr   error
+	saveLists int
+}
+
+func (p *gapProbe) arm(s *Session, eng *gatedEngine) {
+	s.afterUnlock = func() {
+		if p.fired {
+			return // the probe's own calls unlock too
+		}
+
+		p.fired = true
+		p.setErr = s.SetTorrent(store.TorrentRecord{ID: "gap", Magnet: "magnet:?xt=urn:btih:gap"})
+
+		before, _ := eng.counts()
+		p.saveErr = s.Save()
+		after, _ := eng.counts()
+		p.saveLists = after - before
+	}
+}
+
+// check fails t unless the probe ran and found the session already closed.
+// Call it only once whatever released the lock has returned.
+func (p *gapProbe) check(t *testing.T) {
+	t.Helper()
+
+	if !p.fired {
+		t.Fatal("the lock was never released through Session.unlock")
+	}
+
+	if !errors.Is(p.setErr, ErrSessionClosed) {
+		t.Errorf("SetTorrent the moment the lock was released = %v, want ErrSessionClosed", p.setErr)
+	}
+
+	if p.saveErr != nil || p.saveLists != 0 {
+		t.Errorf("Save the moment the lock was released = %v with %d engine List calls, want a no-op", p.saveErr, p.saveLists)
+	}
+}
+
+// TestSessionCloseLeavesNoGapBeforeItIsClosed takes the lock the moment
+// Close releases it: the session must already be closed then, or a save or
+// record write queued behind Close runs after it (T-994, T-9008).
+func TestSessionCloseLeavesNoGapBeforeItIsClosed(t *testing.T) {
+	eng := newGatedEngine(t)
+	s, _ := resumedSession(t, eng)
+	eng.track("a")
+
+	var p gapProbe
+	p.arm(s, eng)
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	p.check(t)
+}
+
+// TestShutdownClosesTheSessionBeforeReleasingIt takes the lock the moment
+// Shutdown's session step releases it, before that step returns: the
+// session must already be closed, so Shutdown has to close it (Close), not
+// save it and seal it afterwards, which leaves a queued save or record
+// write free to run against the store and engine Shutdown then closes
+// (T-994, T-9008).
+func TestShutdownClosesTheSessionBeforeReleasingIt(t *testing.T) {
+	eng := newGatedEngine(t)
+	s, st := resumedSession(t, eng)
+	eng.track("a")
+
+	var p gapProbe
+	p.arm(s, eng)
+
+	if errs := Shutdown(ShutdownOptions{Engine: eng, Store: st, Session: s, Logger: quietLogger()}); len(errs) != 0 {
+		t.Fatalf("Shutdown: %v", errs)
+	}
+
+	p.check(t)
 }

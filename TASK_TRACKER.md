@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window.
 
 ---
 
@@ -100,7 +100,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993 and T-994, are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994 and T-9008, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI.
 - [ ] Coverage thresholds from AGENT.md §9 met.
 - [ ] `govulncheck` clean; `NOTICE` current; no GPL/AGPL dependency.
@@ -657,7 +657,7 @@ when it reaches it and does not start backlog items on its own.
   `Close`, the first App is never closed (lock, engine and log stay open), which can add a Windows
   `TempDir` cleanup error on top of the real failure. Register a `t.Cleanup` that closes it once.
   Found in review of T-993 (PR #61), non-blocking.
-- `T-9008` No test proves `internal/app/app.go` passes the session (not the store) to
+- `T-9008` (promoted to task, 2026-09-28) No test proves `internal/app/app.go` passes the session (not the store) to
   `tui.WithTorrentStore`: reverting it to `a.store` leaves every test green and reopens T-994's
   origin race. Same gap class as `T-997`; one teatest add-flow check on the root would cover both.
   Also, `Shutdown` calling `Session.Save` instead of `Session.Close` is caught only by chance by
@@ -806,6 +806,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-132 | 2026-09-28 | v1.0 manual verification is macOS-only (owner has no Windows/Linux device); Windows/Linux terminal matrix and manual download/fresh-install checks deferred to Backlog T-9004 — CI and cross-builds on all three OSes unchanged |
 | DEC-133 | 2026-09-28 | T-993: Session.Resume re-admits recorded destinations, so a restart alone cannot pin app.go's st.Destinations() root source; test seam Options.beforeResume probes the freshly built engine before Resume; the duplicate admission is kept |
 | DEC-134 | 2026-09-28 | T-994: lifecycle.Session owns the torrents bucket — the add flow's SetTorrent runs under Save's lock (a store-level atomic merge would still let a save prune a fresh record); Shutdown calls Session.Close, then seals it even on timeout |
+| DEC-135 | 2026-09-28 | T-9008: unexported Session.afterUnlock seam (runs after every lock release) makes the Close/seal no-gap window deterministic to test; the app wiring is pinned by a closed-session probe through the real add flow |
 
 ## Blocked
 

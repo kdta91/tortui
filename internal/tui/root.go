@@ -21,9 +21,8 @@ import (
 // Resumer (internal/engine, T-041) can rehydrate them. The composition root
 // passes internal/lifecycle.Session, whose SetTorrent is serialised with its
 // Save so a save in flight cannot overwrite or prune the record (T-994).
-// nil is valid: an
-// added torrent's engine tracking still works, it just is not recorded for
-// the next restart to pick up.
+// nil is valid: an added torrent's engine tracking still works, it just is
+// not recorded for the next restart to pick up.
 //
 // GetTorrent is the read half the downloads screen (T-071, downloads.go)
 // needs for its Source/added-at columns: engine.AddSource is a frozen §5

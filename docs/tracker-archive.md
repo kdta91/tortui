@@ -4011,6 +4011,35 @@ unlocks; Shutdown calls it instead of `Save`, then seals the session even if tha
 Later `Save` is a no-op, `SetTorrent` returns `ErrSessionClosed`. `GetTorrent` reads the store
 without the lock (View never waits). Proven under `-race` in `session_serial_test.go` (DEC-134).
 
+### T-9008 · Pin session-save wiring and shutdown window
+```
+status: done
+depends: T-994
+tier: H
+```
+**Acceptance** — each one a test that fails under the named mutation:
+- Reverting `internal/app/app.go` to `tui.WithTorrentStore(a.store)` (instead of `a.session`)
+  fails a test.
+- Shutdown calling `Session.Save` and then seal, instead of `Session.Close`, fails a test
+  deterministically, not by timing luck.
+- `Session.Close` setting `closed` after `mu.Unlock` instead of before fails a test
+  deterministically (a test seam is allowed); the comment on
+  `TestSessionCloseMakesASaveQueuedBehindItANoOp` no longer claims it pins "no gap".
+- `TestShutdownWaitsForASaveInFlight` confirms Shutdown is blocked (not returned, engine not
+  closed) before it releases the parked save, so it fails when `Close` does not take `mu`.
+- The `TorrentStore` doc comment in `internal/tui/root.go` is reflowed.
+- No production behaviour changes beyond unexported test seams.
+
+**Notes:** Promoted from Backlog `T-9008` (found in T-994, PR #62 review). App:
+`TestAddFlowRecordsThroughTheSession` (`internal/app/session_wiring_test.go`) closes the session,
+then adds a fixture feed's result through the real TUI; the record write must be refused
+(status bar) and never reach the store. Lifecycle: an unexported seam `Session.afterUnlock` runs
+a SetTorrent and a Save the instant the lock is released (DEC-135);
+`TestSessionCloseLeavesNoGapBeforeItIsClosed` and `TestShutdownClosesTheSessionBeforeReleasingIt`
+fail deterministically on closed-after-unlock and Save-then-seal. `TestShutdownWaitsForASaveInFlight`
+now waits for the pause step and checks Shutdown is still blocked before release. Every named
+mutation fails (quoted in the PR). No production behaviour change.
+
 ---
 
 ## Blocked — Resolved
