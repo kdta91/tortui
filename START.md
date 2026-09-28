@@ -52,6 +52,8 @@ Read AGENT.md in full now — it overrides anything in this prompt. §11 is the 
    `git switch main && git pull --ff-only`. Next task. A red **advisory** check (`make check` on
    `ubuntu-latest` or `windows-latest`) does not block — add a `T-9NN` Backlog entry naming the
    failing test and job, then merge anyway (AGENT.md §11, DEC-107).
+   Exception: **T-097** makes `make check (windows-latest)` required for that task only (DEC-128) —
+   a red Windows job there is a FAIL, not a Backlog entry.
 5. FAIL (including a red required check) → SendMessage the numbered findings to the same
    implementer to fix on the branch; then send the fix to **the same reviewer** in re-review mode
    ("Re-review PR #<N>: findings <list>, since <sha>") — start a fresh reviewer only if that one is

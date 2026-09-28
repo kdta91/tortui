@@ -89,10 +89,99 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ---
 
+### T-095 · Composition root
+```
+status: todo
+depends: T-093
+tier: H
+```
+**Scope (owner, 2026-09-28, DEC-128):** folds Backlog `T-950`, `T-967` and the startup half of
+`T-970`. Plain `tortui` must become the real app; today it prints "not yet implemented".
+
+**Acceptance**
+- `internal/app` gains the production composition root; `cmd/tortui/main.go` stays wiring only
+  (AGENT.md §4, ~80 lines) and the "not yet implemented" stub and its test are gone.
+- Startup order: config load (creating defaults on first run) → rotating log sink (never
+  stdout/stderr; anacrolix logger routed into it) → single-instance lock (`internal/lifecycle`
+  lock; a second instance refuses with a clear message) → raise the fd soft limit (darwin/linux)
+  → `store.OpenStore` → anacrolix engine with every known destination root (default, saved
+  destinations, `store.Destinations`) → indexer registry with the bundled definitions plus the
+  user's `[[indexer]]` entries → `lifecycle.Session.Resume` (show `ResumeReport.Missing` on first
+  render) → `tui.New` → run.
+- `tui.New` receives every production option that exists today: `WithSearcher`, `WithHistory`,
+  `WithTorrentStore`, `WithDownloadDir`, `WithSavedDestinations`, `WithDestinationStore`,
+  `WithMinFreeSpace`, `WithFirstRun` (first run only), plus theme/ASCII from config.
+- `--ascii` is a real flag, and it and `ascii = true` select the ASCII glyph fallback (AGENT.md §14).
+- Shutdown runs the existing `lifecycle` sequence on quit, SIGINT and SIGTERM, with
+  `ShutdownOptions.Session`, `Save` after every add/remove, and releases the lock. The terminal is
+  restored on every exit path, including a panic.
+- With an empty `TORTUI_HOME` and no config, `tortui` starts on Latest with the bundled sources
+  enabled and no prompt beyond the first-run overlay (AGENT.md §1 standalone contract).
+- Unit tests build the real root against a temp `TORTUI_HOME` with zero network (injected HTTP
+  transport or fixture registry, AGENT.md §6.7): defaults written, lock taken, a second instance
+  refused, a clean shutdown saves the session and releases the lock, goleak clean.
+- `internal/app`'s `TestZeroConfigStandaloneSearchAddDownload` (T-091) goes through this root
+  instead of assembling pieces itself (compile-verified; running it stays owner-only).
+- README Status notice and `docs/running.md` updated: `make run` and bare `tortui` now work.
+
+---
+
+### T-096 · Settings wiring
+```
+status: todo
+depends: T-095
+tier: H
+```
+**Scope (owner, 2026-09-28, DEC-128):** folds Backlog `T-975` and the runtime half of `T-970`.
+
+**Acceptance**
+- A concrete `tui.SourceManager` in the composition root, built over `internal/config`
+  (load/`Save`), the indexer registry (add/remove/enable/disable at runtime, no restart),
+  the scraper `Loader`/`Importer`, and the torznab/scraper constructors for `TestSource`. Passed
+  via `tui.WithSourceManager`.
+- Its `ListAggregatorIndexers` uses `prowlarr.ListIndexers` and fills each
+  `tui.AggregatorIndexer.FeedURL` via `prowlarr.FeedURL(baseURL, idx.ID)`; never an empty URL.
+- A concrete `tui.PreferencesManager` over `internal/config`, passed via
+  `tui.WithPreferencesManager`; a saved destination added at runtime is admitted as an engine root
+  via `engine.RootAdder.AddRoot`.
+- Saving writes `config.toml` at mode 0600 (AGENT.md §6.6); credentials never reach the log.
+- Tests against a temp `TORTUI_HOME` and `httptest` servers only: add a torznab source → it is
+  searchable without restart; disable/remove → gone from the registry; connection test
+  classifies auth/timeout; a preferences save round-trips through `config.Load`.
+
+---
+
+### T-097 · Windows engine storage handles
+```
+status: todo
+depends: T-093
+tier: H
+```
+**Scope (owner, 2026-09-28, DEC-128):** folds Backlog `T-955` and `T-954`. Windows is tier 1
+(AGENT.md §14), and all three OSes must be green before a release tag (§12).
+
+**Acceptance**
+- Engine data files are unmapped / their handles released on `Engine.Close` and before
+  remove-with-data, so Windows can rewrite and delete them. Use a wrapping `storage.ClientImpl`
+  whose close releases handles, or a small tortui-owned file storage (T-955's options); no
+  process-wide environment-variable switch.
+- These pass on `make check (windows-latest)`:
+  `TestRestoreSurfacesMissingDataAsErroredNotDropped`,
+  `TestRestoreResumesFromExistingDataWithoutDownloading`,
+  `TestRestoreResumesAPartialDownloadFromItsVerifiedPieces`,
+  `TestCompletedTorrentSeedsUnderTheRatioPolicy`,
+  `TestCompletedTorrentStopsUploadingUnderTheOffPolicyAndResumeOverrides`.
+- The listen-port probe retries more than one random port before giving up (T-954), with a test.
+- A test on every OS proves a completed file can be removed with data after `Close`.
+- Done means `make check (windows-latest)` is green on the PR's head. That one job is required
+  for this task only; the orchestrator verifies it with the other checks.
+
+---
+
 ### T-094 · Terminal compatibility matrix
 ```
 status: todo
-depends: T-056, T-092, T-093
+depends: T-056, T-092, T-093, T-095, T-096, T-097
 tier: M
 ```
 **Acceptance**
@@ -436,7 +525,7 @@ when it reaches it and does not start backlog items on its own.
   of refusing again; a queued spec whose promote-time `attach` fails stays tracked via `e.fail` the
   same way. Untrack (or re-evaluate) refused entries on re-`Add`, as `untrackFailedSpec` does for
   `addSpec`. Found in review of T-034 (PR #36).
-- `T-950` Wire `lifecycle.Session` into the composition root when one exists: `NewSession` after
+- `T-950` *(scheduled as T-095, DEC-128)* Wire `lifecycle.Session` into the composition root when one exists: `NewSession` after
   `OpenStore` and the engine, `Resume` before the TUI starts (show `ResumeReport.Missing` on
   first render), `Save` after every add/remove, and `ShutdownOptions.Session`. The add flow
   (T-070) records `Origin` with `SetTorrent` before `Save`; `Save` keeps it. From T-041. Also pass
@@ -455,12 +544,12 @@ when it reaches it and does not start backlog items on its own.
   `DeleteTorrent`/`SetTorrent` pair then overwrites the first record's data (and the re-key can
   delete a record already re-keyed onto that ID; the next `Save` repairs it). Detect an ID already
   restored this pass and drop the duplicate record instead. Found in review of T-041 (PR #38).
-- `T-954` `make check (windows-latest)`, advisory: `internal/engine`
+- `T-954` *(scheduled as T-097, DEC-128)* `make check (windows-latest)`, advisory: `internal/engine`
   `TestProbeListenPortFallsBackWhenTaken` and `TestProbeListenPortPrefersTheConfiguredPort` fail
   with "no random port was free on both TCP and UDP" (PR #38 run 36134477067). This is T-034's
   probe; it passed on `main`'s last run, so it is intermittent on Windows runners. Make the probe
   retry more than one random port before giving up. Found on T-041's PR.
-- `T-955` The anacrolix file storage keeps every data file memory-mapped after `Engine.Close`. The
+- `T-955` *(scheduled as T-097, DEC-128)* The anacrolix file storage keeps every data file memory-mapped after `Engine.Close`. The
   library's default mmap file IO never unmaps, and `fileTorrentImpl.Close` is a no-op. On Windows
   the file then cannot be rewritten or deleted ("user-mapped section open" / "being used by
   another process"), so remove-with-data breaks too. Before T-041 a completed file was unmapped by
@@ -518,7 +607,7 @@ when it reaches it and does not start backlog items on its own.
   network call takes a `context.Context` with a deadline"). Neither call site currently bounds how
   long a hung source or engine call can block the goroutine the returned `tea.Cmd` runs on. Found
   in review of T-070 (PR #43).
-- `T-967` Extend T-950 (composition-root wiring) to also pass `tui.WithTorrentStore(store)` and
+- `T-967` *(scheduled as T-095, DEC-128)* Extend T-950 (composition-root wiring) to also pass `tui.WithTorrentStore(store)` and
   `tui.WithDownloadDir(cfg.Paths.DownloadDir)` into the production `tui.New` call. Both options
   exist and are exercised by tests since T-070, but no production call site passes either yet, so
   the add flow's Origin persistence and configured download directory are inert outside tests
@@ -539,7 +628,7 @@ when it reaches it and does not start backlog items on its own.
   the launcher only opens/reveals, never writes), but it is not closed. Closing it would mean
   handing the launcher an already-open handle, which none of the three OS launchers accept.
   Found in review of T-073 (PR #46).
-- `T-970` Production wiring for T-074: the composition root (T-950/T-967) must also pass
+- `T-970` *(scheduled as T-095/T-096, DEC-128)* Production wiring for T-074: the composition root (T-950/T-967) must also pass
   `tui.WithDestinationStore(store)` and `tui.WithMinFreeSpace(<parsed min_free_space>)` into
   `tui.New`, and T-082 must call `engine.RootAdder.AddRoot` when a saved destination is added at
   runtime (config's saved destinations are engine roots only at construction). Found in T-074.
@@ -560,7 +649,7 @@ when it reaches it and does not start backlog items on its own.
   actual `Add` call leaves that root admitted for the rest of the session without ever being
   recorded to `store.Destinations` — a harmless but unrecorded permanent widening of the known-root
   set for one process lifetime. Found in review of T-074 (PR #47).
-- `T-975` Production wiring for T-080: the composition root (T-950/T-967/T-970) needs a concrete
+- `T-975` *(scheduled as T-096, DEC-128)* Production wiring for T-080: the composition root (T-950/T-967/T-970) needs a concrete
   `tui.SourceManager` — built over `internal/config` (load/`Save`), `internal/indexer.Registry`
   (add/remove/enable/disable at runtime), `internal/indexer/scraper.Loader`/`Importer`, and
   `internal/indexer/torznab.New`/`internal/indexer/scraper.New` to actually run a `TestSource`
@@ -739,6 +828,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-125 | 2026-09-28 | T-091: one combined suite (search + add + real download + offline restore) covers both the download/resume and zero-config-standalone acceptance items; reachability checked generically across every bundled source; seed_policy pinned to "off" and the wait accepts Seeding-or-Paused (T-034-class race), and the 25 MiB size cap is actually enforced (PR #53 remediation) |
 | DEC-126 | 2026-09-28 | T-092: goreleaser config uses homebrew_casks, not the deprecated brews pipe; run()/runDoctor() parse argv through the same flag-set constructors completions walk; each publisher's skip_upload is templated on its own token (not `auto`, which only skips prereleases); cask gets a quarantine-clearing postflight hook |
 | DEC-127 | 2026-09-28 | T-093: goleak on every package's TestMain with third-party-only ignores; otel bumped to 1.42.0 (adds MIT cespare/xxhash/v2); x/crypto ssh/openpgp findings triaged as not compiled in (bump needs go 1.26, T-990); make cover enforces per-package §9 floors (T-916) |
+| DEC-128 | 2026-09-28 | Owner scheduled the missing composition root (T-095), its settings wiring (T-096) and the Windows engine storage fix (T-097) ahead of T-094; folds Backlog T-950/T-967/T-970/T-975/T-955/T-954 |
 
 ## Blocked
 
