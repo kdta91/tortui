@@ -51,11 +51,13 @@ type Options struct {
 
 	// transport, when set, carries every indexer request instead of the
 	// network; offline disables every engine network subsystem; configure
-	// adjusts the loaded config before anything uses it. Test seams only
-	// (AGENT.md §6.7): cmd/tortui never sets them.
-	transport http.RoundTripper
-	offline   bool
-	configure func(*config.Config)
+	// adjusts the loaded config before anything uses it; beforeResume
+	// receives the engine as built, before Session.Resume touches it. Test
+	// seams only (AGENT.md §6.7): cmd/tortui never sets them.
+	transport    http.RoundTripper
+	offline      bool
+	configure    func(*config.Config)
+	beforeResume func(*anacrolix.Engine)
 }
 
 // App is one running tortui: the loaded config, the file log, the
@@ -172,6 +174,10 @@ func (a *App) start(opts Options, level string) error {
 	a.registry = live.reg
 	a.settings = newSettingsManager(paths.ConfigFile, cfg, live, a.engine, logger)
 	a.session = lifecycle.NewSession(a.engine, st, logger)
+
+	if opts.beforeResume != nil {
+		opts.beforeResume(a.engine)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultResumeTimeout)
 	defer cancel()
