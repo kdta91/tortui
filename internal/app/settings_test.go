@@ -105,7 +105,9 @@ func newSettingsApp(t *testing.T, srv *httptest.Server) *App {
 }
 
 func labSource(srv *httptest.Server) config.Indexer {
-	return config.Indexer{ID: "lab", Name: "Lab Feed", Type: "torznab", URL: srv.URL + "/api", APIKey: sentinelKey, Enabled: true}
+	feed := srv.URL + "/api"
+
+	return config.Indexer{ID: "lab", Name: "Lab Feed", Type: "torznab", URL: feed, APIKey: sentinelKey, Enabled: true}
 }
 
 // reload reads config.toml back the way the next start will.
@@ -235,7 +237,8 @@ func TestSettingsEntryOverBundledIDTurnsTheDefaultOffAndBack(t *testing.T) {
 		t.Fatalf("bundled source %s is not registered at startup", id)
 	}
 
-	off := config.Indexer{ID: id, Name: "off", Type: "torznab", URL: srv.URL + "/api", Enabled: false}
+	feed := srv.URL + "/api"
+	off := config.Indexer{ID: id, Name: "off", Type: "torznab", URL: feed, Enabled: false}
 	if err := a.settings.SaveSources([]config.Indexer{off}); err != nil {
 		t.Fatalf("SaveSources: %v", err)
 	}

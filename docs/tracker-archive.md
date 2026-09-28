@@ -3890,7 +3890,7 @@ the source and its cache, and an in-flight fetch from a replaced source is never
 test = `torznab.Discover`; scraper test = one search. `SaveConfig` keeps the manager's own
 `Indexers` and admits download_dir + every saved destination via `AddRoot` after a successful
 write (DEC-130). Tests: temp `TORTUI_HOME`, httptest servers, offline engine. `make check`,
-`make race` (app, indexer), `make cover` green. Backlog T-995, T-996 added.
+`make race` (app, indexer), `make cover` green. Backlog T-995–T-999 added (T-997–T-999 from review).
 
 ---
 

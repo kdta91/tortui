@@ -649,11 +649,27 @@ when it reaches it and does not start backlog items on its own.
 - `T-995` Re-registering a source under the same id (an edit or disable/enable in Settings, T-096)
   gives it a fresh `indexer.Registry` source, so its per-source minimum refresh interval (§6.13)
   restarts from zero. Carry `lastFetch` across `Unregister`/`Register` of the same id if the 1s
-  floor ever matters here. Found in T-096.
+  floor ever matters here. Related: `reserveFetch` looks its source up by id, so a fetch from a
+  source replaced mid-search reserves the *replacement's* refresh floor; key it on the selected
+  source like `storeResults` is. Found in T-096 and its review (PR #57).
 - `T-996` `internal/app` tests that make two requests to one httptest host wait out httpx's real
   1s `DefaultMinHostInterval` (~2s total in T-096's settings tests): the composition root has no
   seam for `httpx.Config.Clock`/`MinHostInterval`. Add one alongside `Options.transport`. Found in
   T-096.
+- `T-997` No test proves the production settings wiring: removing the `WithSourceManager` and
+  `WithPreferencesManager` options from `internal/app/app.go` leaves every test green. Add a teatest
+  check on the root's model that the settings screen never shows "no source manager configured"
+  (nor the preferences equivalent). Found in review of T-096 (PR #57).
+- `T-998` `settingsManager.SaveConfig` (T-096) returns an `AddRoot` error after `config.Save` and
+  the in-memory update already succeeded, so the TUI keeps its old snapshot while disk and memory
+  hold the new one. Only `ErrClosed` during shutdown can cause it in practice (roots are pre-checked);
+  log it instead of returning it, or document the divergence. Found in review of T-096 (PR #57).
+- `T-999` *(owner decision)* The indexer hostname check (T-007) reads Go field or function access
+  on a url-style name (a struct field or package function whose name ends in URL, inside an
+  indexer-context line) as a hostname, and it scans commit messages too. T-095 and T-096 both hit
+  it; the workaround is binding the value to a local first. Record this as a known false-positive
+  class and decide whether the scanner should skip Go selector expressions. Scanner not changed.
+  Found in T-096 (PR #57).
 
 ---
 

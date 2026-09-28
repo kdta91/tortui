@@ -200,7 +200,8 @@ func (s *settingsManager) ListAggregatorIndexers(ctx context.Context, baseURL, a
 
 	out := make([]tui.AggregatorIndexer, 0, len(list))
 	for _, idx := range list {
-		out = append(out, tui.AggregatorIndexer{ID: idx.ID, Name: idx.Name, FeedURL: prowlarr.FeedURL(baseURL, idx.ID)})
+		feed := prowlarr.FeedURL(baseURL, idx.ID)
+		out = append(out, tui.AggregatorIndexer{ID: idx.ID, Name: idx.Name, FeedURL: feed})
 	}
 
 	return out, nil
