@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kdta91/tortui/internal/engine/fake"
 	"github.com/kdta91/tortui/internal/tui/theme"
 )
 
@@ -15,7 +14,7 @@ import (
 // text shows up on every screen, not just the default one, and survives a
 // screen switch.
 func TestBannerRendersAboveEveryScreen(t *testing.T) {
-	m := New(fake.New(), theme.New("", theme.Capability{}))
+	m := New(newTestEngine(t), theme.New("", theme.Capability{}))
 	m.Banner = "DEMO MODE — synthetic data, no network"
 
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -33,7 +32,7 @@ func TestBannerRendersAboveEveryScreen(t *testing.T) {
 // TestNoBannerByDefault confirms production wiring (no Banner set) never
 // shows one, so New's zero value stays silent.
 func TestNoBannerByDefault(t *testing.T) {
-	m := New(fake.New(), theme.New("", theme.Capability{}))
+	m := New(newTestEngine(t), theme.New("", theme.Capability{}))
 
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	model := mm.(Model)
@@ -46,7 +45,7 @@ func TestNoBannerByDefault(t *testing.T) {
 // TestBannerRendersOverModals confirms the banner still shows while a modal
 // (the help overlay) is open, not just on the plain screen render path.
 func TestBannerRendersOverModals(t *testing.T) {
-	m := New(fake.New(), theme.New("", theme.Capability{}))
+	m := New(newTestEngine(t), theme.New("", theme.Capability{}))
 	m.Banner = "DEMO MODE"
 
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})

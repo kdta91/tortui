@@ -12,7 +12,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 
-	"github.com/kdta91/tortui/internal/engine/fake"
 	"github.com/kdta91/tortui/internal/indexer"
 	indexerfake "github.com/kdta91/tortui/internal/indexer/fake"
 	"github.com/kdta91/tortui/internal/store"
@@ -390,7 +389,7 @@ func newSearchTestModel(t *testing.T, searcher Searcher, hist HistoryStore) (*te
 		opts = append(opts, WithHistory(hist))
 	}
 
-	m := New(fake.New(), testTheme(), opts...)
+	m := New(newTestEngine(t), testTheme(), opts...)
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	t.Cleanup(func() { _ = tm.Quit() })
 
@@ -729,7 +728,7 @@ func TestDispatchSearchHistoryFailureLeavesRecentUnchanged(t *testing.T) {
 	}
 	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
 
-	m := New(fake.New(), testTheme(), WithSearcher(searcher), WithHistory(hist))
+	m := New(newTestEngine(t), testTheme(), WithSearcher(searcher), WithHistory(hist))
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
 
@@ -756,7 +755,7 @@ func TestDispatchSearchHistoryFailureLeavesRecentUnchanged(t *testing.T) {
 // screen-routing-only test) degrades to a status-bar message instead of
 // panicking when the user tries to search anyway.
 func TestDispatchWithNoSearcherPushesStatusMessage(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
@@ -825,7 +824,7 @@ func TestFatalSearchErrorReportedAndStaysOnSearch(t *testing.T) {
 // truncation in the way, that a fatal error leaves m.screen on
 // ScreenSearch rather than advancing to Results.
 func TestHandleSearchResultFatalErrorStaysOnSearchScreen(t *testing.T) {
-	m := New(fake.New(), testTheme(), WithSearcher(newStubSearcher()))
+	m := New(newTestEngine(t), testTheme(), WithSearcher(newStubSearcher()))
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)

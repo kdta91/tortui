@@ -112,7 +112,7 @@ func newTestConfig(downloadDir string) config.Config {
 // --- opening ----------------------------------------------------------
 
 func TestPreferencesOpenRefusesWithoutManager(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.screen = ScreenSettings
 
 	updated, _ := m.handlePreferencesOpen()
@@ -131,7 +131,7 @@ func TestPreferencesOpenPrefillsFromConfig(t *testing.T) {
 	dir := t.TempDir()
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
 
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	f := m.settings.prefsForm
 	if f == nil {
@@ -154,7 +154,7 @@ func TestPreferencesOpenPrefillsFromConfig(t *testing.T) {
 func TestPreferencesInvalidMaxPeersRejectedInline(t *testing.T) {
 	dir := t.TempDir()
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	tabTo(t, &m, 4) // download dir -> max download rate -> max upload rate -> max active -> max peers
 	if prefsFieldKind(m.settings.prefsForm.cursor) != prefFieldMaxPeers {
@@ -189,7 +189,7 @@ func TestPreferencesInvalidMaxPeersRejectedInline(t *testing.T) {
 func TestPreferencesInvalidSeedDurationRejectedInline(t *testing.T) {
 	dir := t.TempDir()
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	tabTo(t, &m, 8) // -> seed duration
 	if prefsFieldKind(m.settings.prefsForm.cursor) != prefFieldSeedDuration {
@@ -219,7 +219,7 @@ func TestPreferencesDownloadDirRejectsFileInThePlaceOfAFolder(t *testing.T) {
 	}
 
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	f := m.settings.prefsForm
 	backspace(t, &m, len(f.downloadDir)+4)
@@ -263,7 +263,7 @@ func TestPreferencesDownloadDirCheckMustLandBeforeSave(t *testing.T) {
 	}
 
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	f := m.settings.prefsForm
 	clearLen := len(f.downloadDir) + 4
@@ -312,7 +312,7 @@ func TestPreferencesDownloadDirCheckAppliesDespiteTrailingWhitespace(t *testing.
 	}
 
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	f := m.settings.prefsForm
 	backspace(t, &m, len(f.downloadDir)+4)
@@ -352,7 +352,7 @@ func TestPreferencesDownloadDirNotWritable(t *testing.T) {
 		writable:  func(string) error { return errors.New("permission denied") },
 	}
 
-	m := newPrefsTestModelWithProbe(t, fake.New(), pm, probe)
+	m := newPrefsTestModelWithProbe(t, newTestEngine(t), pm, probe)
 
 	issues := m.settings.prefsForm.liveIssues()
 
@@ -407,7 +407,7 @@ func TestPreferencesDownloadDirNotEnoughSpace(t *testing.T) {
 	cfg.MinFreeSpace = "2GB"
 
 	pm := &fakePreferencesManager{cfg: cfg}
-	m := newPrefsTestModelWithProbe(t, fake.New(), pm, freeSpaceProbe(1<<30)) // 1 GiB free
+	m := newPrefsTestModelWithProbe(t, newTestEngine(t), pm, freeSpaceProbe(1<<30)) // 1 GiB free
 
 	issues := m.settings.prefsForm.liveIssues()
 	if !hasIssue(issues, "Download directory: not enough space") {
@@ -430,7 +430,7 @@ func TestPreferencesMinFreeSpaceEditRevalidatesDownloadDir(t *testing.T) {
 	cfg.MinFreeSpace = "512MB"
 
 	pm := &fakePreferencesManager{cfg: cfg}
-	m := newPrefsTestModelWithProbe(t, fake.New(), pm, freeSpaceProbe(1<<30)) // 1 GiB free
+	m := newPrefsTestModelWithProbe(t, newTestEngine(t), pm, freeSpaceProbe(1<<30)) // 1 GiB free
 
 	if issues := m.settings.prefsForm.liveIssues(); len(issues) != 0 {
 		t.Fatalf("test setup invalid: issues = %v, want none with 1 GiB free and a 512MB margin", issues)
@@ -481,7 +481,7 @@ func TestPreferencesMinFreeSpaceCheckMustLandBeforeSave(t *testing.T) {
 	cfg.MinFreeSpace = "512MB"
 
 	pm := &fakePreferencesManager{cfg: cfg}
-	m := newPrefsTestModelWithProbe(t, fake.New(), pm, freeSpaceProbe(1<<30)) // 1 GiB free
+	m := newPrefsTestModelWithProbe(t, newTestEngine(t), pm, freeSpaceProbe(1<<30)) // 1 GiB free
 
 	tabTo(t, &m, int(prefFieldMinFreeSpace))
 
@@ -516,7 +516,7 @@ func TestPreferencesOpensFromSettingsThroughUpdate(t *testing.T) {
 	dir := t.TempDir()
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
 
-	m := New(fake.New(), testTheme(), WithPreferencesManager(pm))
+	m := New(newTestEngine(t), testTheme(), WithPreferencesManager(pm))
 	m.screen = ScreenSettings
 	m.width, m.height = 100, 40
 	m.destProbe = freeSpaceProbe(1 << 40)
@@ -566,7 +566,7 @@ func TestPreferencesSavedDestinationsAddRenameRemove(t *testing.T) {
 	newDest := filepath.Join(t.TempDir(), "movies")
 
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	f := m.settings.prefsForm
 	if f.rowCount() != int(numFixedPrefFields)+1 {
@@ -645,7 +645,7 @@ func TestPreferencesRemoveDestinationWarnsWhenActiveTorrentIsThere(t *testing.T)
 	cfg.SavedDestinations = []string{dest}
 
 	pm := &fakePreferencesManager{cfg: cfg}
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	addFakeTorrent(t, eng, "magnet:?xt=urn:btih:prefs1&dn=a.iso", fake.Downloading(30*time.Second))
@@ -719,7 +719,7 @@ func TestPreferencesSavedDestinationsMostRecentFirst(t *testing.T) {
 
 	pm := &fakePreferencesManager{cfg: cfg}
 
-	m := New(fake.New(), testTheme(), WithPreferencesManager(pm))
+	m := New(newTestEngine(t), testTheme(), WithPreferencesManager(pm))
 	m.screen = ScreenSettings
 	m.destProbe = freeSpaceProbe(1 << 40)
 	m.usedDestinations = []string{c, a} // c used most recently, then a
@@ -742,7 +742,7 @@ func TestPreferencesSaveAppliesLiveFieldsAndReportsRestartRequired(t *testing.T)
 	newDir := t.TempDir()
 
 	pm := &fakePreferencesManager{cfg: newTestConfig(oldDir)}
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	f := m.settings.prefsForm
 	backspace(t, &m, len(f.downloadDir)+4)
@@ -775,7 +775,7 @@ func TestPreferencesSaveAppliesLiveFieldsAndReportsRestartRequired(t *testing.T)
 func TestPreferencesEscWithoutChangesClosesImmediately(t *testing.T) {
 	dir := t.TempDir()
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	sendPrefsKey(t, &m, tea.KeyMsg{Type: tea.KeyEsc})
 
@@ -790,7 +790,7 @@ func TestPreferencesEscWithoutChangesClosesImmediately(t *testing.T) {
 func TestPreferencesEscWithChangesAsksToDiscard(t *testing.T) {
 	dir := t.TempDir()
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	typeText(t, &m, "x") // dirties the download-dir field
 
@@ -819,7 +819,7 @@ func TestPreferencesEscWithChangesAsksToDiscard(t *testing.T) {
 func TestPreferencesThemeAndSeedPolicyCycleWithLeftRight(t *testing.T) {
 	dir := t.TempDir()
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	tabTo(t, &m, 6) // -> seed policy
 	before := m.settings.prefsForm.seedPolicy
@@ -852,7 +852,7 @@ func TestPreferencesThemeAndSeedPolicyCycleWithLeftRight(t *testing.T) {
 func TestPreferencesSpaceTypedIntoDownloadDir(t *testing.T) {
 	dir := t.TempDir()
 	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
-	m := newPrefsTestModel(t, fake.New(), pm)
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
 
 	before := m.settings.prefsForm.downloadDir
 	sendPrefsKey(t, &m, tea.KeyMsg{Type: tea.KeySpace})

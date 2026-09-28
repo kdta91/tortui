@@ -77,25 +77,36 @@ func TestShutdownHappyPath(t *testing.T) {
 	}
 }
 
-// hungEngine wraps a fake.Engine but blocks forever in Close, standing in
-// for a real engine implementation that has wedged — the scenario T-042
-// calls "shutdown-with-hung-engine". Every other method delegates to the
-// wrapped fake so List/Pause still behave normally.
+// hungEngine wraps a fake.Engine but blocks in Close for the rest of the
+// test, standing in for a real engine implementation that has wedged — the
+// scenario T-042 calls "shutdown-with-hung-engine". Every other method
+// delegates to the wrapped fake so List/Pause still behave normally.
 type hungEngine struct {
 	*fake.Engine
 	closeCalled chan struct{}
+	release     chan struct{}
 }
 
-func newHungEngine() *hungEngine {
-	return &hungEngine{Engine: fake.New(), closeCalled: make(chan struct{})}
+// newHungEngine releases the hung Close when t ends, so the goroutine
+// Shutdown abandoned on it returns instead of failing the package's goleak
+// check (T-093). Shutdown has long since given up on it by then.
+func newHungEngine(t *testing.T) *hungEngine {
+	t.Helper()
+
+	h := &hungEngine{Engine: fake.New(), closeCalled: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(func() { close(h.release) })
+
+	return h
 }
 
 // Close signals closeCalled (so the test can prove it was actually invoked)
-// and then blocks forever, simulating an engine whose shutdown never
-// completes.
+// and then blocks until the test ends, simulating an engine whose shutdown
+// never completes within Shutdown's step timeout.
 func (h *hungEngine) Close() error {
 	close(h.closeCalled)
-	select {} // deliberately hang
+	<-h.release // deliberately hang
+
+	return nil
 }
 
 // TestShutdownWithHungEngine is T-042's required
@@ -103,7 +114,7 @@ func (h *hungEngine) Close() error {
 // must still complete (within the step timeout budget) and still restore
 // the terminal, rather than hanging forever itself.
 func TestShutdownWithHungEngine(t *testing.T) {
-	eng := newHungEngine()
+	eng := newHungEngine(t)
 
 	st, err := store.Open(filepath.Join(t.TempDir(), "tortui.db"))
 	if err != nil {

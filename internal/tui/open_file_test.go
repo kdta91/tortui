@@ -86,7 +86,7 @@ func statusBarText(m Model) string {
 
 func TestOpenFileLaunchesTheLargestFile(t *testing.T) {
 	save := filepath.Join(t.TempDir(), "dl")
-	eng := &filesEngine{Engine: fake.New(), files: []engine.FileStatus{
+	eng := &filesEngine{Engine: newTestEngine(t), files: []engine.FileStatus{
 		{Path: "set/readme.txt", SizeBytes: 10},
 		{Path: "set/disc/big.iso", SizeBytes: 9000},
 		{Path: "set/extra.bin", SizeBytes: 500},
@@ -112,7 +112,7 @@ func TestOpenFileLaunchesTheLargestFile(t *testing.T) {
 
 func TestOpenFolderRevealsTheLargestFile(t *testing.T) {
 	save := filepath.Join(t.TempDir(), "dl")
-	eng := &filesEngine{Engine: fake.New(), files: []engine.FileStatus{
+	eng := &filesEngine{Engine: newTestEngine(t), files: []engine.FileStatus{
 		{Path: "single.iso", SizeBytes: 42},
 	}}
 
@@ -144,7 +144,7 @@ func TestOpenPassesEveryKnownRoot(t *testing.T) {
 	dest1 := filepath.Join(base, "one")
 	dest2 := filepath.Join(base, "two")
 
-	eng := &filesEngine{Engine: fake.New(), files: []engine.FileStatus{{Path: "a.iso", SizeBytes: 1}}}
+	eng := &filesEngine{Engine: newTestEngine(t), files: []engine.FileStatus{{Path: "a.iso", SizeBytes: 1}}}
 
 	var opened []launchCall
 	m := newOpenFileModel(t, eng, []engine.TorrentStatus{
@@ -165,7 +165,7 @@ func TestOpenPassesEveryKnownRoot(t *testing.T) {
 }
 
 func TestOpenOnIncompleteTorrentSaysSoAndDoesNotLaunch(t *testing.T) {
-	eng := &filesEngine{Engine: fake.New(), files: []engine.FileStatus{{Path: "a.iso", SizeBytes: 1}}}
+	eng := &filesEngine{Engine: newTestEngine(t), files: []engine.FileStatus{{Path: "a.iso", SizeBytes: 1}}}
 
 	for _, key := range []string{"o", "f"} {
 		var calls []launchCall
@@ -203,7 +203,7 @@ func TestOpenOnIncompleteTorrentSaysSoAndDoesNotLaunch(t *testing.T) {
 // launcher at all.
 func TestOpenRefusesTraversalInTheDeclaredPath(t *testing.T) {
 	for _, declared := range []string{"set/../../../etc/passwd", "../escape.iso", "", "set/C:evil", `set/a\..\..\b`} {
-		eng := &filesEngine{Engine: fake.New(), files: []engine.FileStatus{{Path: declared, SizeBytes: 1}}}
+		eng := &filesEngine{Engine: newTestEngine(t), files: []engine.FileStatus{{Path: declared, SizeBytes: 1}}}
 
 		var calls []launchCall
 		m := newOpenFileModel(t, eng, []engine.TorrentStatus{{
@@ -230,17 +230,17 @@ func TestOpenReportsLauncherAndEngineFailures(t *testing.T) {
 		want   string
 	}{
 		"launcher refuses": {
-			eng:    &filesEngine{Engine: fake.New(), files: []engine.FileStatus{{Path: "a.iso", SizeBytes: 1}}},
+			eng:    &filesEngine{Engine: newTestEngine(t), files: []engine.FileStatus{{Path: "a.iso", SizeBytes: 1}}},
 			launch: func(string, []string) error { return platform.ErrOutsideRoots },
 			want:   "couldn't open a.iso: " + platform.ErrOutsideRoots.Error(),
 		},
 		"files error": {
-			eng:    &filesEngine{Engine: fake.New(), filesErr: errors.New("gone")},
+			eng:    &filesEngine{Engine: newTestEngine(t), filesErr: errors.New("gone")},
 			launch: func(string, []string) error { t.Fatal("launcher called"); return nil },
 			want:   "couldn't open a.iso: gone",
 		},
 		"no files": {
-			eng:    &filesEngine{Engine: fake.New()},
+			eng:    &filesEngine{Engine: newTestEngine(t)},
 			launch: func(string, []string) error { t.Fatal("launcher called"); return nil },
 			want:   "couldn't open a.iso: no files reported yet",
 		},
@@ -264,7 +264,7 @@ func TestOpenReportsLauncherAndEngineFailures(t *testing.T) {
 // the engine's configured default (engine.AddSource), which is downloadDir.
 func TestOpenFallsBackToDownloadDirForAnEmptySavePath(t *testing.T) {
 	def := t.TempDir()
-	eng := &filesEngine{Engine: fake.New(), files: []engine.FileStatus{{Path: "a.iso", SizeBytes: 1}}}
+	eng := &filesEngine{Engine: newTestEngine(t), files: []engine.FileStatus{{Path: "a.iso", SizeBytes: 1}}}
 
 	var calls []launchCall
 	m := newOpenFileModel(t, eng, []engine.TorrentStatus{{
@@ -293,7 +293,7 @@ func TestOpenFallsBackToDownloadDirForAnEmptySavePath(t *testing.T) {
 
 func TestOpenOnEmptyDownloadsScreenIsANoOp(t *testing.T) {
 	var calls []launchCall
-	m := newOpenFileModel(t, fake.New(), nil, WithOpenFile(recordingLauncher(&calls)), WithRevealFile(recordingLauncher(&calls)))
+	m := newOpenFileModel(t, newTestEngine(t), nil, WithOpenFile(recordingLauncher(&calls)), WithRevealFile(recordingLauncher(&calls)))
 
 	for _, key := range []string{"o", "f"} {
 		var cmd tea.Cmd

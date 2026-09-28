@@ -9,14 +9,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kdta91/tortui/internal/engine"
-	"github.com/kdta91/tortui/internal/engine/fake"
 )
 
 // TestStatusBarShowsScreenAndActiveDownloads confirms the footer names the
 // current screen and the same active-download count the quit-confirmation
 // prompt uses (AGENT.md §7: "current screen, active download count").
 func TestStatusBarShowsScreenAndActiveDownloads(t *testing.T) {
-	eng := fake.New()
+	eng := newTestEngine(t)
 	if _, err := eng.Add(context.Background(), engine.AddSource{Magnet: "magnet:?xt=urn:btih:deadbeef"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -40,7 +39,7 @@ func TestStatusBarShowsScreenAndActiveDownloads(t *testing.T) {
 // TestStatusBarAggregatesRatesAcrossTorrents confirms the footer's
 // down/up figures are the *sum* across every tracked torrent, not just one.
 func TestStatusBarAggregatesRatesAcrossTorrents(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.width, m.height = 80, 24
 
 	statuses := []engine.TorrentStatus{
@@ -62,7 +61,7 @@ func TestStatusBarAggregatesRatesAcrossTorrents(t *testing.T) {
 // confirms the T-052/§6.3 acceptance text verbatim, then that "e" opens the
 // detail panel and tab collapses it again (DEC-092).
 func TestSourceErrorIndicatorAppearsAndExpands(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.width, m.height = 80, 24
 
 	updated, _ := m.Update(sourceStatusMsg{total: 4, failed: []string{"alpha", "bravo"}})
@@ -103,7 +102,7 @@ func TestSourceErrorIndicatorAppearsAndExpands(t *testing.T) {
 // TestErrorIndicatorHiddenWithNoFailures confirms "e" is a no-op when
 // nothing has failed — there is nothing to expand into.
 func TestErrorIndicatorHiddenWithNoFailures(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.width, m.height = 80, 24
 
 	view := m.View()
@@ -124,7 +123,7 @@ func TestErrorIndicatorHiddenWithNoFailures(t *testing.T) {
 // force-closes an already-open detail panel, so a stale panel can never
 // outlive the condition that opened it.
 func TestErrorIndicatorClearsWhenFailuresResolve(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.width, m.height = 80, 24
 
 	updated, _ := m.Update(sourceStatusMsg{total: 2, failed: []string{"alpha"}})
@@ -154,7 +153,7 @@ func TestErrorIndicatorClearsWhenFailuresResolve(t *testing.T) {
 // renders in the footer, and that a second push while the first is showing
 // does not replace it.
 func TestTransientMessagePushedAndQueued(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.width, m.height = 80, 24
 
 	updated, cmd := m.Update(transientMessageMsg{text: "added ubuntu-24.04.iso"})
@@ -188,7 +187,7 @@ func TestTransientMessagePushedAndQueued(t *testing.T) {
 // driven by a components.TickMsg round-trip through Update, never by
 // blocking inside Update itself (AGENT.md §6.1).
 func TestTransientMessageTimeoutIsACommandNeverASleep(t *testing.T) {
-	m := New(fake.New(), testTheme())
+	m := New(newTestEngine(t), testTheme())
 	m.width, m.height = 80, 24
 	// A short override so this test doesn't burn the real 4s default
 	// waiting on tea.Tick's own timer; the timeout *value* is pinned

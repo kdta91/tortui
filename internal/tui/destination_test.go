@@ -387,7 +387,7 @@ func TestDestinationEntriesOrder(t *testing.T) {
 
 	store := &memDestStore{dests: []string{r1, s3, def, r2, s2, r3, r4}}
 
-	m := New(fake.New(), testTheme(), WithDownloadDir(def),
+	m := New(newTestEngine(t), testTheme(), WithDownloadDir(def),
 		WithSavedDestinations([]string{s1, s2, s3, "relative"}), WithDestinationStore(store))
 
 	want := []destEntry{
@@ -419,7 +419,7 @@ func TestPickerDropsStaleValidationAndWaitsForIt(t *testing.T) {
 	t.Parallel()
 
 	def := t.TempDir()
-	eng := fake.New()
+	eng := newTestEngine(t)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	m := New(eng, testTheme(), WithDownloadDir(def))
@@ -451,7 +451,7 @@ func TestPickerCreateConfirmAdmitsRootAndRecordsDestination(t *testing.T) {
 	t.Parallel()
 
 	def := t.TempDir()
-	eng := &rootEngine{Engine: fake.New()}
+	eng := &rootEngine{Engine: newTestEngine(t)}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	store := &memDestStore{}
@@ -548,7 +548,7 @@ func TestPickerAddFailuresAreReportedNotRecorded(t *testing.T) {
 	t.Parallel()
 
 	def := t.TempDir()
-	eng := &rootEngine{Engine: fake.New(), err: errors.New("refused root")}
+	eng := &rootEngine{Engine: newTestEngine(t), err: errors.New("refused root")}
 	t.Cleanup(func() { _ = eng.Close() })
 
 	store := &memDestStore{}
@@ -599,7 +599,7 @@ func TestPickerFitsAt80x24(t *testing.T) {
 		saved = append(saved, filepath.Join(root, "saved", string(rune('a'+i))))
 	}
 
-	m := New(fake.New(), testTheme(), WithDownloadDir(root), WithSavedDestinations(saved))
+	m := New(newTestEngine(t), testTheme(), WithDownloadDir(root), WithSavedDestinations(saved))
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 	m, _ = openPicker(t, m, indexer.Result{Title: strings.Repeat("long title ", 20), Magnet: "magnet:?xt=urn:btih:ff", SizeBytes: 1 << 30})
@@ -667,7 +667,7 @@ func TestDestinationPickerTeatest(t *testing.T) {
 
 	t.Run("accept default", func(t *testing.T) {
 		def := t.TempDir()
-		eng := fake.New()
+		eng := newTestEngine(t)
 		t.Cleanup(func() { _ = eng.Close() })
 
 		m := pickerModel(eng, result, WithDownloadDir(def))
@@ -683,7 +683,7 @@ func TestDestinationPickerTeatest(t *testing.T) {
 		// The saved destination does not exist yet, so its validation
 		// renders differently from the default's and can be waited for.
 		def, saved := t.TempDir(), filepath.Join(t.TempDir(), "saved")
-		eng := fake.New()
+		eng := newTestEngine(t)
 		t.Cleanup(func() { _ = eng.Close() })
 
 		m := pickerModel(eng, result, WithDownloadDir(def), WithSavedDestinations([]string{saved}))
@@ -701,7 +701,7 @@ func TestDestinationPickerTeatest(t *testing.T) {
 	t.Run("type a new path", func(t *testing.T) {
 		def := t.TempDir()
 		target := filepath.Join(t.TempDir(), "typed", "new")
-		eng := fake.New()
+		eng := newTestEngine(t)
 		t.Cleanup(func() { _ = eng.Close() })
 
 		m := pickerModel(eng, result, WithDownloadDir(def))
@@ -730,7 +730,7 @@ func TestDestinationPickerTeatest(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		eng := fake.New()
+		eng := newTestEngine(t)
 		t.Cleanup(func() { _ = eng.Close() })
 
 		m := pickerModel(eng, result, WithDownloadDir(def))
@@ -751,7 +751,7 @@ func TestDestinationPickerTeatest(t *testing.T) {
 	t.Run("type a path with no space", func(t *testing.T) {
 		def := t.TempDir()
 		roomy := t.TempDir()
-		eng := fake.New()
+		eng := newTestEngine(t)
 		t.Cleanup(func() { _ = eng.Close() })
 
 		m := pickerModel(eng, result, WithDownloadDir(def))
@@ -779,7 +779,7 @@ func TestDestinationPickerTeatest(t *testing.T) {
 
 	t.Run("cancel out of the picker", func(t *testing.T) {
 		def := t.TempDir()
-		eng := fake.New()
+		eng := newTestEngine(t)
 		t.Cleanup(func() { _ = eng.Close() })
 
 		m := pickerModel(eng, result, WithDownloadDir(def))
@@ -807,7 +807,7 @@ func TestPickerPathFieldEditing(t *testing.T) {
 	t.Parallel()
 
 	def := t.TempDir()
-	m := New(fake.New(), testTheme(), WithDownloadDir(def))
+	m := New(newTestEngine(t), testTheme(), WithDownloadDir(def))
 	m, _ = openPicker(t, m, indexer.Result{Title: "edit.iso", Magnet: "magnet:?xt=urn:btih:ab"})
 	m = typeDestination(t, m, "jkq")
 
