@@ -85,22 +85,19 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ### T-083 · Bulk import from a Torznab aggregator
 ```
-status: blocked
+status: todo
 depends: T-080, T-081
 tier: M
 ```
-**Notes:** Blocked before implementation — see Blocked section below. Prowlarr has a verifiable,
-officially self-documented `GET /api/v1/indexer` (Swagger, confirmed against
-`Prowlarr.Api.V1.Indexers.IndexerResource` source). Jackett has no API-key-authenticated
-endpoint to list configured indexers — `/api/v2.0/indexers` requires a browser session/cookie,
-and Jackett issue #16324 (closed as duplicate, unresolved) confirms this is a known gap, not an
-oversight in my search. NZBHydra2's `/api/stats/indexers` is a stats endpoint with a different
-shape (state/level/lastError), not a documented indexer-listing endpoint, and its config API
-needs a live instance's own Swagger UI to confirm — unreachable without one running.
+**Scope (owner, 2026-09-28, DEC-123):** Prowlarr only. Jackett has no API-key-authenticated
+endpoint that lists indexers, and NZBHydra2's could not be verified without a running instance, so
+both move to Backlog `T-984`. The aggregator import must be shaped so a second aggregator can be
+added later without changing the TUI flow.
 **Acceptance**
 - From the add form, an "import from aggregator" path takes a base URL and API key for a
-  self-hosted Torznab aggregator (Prowlarr, Jackett, NZBHydra), lists the indexers that
-  instance exposes, and lets the user multi-select which to add.
+  self-hosted Prowlarr instance, lists the indexers that instance exposes
+  (`GET /api/v1/indexer`, per Prowlarr's own API documentation), and lets the user multi-select
+  which to add. Jackett and NZBHydra2 are out of scope for this task (Backlog `T-984`).
 - Each import becomes an ordinary `[[indexer]]` entry — nothing special-cased afterwards.
 - Names come from the aggregator; ids are slugified and de-duplicated against existing entries.
 - A failed or unauthenticated probe reports the distinct reason, same taxonomy as T-081.
@@ -252,6 +249,14 @@ when it reaches it and does not start backlog items on its own.
 
 ## Backlog (not scheduled)
 
+- `T-984` Aggregator import (T-083) for Jackett and NZBHydra2, split out of T-083 by the owner
+  (DEC-123). **Blocked on API verification, same rule as T-083:** do not infer endpoints. Jackett
+  lists configured indexers only through `/api/v2.0/indexers`, which needs a browser session rather
+  than the API key (jackett/jackett#16324, closed unresolved). Logging in on the user's behalf is
+  out per AGENT.md §2, so this waits on Jackett shipping an API-key endpoint. NZBHydra2's only
+  documented endpoint, `/api/stats/indexers`, returns health stats, not re-addable entries; its
+  real surface is its instance Swagger (`/swagger-ui/index`), which the owner must supply from a
+  running instance. Once either is verified, add it behind T-083's aggregator seam.
 - `T-983` `handlePrefsDownloadDirCheck` (internal/tui/preferences.go, ~line 762) compares
   `path`/`margin` against the current form to drop stale results, but no test pins this: if an
   older probe result arrives after a newer one (e.g. the user edits again before the first probe
@@ -799,38 +804,11 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-120 | 2026-09-26 | T-081: classifyProbeError sorts a TestSource error via errors.Is(context.DeadlineExceeded) plus two duck-typed marker interfaces (no adapter import, AGENT.md §4); t refuses a second in-flight probe (DEC-115), esc cancels via its own CancelFunc; d opens a new ContextSourceTestDetail panel from lastProbe |
 | DEC-121 | 2026-09-26 | T-081 review remediation: settings list esc/d now guarded against quit-confirm/error-detail (regression test added); classifyProbeError also matches net.Error's Timeout() bool; httpx.StatusError and torznab.APIError now implement the auth marker for real, narrowing Backlog T-981 to parse-failed only |
 | DEC-122 | 2026-09-26 | T-082: preferences panel (p key) applies download_dir/saved_destinations/min_free_space live (TUI-owned state); rate limits/peers/port/seed policy/search timeout/theme/ascii have no live-reconfigure path against the frozen Engine interface, so they're persisted and named "restart to apply" instead; destination-removal warning reuses engine.ContainedIn — the known-roots set was never actually at risk since tracked torrents' own SavePaths already widen it regardless of SavedDestinations |
+| DEC-123 | 2026-09-28 | T-083 narrowed by the owner to Prowlarr only; Jackett and NZBHydra2 aggregator import deferred to Backlog T-984 pending API verification |
 
 ## Blocked
 
-### T-083 · Bulk import from a Torznab aggregator
-```
-status: blocked
-tier: M
-```
-Acceptance requires verifying the API shape of Prowlarr, Jackett, and NZBHydra2 against official
-documentation before implementing, and blocking rather than guessing if it can't be verified.
-Research (web search + GitHub source, no live instance available in this environment):
-
-- **Prowlarr** — verifiable. Self-documented via its own Swagger UI; the route and
-  `IndexerResource` fields (`Id`/`Name` from the base provider resource, plus `Enable`,
-  `Description`, `Protocol`, `Capabilities`, etc.) are confirmed from
-  `src/Prowlarr.Api.V1/Indexers/{IndexerController,IndexerResource}.cs` on `develop`.
-- **Jackett** — not verifiable as a documented, API-key-only path. `/api/v2.0/indexers` requires
-  a browser session/cookie, not just the API key tortui would hold. The community-known
-  `t=indexers` Torznab parameter is not in Jackett's own docs. Jackett issue
-  jackett/jackett#16324 ("expose list of indexers via API-key-authenticated endpoint") is closed
-  as a duplicate with no shipped resolution — i.e., this is a known, currently-unmet gap in
-  Jackett itself, not a gap in my research.
-- **NZBHydra2** — not verifiable offline. `/api/stats/indexers` is a stats endpoint with an
-  unrelated shape (state/level/lastError, no stable indexer id/name for re-adding). Its actual
-  config/indexer-list surface is behind `/internalapi` and its own live Swagger UI
-  (`<host>/swagger-ui/index`), which needs a running instance to read — unavailable here.
-
-**Unblock with:** either (a) run a Jackett instance and a NZBHydra2 instance and paste their
-`/swagger-ui` (or equivalent) indexer-list endpoint definitions so the adapter can be written
-against a confirmed shape instead of an inferred one, or (b) descope the acceptance criterion to
-Prowlarr only for this task and move Jackett/NZBHydra2 support to a follow-on task once their
-APIs can be verified the same way.
+None.
 
 ---
 

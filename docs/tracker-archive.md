@@ -3651,6 +3651,38 @@ no live path against the frozen `Engine`, so it is saved and reported "restart t
 ## Blocked — Resolved
 
 
+### T-083 · Bulk import from a Torznab aggregator — blocked 2026-09-26
+```
+status: blocked
+tier: M
+```
+Acceptance requires verifying the API shape of Prowlarr, Jackett, and NZBHydra2 against official
+documentation before implementing, and blocking rather than guessing if it can't be verified.
+Research (web search + GitHub source, no live instance available in this environment):
+
+- **Prowlarr** — verifiable. Self-documented via its own Swagger UI; the route and
+  `IndexerResource` fields (`Id`/`Name` from the base provider resource, plus `Enable`,
+  `Description`, `Protocol`, `Capabilities`, etc.) are confirmed from
+  `src/Prowlarr.Api.V1/Indexers/{IndexerController,IndexerResource}.cs` on `develop`.
+- **Jackett** — not verifiable as a documented, API-key-only path. `/api/v2.0/indexers` requires
+  a browser session/cookie, not just the API key tortui would hold. The community-known
+  `t=indexers` Torznab parameter is not in Jackett's own docs. Jackett issue
+  jackett/jackett#16324 ("expose list of indexers via API-key-authenticated endpoint") is closed
+  as a duplicate with no shipped resolution — i.e., this is a known, currently-unmet gap in
+  Jackett itself, not a gap in my research.
+- **NZBHydra2** — not verifiable offline. `/api/stats/indexers` is a stats endpoint with an
+  unrelated shape (state/level/lastError, no stable indexer id/name for re-adding). Its actual
+  config/indexer-list surface is behind `/internalapi` and its own live Swagger UI
+  (`<host>/swagger-ui/index`), which needs a running instance to read — unavailable here.
+
+**Unblock with:** either (a) run a Jackett instance and a NZBHydra2 instance and paste their
+`/swagger-ui` (or equivalent) indexer-list endpoint definitions so the adapter can be written
+against a confirmed shape instead of an inferred one, or (b) descope the acceptance criterion to
+Prowlarr only for this task and move Jackett/NZBHydra2 support to a follow-on task once their
+APIs can be verified the same way.
+**Resolved 2026-09-28:** the owner chose (b): T-083 narrowed to Prowlarr only; Jackett and NZBHydra2 moved to Backlog `T-984` (DEC-123).
+
+
 ### T-041 · Session resume — blocked 2026-09-25
 PR #38 (`task/T-041-session-resume`, head `cc97d20`) is code-complete and reviewer-passed except for
 the required `check indexer hostname allowlist (T-007)` check. The scan covers every commit message in
