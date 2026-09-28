@@ -91,26 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves.
-
-### T-9008 · Pin session-save wiring and shutdown window
-```
-status: todo
-depends: T-994
-tier: H
-```
-**Acceptance** — each one a test that fails under the named mutation:
-- Reverting `internal/app/app.go` to `tui.WithTorrentStore(a.store)` (instead of `a.session`)
-  fails a test.
-- Shutdown calling `Session.Save` and then seal, instead of `Session.Close`, fails a test
-  deterministically, not by timing luck.
-- `Session.Close` setting `closed` after `mu.Unlock` instead of before fails a test
-  deterministically (a test seam is allowed); the comment on
-  `TestSessionCloseMakesASaveQueuedBehindItANoOp` no longer claims it pins "no gap".
-- `TestShutdownWaitsForASaveInFlight` confirms Shutdown is blocked (not returned, engine not
-  closed) before it releases the parked save, so it fails when `Close` does not take `mu`.
-- The `TorrentStore` doc comment in `internal/tui/root.go` is reflowed.
-- No production behaviour changes beyond unexported test seams.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window.
 
 ---
 
@@ -825,6 +806,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-132 | 2026-09-28 | v1.0 manual verification is macOS-only (owner has no Windows/Linux device); Windows/Linux terminal matrix and manual download/fresh-install checks deferred to Backlog T-9004 — CI and cross-builds on all three OSes unchanged |
 | DEC-133 | 2026-09-28 | T-993: Session.Resume re-admits recorded destinations, so a restart alone cannot pin app.go's st.Destinations() root source; test seam Options.beforeResume probes the freshly built engine before Resume; the duplicate admission is kept |
 | DEC-134 | 2026-09-28 | T-994: lifecycle.Session owns the torrents bucket — the add flow's SetTorrent runs under Save's lock (a store-level atomic merge would still let a save prune a fresh record); Shutdown calls Session.Close, then seals it even on timeout |
+| DEC-135 | 2026-09-28 | T-9008: unexported Session.afterUnlock seam (runs after every lock release) makes the Close/seal no-gap window deterministic to test; the app wiring is pinned by a closed-session probe through the real add flow |
 
 ## Blocked
 
