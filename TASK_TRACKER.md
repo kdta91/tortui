@@ -85,25 +85,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 9 — Release readiness
 
-
-### T-090 · Documentation and first run
-```
-status: todo
-depends: T-072, T-082
-tier: L
-```
-**Acceptance**
-- `README.md` already exists at the repo root. This task **verifies and completes** it against
-  shipped behaviour — it does not rewrite it from scratch.
-- Every command, flag, path, and keybind in the README is executed and confirmed correct.
-  Anything that drifted during the build is corrected here.
-- Replace the Status notice at the top once the app is functional.
-- Keymap table regenerated from the actual keymap definition (T-051), not hand-edited.
-- Troubleshooting section extended with anything hit during the build.
-- First-run screen explains that no sources ship with the binary and points at the docs, and
-  carries the same legal notice as the README (AGENT.md §2).
-- `docs/indexer-definitions.md` complete and verified against the real loader.
-- Screenshot or asciinema cast added, captured from `--demo` so it contains no real content.
+**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run.
 
 ---
 
@@ -221,6 +203,16 @@ when it reaches it and does not start backlog items on its own.
 
 ## Backlog (not scheduled)
 
+- `T-986` `theme.Truncate` (`internal/tui/theme/width.go:140`) is not escape-sequence-aware: it
+  walks `s` grapheme cluster by grapheme cluster (`uniseg.NewGraphemes`) and cuts once `Width`'s
+  budget is spent, with no notion that an ANSI SGR sequence (`\x1b[38;2;r;g;bm`) is one atomic,
+  zero-width unit — a cut landing inside one leaves a dangling, unterminated escape code in the
+  rendered output. Observed in T-090's `docs/assets/demo.cast`: the status bar's rate/peer text is
+  colour-styled then truncated to the terminal width, and several captured frames show a broken
+  `[38;2;155;155;15...` tail. Fix: either skip escape sequences whole during the walk (matching
+  `\x1b\[[0-9;]*m` verbatim, contributing 0 width) or truncate on the plain text and re-wrap the
+  active style afterwards. Needs a fixture string containing an unterminated multi-byte SGR
+  sequence right at the cut boundary.
 - `T-984` Aggregator import (T-083) for Jackett and NZBHydra2, split out of T-083 by the owner
   (DEC-123). **Blocked on API verification, same rule as T-083:** do not infer endpoints. Jackett
   lists configured indexers only through `/api/v2.0/indexers`, which needs a browser session rather
@@ -784,6 +776,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-121 | 2026-09-26 | T-081 review remediation: settings list esc/d now guarded against quit-confirm/error-detail (regression test added); classifyProbeError also matches net.Error's Timeout() bool; httpx.StatusError and torznab.APIError now implement the auth marker for real, narrowing Backlog T-981 to parse-failed only |
 | DEC-122 | 2026-09-26 | T-082: preferences panel (p key) applies download_dir/saved_destinations/min_free_space live (TUI-owned state); rate limits/peers/port/seed policy/search timeout/theme/ascii have no live-reconfigure path against the frozen Engine interface, so they're persisted and named "restart to apply" instead; destination-removal warning reuses engine.ContainedIn — the known-roots set was never actually at risk since tracked torrents' own SavePaths already widen it regardless of SavedDestinations |
 | DEC-123 | 2026-09-28 | T-083 narrowed by the owner to Prowlarr only; Jackett and NZBHydra2 aggregator import deferred to Backlog T-984 pending API verification |
+| DEC-124 | 2026-09-28 | T-090: first-run overlay wording corrected against AGENT.md §2 (bundled sources do ship, T-024) instead of the stale acceptance text; README's Status notice now states precisely what's wired today (`--version`/`doctor`/`--demo`) vs. pending the composition root (Backlog T-950), and concrete false claims (`--ascii` flag, ten MPL modules not yet in `NOTICE`) were fixed |
 
 ## Blocked
 

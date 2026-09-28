@@ -208,6 +208,13 @@ const (
 	// deliberately narrows what's reachable.
 	contextGlobal Context = "global"
 
+	// ContextFirstRun is the one-time welcome screen shown when the caller
+	// wires WithFirstRun(true) (T-090, root.go). It owns no bindings of its
+	// own — handleKey dismisses it on any key before Action lookup even
+	// runs, the same "modal owns every key" pattern the destination picker
+	// and settings forms use — so it never appears in the `?` overlay's
+	// 80×24 budget and can never conflict with a real binding.
+	ContextFirstRun Context = "modal:first-run"
 	// ContextHelp is the help overlay.
 	ContextHelp Context = "modal:help"
 	// ContextQuitConfirm is the "quit with active downloads?" prompt.

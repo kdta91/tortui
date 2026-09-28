@@ -3686,6 +3686,40 @@ two review FAILs (PR #51). `make check`, `make race` (tui, prowlarr), `make cove
 
 ---
 
+## Phase 9 — Release readiness
+
+### T-090 · Documentation and first run
+```
+status: done
+depends: T-072, T-082
+tier: L
+```
+**Acceptance**
+- `README.md` already exists at the repo root. This task **verifies and completes** it against
+  shipped behaviour — it does not rewrite it from scratch.
+- Every command, flag, path, and keybind in the README is executed and confirmed correct.
+  Anything that drifted during the build is corrected here.
+- Replace the Status notice at the top once the app is functional.
+- Keymap table regenerated from the actual keymap definition (T-051), not hand-edited.
+- Troubleshooting section extended with anything hit during the build.
+- First-run screen explains that no sources ship with the binary and points at the docs, and
+  carries the same legal notice as the README (AGENT.md §2).
+- `docs/indexer-definitions.md` complete and verified against the real loader.
+- Screenshot or asciinema cast added, captured from `--demo` so it contains no real content.
+
+**Notes:** Fixed real drift (bare `tortui`/`--ascii` unwired pending `T-950`; ten MPL modules
+already in `NOTICE`). Keys table is now *generated*: `GlobalKeymapReadmeTable()` (new
+`keymap_docs.go`) renders it from `GlobalBindings()`, pasted between README markers, and
+`TestReadmeKeysTableMatchesGlobalBindings` fails the build on any drift; a second test pins
+README's Legal notice to `LegalNotice`. `internal/tui/firstrun.go` adds `WithFirstRun`
+(`ContextFirstRun`, dismiss-on-any-key) — wording corrected against AGENT.md §2 (bundled sources
+do ship, T-024) rather than the stale acceptance text (DEC-124); wiring is Backlog `T-950`.
+Troubleshooting gained two entries (`min_free_space` pause/refuse, T-034/DEC-117; preferences
+restart requirement, DEC-122). `docs/assets/demo.cast`: real asciinema v2 recording, synthetic
+fixture data, generic `/tmp` path. `make check`, `make race` (tui), `make cover` (92.5%) green.
+
+---
+
 ## Blocked — Resolved
 
 

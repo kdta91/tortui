@@ -8,8 +8,13 @@ Single static binary that works on its own. No daemon, no indexer proxy, no Tran
 qBittorrent behind it, nothing to install first — download it and you can search and download
 straight away. Runs on **macOS, Linux, and Windows**.
 
-> **Status:** under active development. Not all features described below are implemented yet —
-> see [`TASK_TRACKER.md`](TASK_TRACKER.md) for current build state.
+> **Status:** under active development. Every screen, adapter, and engine piece described below
+> is built and tested on its own — but the composition root that wires them into the plain
+> `tortui` command (real config, real sources, real downloads) doesn't exist yet (tracked as
+> `T-950` and its follow-ons in `TASK_TRACKER.md`'s Backlog). What runs today: `tortui --version`,
+> `tortui doctor`, and `tortui --demo` (the full UI, end to end, against synthetic data). Running
+> `tortui` with no flags currently prints a stub line and exits. See
+> [`TASK_TRACKER.md`](TASK_TRACKER.md) for current build state.
 
 ---
 
@@ -155,14 +160,19 @@ tortui --demo       # full UI with fake data, no network, nothing to clean up
 correctly in your terminal. It uses a simulated engine and canned results — nothing is
 downloaded and nothing is written outside a temp directory.
 
-When you're ready for real use:
+[![asciinema recording of tortui --demo](https://img.shields.io/badge/asciicast-docs%2Fassets%2Fdemo.cast-blue)](docs/assets/demo.cast)
 
-```sh
-tortui
-```
+The recording above (`docs/assets/demo.cast`, standard asciinema v2 format — play it locally
+with `asciinema play docs/assets/demo.cast` or at [asciinema.org](https://asciinema.org)) was
+captured straight from `--demo`, so every source id, filename, and path in it is synthetic
+fixture data, not anything real.
 
-On first run it writes a default config and tells you where. You'll need to add at least one
-source before search does anything.
+Running `tortui` with no flags is meant to start the real thing — your own config, your own
+sources, real downloads — but that path isn't wired up yet (see the Status notice above): right
+now it prints a one-line stub and exits. `--demo` is the whole UI end to end today; `doctor`
+already reads and validates your real config. Once the composition root lands, `tortui` will
+write a default config on first run and tell you where, the same way `doctor` already resolves
+it.
 
 ---
 
@@ -274,25 +284,56 @@ commit it anywhere.
 
 ## Keys
 
-| Key | Action |
-|---|---|
-| `/` | Search |
-| `L` | Latest — recent additions, no keyword |
-| `R` | Refresh results |
-| `tab` / `shift+tab` | Cycle screens |
-| `1`–`5` | Jump to screen |
-| `j` `k` / `↑` `↓` | Move selection |
-| `enter` | Add torrent (results) · open details (downloads) |
-| `d` | Details |
-| `s` / `S` | Cycle sort column / reverse |
-| `t` | Toggle trust filter — restrict results to Trusted and above |
-| `o` | Open the torrent's largest file (once complete) |
-| `f` | Open the folder containing it (once complete) |
-| `u` | Open source page in browser |
-| `p` | Pause / resume |
-| `x` | Remove (asks whether to keep or delete data) |
-| `?` | Help |
-| `q` / `ctrl+c` | Quit |
+Generated from `internal/tui/keymap.go`'s `GlobalBindings` — the same data key routing and the
+`?` overlay are both built from — by `internal/tui.GlobalKeymapReadmeTable()`.
+`TestReadmeKeysTableMatchesGlobalBindings` (`internal/tui/keymap_docs_test.go`) fails `make check`
+if the block below and that function's output ever differ, so this table cannot drift silently.
+Some rows only apply on the screen noted; everything else is global. Do not hand-edit between the
+markers — regenerate and paste instead.
+
+<!-- keymap:start -->
+| Key | Action | Screen |
+|---|---|---|
+| `/` | focus search input | global |
+| `L` | latest — recent additions, no keyword | global |
+| `R` | refresh current results | global |
+| `tab` | next screen | global |
+| `shift+tab` | previous screen | global |
+| `1` | jump to search | global |
+| `2` | jump to results | global |
+| `3` | jump to details | global |
+| `4` | jump to downloads | global |
+| `5` | jump to settings | global |
+| `j` / `down` | move selection down | global |
+| `k` / `up` | move selection up | global |
+| `enter` | add torrent (results) / open details (downloads) | global |
+| `d` | details | global |
+| `s` | cycle sort column | results |
+| `S` | reverse sort | results |
+| `t` | toggle trust filter (Trusted and above) | results |
+| `o` | open downloaded file | downloads |
+| `f` | open containing folder | downloads |
+| `u` | open source page in browser | global |
+| `p` | pause/resume | downloads |
+| `x` | remove (opens keep/delete data confirm) | downloads |
+| `?` | toggle this help overlay | global |
+| `q` / `ctrl+c` | quit (prompts if downloads active) | global |
+| `e` | view source errors, if any (T-052; DEC-092) | search, results, details, downloads |
+<!-- keymap:end -->
+
+### Settings screen
+
+Adding, editing, and testing a source needs more one-key actions than fit in the `?` overlay's
+80×24 budget, so Settings claims its own list-view keys directly and shows them as a one-line
+legend under the list instead:
+
+`a` add · `e` edit · `t` test (`esc` cancels) · `d` test detail · `space` enable/disable ·
+`x` remove · `r` reload definitions · `p` preferences
+
+While an add/edit form, the preferences panel, or the aggregator-import wizard is open, `tab` /
+`shift+tab` move between fields, `ctrl+s` or `enter` saves, and `esc` cancels (confirming first
+if you've made changes) — each has a couple of its own extra keys (`ctrl+t` test, `ctrl+r`
+reveal/mask a credential, `ctrl+x` remove a destination) covered by the form's own footer.
 
 ### Trust badges
 
@@ -322,7 +363,8 @@ kitty, Windows Terminal, the VS Code integrated terminal, tmux, GNU screen, and 
 
 - Colour degrades automatically: truecolor → 256 → 16 → monochrome. `NO_COLOR=1` forces
   monochrome.
-- `--ascii` swaps block glyphs for plain ASCII if your font renders them badly.
+- `ascii = true` in `config.toml` swaps block glyphs for plain ASCII if your font renders them
+  badly. A `--ascii` flag is planned but not wired yet — see Status above.
 - Piping output or running with `TERM=dumb` prints a message and exits rather than emitting
   escape-sequence garbage.
 - Minimum usable size is 80×24. Below that, columns drop right-to-left rather than wrapping.
@@ -361,9 +403,23 @@ Parse failures on a scraper source usually mean the site changed its markup — 
 Intended. A failing source never blocks the rest; the status bar shows `2/4 sources failed` and
 `tab` expands the detail.
 
+**A download is refused, or an active one pauses itself with no peer error**
+Intended — `min_free_space` (default 1GB). Adding a torrent that would leave less than that much
+free at its destination is refused up front; one already downloading is re-checked every 10s and
+paused, not left to fill the disk, if free space drops below the margin partway through. Free up
+space at that destination (or lower `min_free_space` in Settings' preferences panel) and resume it
+with `p`.
+
+**I changed a setting in the preferences panel and nothing happened**
+Most fields need a restart to take effect — the save confirmation names exactly which ones
+("restart to apply: ..."). Only the download directory, saved destinations, and the free-space
+margin apply immediately; rate limits, peer/port limits, seed policy, search timeout, theme, and
+ASCII mode are read once at startup and take a restart. `ascii = true` is the one exception this
+mirrors: forcing it live has no code path yet either (Backlog `T-982`).
+
 **Columns are misaligned or the table looks garbled**
-Usually a font without block-glyph coverage. Try `tortui --ascii`. If it happens after resizing,
-that's a bug — please file it with `doctor` output and your terminal name.
+Usually a font without block-glyph coverage. Try `ascii = true` in `config.toml`. If it happens
+after resizing, that's a bug — please file it with `doctor` output and your terminal name.
 
 **Colours look flat inside tmux**
 tmux masks truecolor by default. Add to `~/.tmux.conf`:
@@ -415,8 +471,8 @@ against (`anacrolix/dht/v2`, `generics`, `log`, `mmsg`, `multiless`, `sync`, `up
 `github.com/go-llsqlite/adapter`, which its storage layer reaches. MPL-2.0 is a file-level
 copyleft license whose obligations attach to those dependencies' own source files and do not
 extend to tortui's MIT-licensed code. See [`AGENT.md`](AGENT.md) §16 for the full list, the
-reasoning and the scope. (None of them is a `go.mod` dependency as of this writing — they land
-with the engine implementation — so they do not yet appear in `NOTICE`.)
+reasoning and the scope. All ten are `go.mod` dependencies as of this writing and appear in
+`NOTICE`.
 
 **How the named exception is actually enforced.** `go-licenses check --allowed_licenses`,
 which `make licenses` runs, is a global license allowlist with no per-module scoping — putting

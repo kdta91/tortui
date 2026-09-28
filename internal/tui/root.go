@@ -66,6 +66,13 @@ type Model struct {
 	// data-backed cursor.
 	selection int
 
+	// firstRun is true while the one-time welcome overlay (T-090,
+	// firstrun.go) is open. Set only via WithFirstRun(true); every existing
+	// caller that never passes it starts on ScreenSearch exactly as before.
+	// Dismissed by any key, so it stays a plain bool rather than a
+	// components.Dialog — the same reasoning as errorDetail below.
+	firstRun bool
+
 	showHelp bool
 	// quitConfirm is root's one Dialog instance (T-054): the "quit with
 	// active downloads?" prompt. It used to be a bare bool (T-051); it is
@@ -625,6 +632,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // modal is open, or the current screen.
 func (m Model) context() Context {
 	switch {
+	case m.firstRun:
+		return ContextFirstRun
 	case m.quitConfirm.IsOpen():
 		return ContextQuitConfirm
 	case m.removeConfirm.IsOpen():
@@ -656,6 +665,21 @@ func (m Model) context() Context {
 // implement and is a deliberate no-op — a later task gives it behaviour by
 // handling it in that screen's own Update, not by changing this switch.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The first-run welcome overlay (T-090, firstrun.go) owns every key
+	// while it is open: any key dismisses it, the same "modal owns every
+	// key" pattern the destination picker and settings forms use below, so
+	// it can never fall through to a real action on the very first frame.
+	// This includes q and ctrl+c: pressing either here only dismisses the
+	// overlay rather than quitting, since it is the very first frame and
+	// there is nothing running yet to confirm quitting over (unlike
+	// ActionQuit's own "prompts if downloads active" below, which only
+	// ever runs once this overlay is gone). A second q/ctrl+c, after
+	// dismissal, quits normally.
+	if m.firstRun {
+		m.firstRun = false
+		return m, nil
+	}
+
 	// The destination picker (T-074) is modal and owns every key while it
 	// is open, including typing into its path field.
 	if m.dest.open {
@@ -1013,6 +1037,8 @@ func (m Model) View() string {
 	var body string
 
 	switch m.context() {
+	case ContextFirstRun:
+		body = m.renderFirstRun()
 	case ContextHelp:
 		body = m.renderHelp()
 	case ContextQuitConfirm:
