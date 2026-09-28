@@ -4,11 +4,12 @@
 // in the rest of the codebase may import internal/app (AGENT.md §4) —
 // cmd/tortui calls into it, and it calls back to nothing.
 //
-// Today it holds exactly one entry point, Demo (T-056; see AGENT.md §15):
-// --demo's composition of internal/engine/fake and internal/indexer/fake
-// into the real internal/tui.Model. Wiring the real engine/indexer adapters
-// together for a production run is a later, still-open task's job and is
-// deliberately not built here.
+// It holds two entry points. New and App (app.go, T-095) are the production
+// root behind a plain `tortui`: real config, file log, single-instance lock,
+// store, anacrolix engine, indexer registry, session resume, and the TUI,
+// with the lifecycle shutdown sequence on every exit path. Demo (T-056; see
+// AGENT.md §15) is --demo's composition of internal/engine/fake and
+// internal/indexer/fake into the same internal/tui.Model.
 //
 // # What --demo actually exercises today, and what it does not yet
 //

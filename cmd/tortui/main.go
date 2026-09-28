@@ -59,24 +59,11 @@ func run(args []string, out *os.File) int {
 	}
 
 	if *g.demo {
-		return runDemo(out)
+		return runDemo(out, *g.ascii)
 	}
 
-	// g.config is accepted but not yet consumed here: internal/config
-	// (T-002) implements loading, but wiring it into main happens once the
-	// composition root (internal/app) exists.
-	//
-	// internal/config.Config has no log_level/log_file keys yet (that
-	// remains T-003's deferred scope — see DEC-028), so the config-side
-	// input to these precedence functions is empty for now. Once the
-	// composition root (internal/app) loads config.toml, its resolved log
-	// settings become the configLevel/configFile arguments here instead of
-	// "". The flag and TORTUI_LOG_LEVEL/TORTUI_LOG_FILE env-var tiers
-	// already work end-to-end today.
-	resolvedLevel := logging.ResolveLevel("", *g.logLevel)
-	resolvedFile := logging.ResolveFile("", *g.logFile)
-
-	if _, err := logging.ParseLevel(resolvedLevel); err != nil {
+	// Reject a bad --log-level/TORTUI_LOG_LEVEL before anything is written.
+	if _, err := logging.ParseLevel(logging.ResolveLevel("", *g.logLevel)); err != nil {
 		if _, werr := fmt.Fprintln(out, err); werr != nil {
 			return 1
 		}
@@ -84,11 +71,5 @@ func run(args []string, out *os.File) int {
 		return 1
 	}
 
-	// The TUI, engine, and indexer registry are wired here in later tasks
-	// (see internal/app). Nothing to compose yet.
-	if _, err := fmt.Fprintf(out, "tortui: not yet implemented — see TASK_TRACKER.md (log level=%q, log file=%q)\n", resolvedLevel, resolvedFile); err != nil {
-		return 1
-	}
-
-	return 0
+	return runApp(out, g)
 }

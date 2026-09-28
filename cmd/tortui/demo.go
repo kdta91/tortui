@@ -16,8 +16,8 @@ import (
 // internal/app.Demo — the composition root — for everything else. This
 // function is wiring only (AGENT.md §4): it does no seeding, no scripting,
 // and imports no engine or indexer package directly.
-func runDemo(out *os.File) int {
-	capability := theme.Detect(theme.DetectOptions{Out: out})
+func runDemo(out *os.File, ascii bool) int {
+	capability := theme.Detect(theme.DetectOptions{Out: out, ForceASCII: ascii})
 	if !capability.Interactive {
 		if _, err := fmt.Fprintln(out, theme.RefusalMessage()); err != nil {
 			return 1

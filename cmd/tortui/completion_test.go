@@ -77,7 +77,7 @@ func TestFlagNamesMatchesFlagSet(t *testing.T) {
 	fs, _ := globalFlagSet(os.Stderr)
 	names := flagNames(fs)
 
-	want := []string{"--config", "--demo", "--log-file", "--log-level", "--version"}
+	want := []string{"--ascii", "--config", "--demo", "--log-file", "--log-level", "--version"}
 	if len(names) != len(want) {
 		t.Fatalf("flagNames = %v, want %v", names, want)
 	}

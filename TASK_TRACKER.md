@@ -85,44 +85,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 9 — Release readiness
 
-**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite · `T-092` Build and release · `T-093` Final hardening pass.
-
----
-
-### T-095 · Composition root
-```
-status: todo
-depends: T-093
-tier: H
-```
-**Scope (owner, 2026-09-28, DEC-128):** folds Backlog `T-950`, `T-967` and the startup half of
-`T-970`. Plain `tortui` must become the real app; today it prints "not yet implemented".
-
-**Acceptance**
-- `internal/app` gains the production composition root; `cmd/tortui/main.go` stays wiring only
-  (AGENT.md §4, ~80 lines) and the "not yet implemented" stub and its test are gone.
-- Startup order: config load (creating defaults on first run) → rotating log sink (never
-  stdout/stderr; anacrolix logger routed into it) → single-instance lock (`internal/lifecycle`
-  lock; a second instance refuses with a clear message) → raise the fd soft limit (darwin/linux)
-  → `store.OpenStore` → anacrolix engine with every known destination root (default, saved
-  destinations, `store.Destinations`) → indexer registry with the bundled definitions plus the
-  user's `[[indexer]]` entries → `lifecycle.Session.Resume` (show `ResumeReport.Missing` on first
-  render) → `tui.New` → run.
-- `tui.New` receives every production option that exists today: `WithSearcher`, `WithHistory`,
-  `WithTorrentStore`, `WithDownloadDir`, `WithSavedDestinations`, `WithDestinationStore`,
-  `WithMinFreeSpace`, `WithFirstRun` (first run only), plus theme/ASCII from config.
-- `--ascii` is a real flag, and it and `ascii = true` select the ASCII glyph fallback (AGENT.md §14).
-- Shutdown runs the existing `lifecycle` sequence on quit, SIGINT and SIGTERM, with
-  `ShutdownOptions.Session`, `Save` after every add/remove, and releases the lock. The terminal is
-  restored on every exit path, including a panic.
-- With an empty `TORTUI_HOME` and no config, `tortui` starts on Latest with the bundled sources
-  enabled and no prompt beyond the first-run overlay (AGENT.md §1 standalone contract).
-- Unit tests build the real root against a temp `TORTUI_HOME` with zero network (injected HTTP
-  transport or fixture registry, AGENT.md §6.7): defaults written, lock taken, a second instance
-  refused, a clean shutdown saves the session and releases the lock, goleak clean.
-- `internal/app`'s `TestZeroConfigStandaloneSearchAddDownload` (T-091) goes through this root
-  instead of assembling pieces itself (compile-verified; running it stays owner-only).
-- README Status notice and `docs/running.md` updated: `make run` and bare `tortui` now work.
+**Done (archived in `docs/tracker-archive.md`):** `T-090` Documentation and first run · `T-091` Integration suite · `T-092` Build and release · `T-093` Final hardening pass · `T-095` Composition root.
 
 ---
 
@@ -525,7 +488,7 @@ when it reaches it and does not start backlog items on its own.
   of refusing again; a queued spec whose promote-time `attach` fails stays tracked via `e.fail` the
   same way. Untrack (or re-evaluate) refused entries on re-`Add`, as `untrackFailedSpec` does for
   `addSpec`. Found in review of T-034 (PR #36).
-- `T-950` *(scheduled as T-095, DEC-128)* Wire `lifecycle.Session` into the composition root when one exists: `NewSession` after
+- `T-950` *(resolved by T-095)* Wire `lifecycle.Session` into the composition root when one exists: `NewSession` after
   `OpenStore` and the engine, `Resume` before the TUI starts (show `ResumeReport.Missing` on
   first render), `Save` after every add/remove, and `ShutdownOptions.Session`. The add flow
   (T-070) records `Origin` with `SetTorrent` before `Save`; `Save` keeps it. From T-041. Also pass
@@ -607,7 +570,7 @@ when it reaches it and does not start backlog items on its own.
   network call takes a `context.Context` with a deadline"). Neither call site currently bounds how
   long a hung source or engine call can block the goroutine the returned `tea.Cmd` runs on. Found
   in review of T-070 (PR #43).
-- `T-967` *(scheduled as T-095, DEC-128)* Extend T-950 (composition-root wiring) to also pass `tui.WithTorrentStore(store)` and
+- `T-967` *(resolved by T-095)* Extend T-950 (composition-root wiring) to also pass `tui.WithTorrentStore(store)` and
   `tui.WithDownloadDir(cfg.Paths.DownloadDir)` into the production `tui.New` call. Both options
   exist and are exercised by tests since T-070, but no production call site passes either yet, so
   the add flow's Origin persistence and configured download directory are inert outside tests
@@ -628,7 +591,7 @@ when it reaches it and does not start backlog items on its own.
   the launcher only opens/reveals, never writes), but it is not closed. Closing it would mean
   handing the launcher an already-open handle, which none of the three OS launchers accept.
   Found in review of T-073 (PR #46).
-- `T-970` *(scheduled as T-095/T-096, DEC-128)* Production wiring for T-074: the composition root (T-950/T-967) must also pass
+- `T-970` *(startup half resolved by T-095; runtime half scheduled as T-096)* Production wiring for T-074: the composition root (T-950/T-967) must also pass
   `tui.WithDestinationStore(store)` and `tui.WithMinFreeSpace(<parsed min_free_space>)` into
   `tui.New`, and T-082 must call `engine.RootAdder.AddRoot` when a saved destination is added at
   runtime (config's saved destinations are engine roots only at construction). Found in T-074.
@@ -691,6 +654,12 @@ when it reaches it and does not start backlog items on its own.
   a method — implementing this needs a small wrapper error type in each adapter, not just a method
   addition. Also, no composition root calls `TestSource` with a real adapter at all yet (Backlog
   `T-975`), so this has no live caller either way until then. Found in T-081.
+
+- `T-992` The composition root builds each `[[indexer]]` torznab source with `torznab.New`, whose
+  caps are the fail-closed baseline (keyword search only), and never calls `torznab.Discover`, so a
+  configured torznab source is greyed out for Latest (including the startup Latest query) until
+  something probes its caps. Run the caps probe once per source off the UI goroutine after startup
+  (bounded, AGENT.md §6.2/§6.13) and re-register with the discovered caps. Found in T-095.
 
 ---
 
@@ -829,6 +798,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-126 | 2026-09-28 | T-092: goreleaser config uses homebrew_casks, not the deprecated brews pipe; run()/runDoctor() parse argv through the same flag-set constructors completions walk; each publisher's skip_upload is templated on its own token (not `auto`, which only skips prereleases); cask gets a quarantine-clearing postflight hook |
 | DEC-127 | 2026-09-28 | T-093: goleak on every package's TestMain with third-party-only ignores; otel bumped to 1.42.0 (adds MIT cespare/xxhash/v2); x/crypto ssh/openpgp findings triaged as not compiled in (bump needs go 1.26, T-990); make cover enforces per-package §9 floors (T-916) |
 | DEC-128 | 2026-09-28 | Owner scheduled the missing composition root (T-095), its settings wiring (T-096) and the Windows engine storage fix (T-097) ahead of T-094; folds Backlog T-950/T-967/T-970/T-975/T-955/T-954 |
+| DEC-129 | 2026-09-28 | T-095: "starts on Latest" read as one Latest fetch per launch against the selected sources (tui.WithStartupLatest), never a timer, not yanking a user who already left Search; session saves after add/remove are a TUI hook (tui.WithSessionSaver) so they follow the add flow's SetTorrent, not an engine wrapper |
 
 ## Blocked
 

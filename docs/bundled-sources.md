@@ -113,10 +113,10 @@ with the same `id` as a bundled one **replaces** it — `builtin.Merge` in
 `internal/indexer/scraper/builtin/builtin.go` resolves the override by `id`, user side winning.
 This is how a broken bundled selector gets repaired by editing a text file rather than waiting
 for a release, and how a user can disable a default entirely by pointing its `id` at a
-definition of their own that does nothing they don't want. Wiring `Merge` into the running
-registry and the first-run flow is the composition root's job (`internal/app`, not yet built —
-T-090 and later), following the same "ship the package's full behaviour, defer main-wiring to
-the task that has somewhere to wire it into" pattern T-002/T-003 used.
+definition of their own that does nothing they don't want. The composition root
+(`internal/app`, T-095) registers every bundled source through `Merge` on every start, enabled
+with no setup; a `[[indexer]]` entry in `config.toml` with a bundled source's `id` takes its
+place, so `enabled = false` under that `id` turns the default off.
 
 ## What was deliberately not built here
 

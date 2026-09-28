@@ -8,12 +8,9 @@ Single static binary that works on its own. No daemon, no indexer proxy, no Tran
 qBittorrent behind it, nothing to install first — download it and you can search and download
 straight away. Runs on **macOS, Linux, and Windows**.
 
-> **Status:** under active development. Every screen, adapter, and engine piece described below
-> is built and tested on its own — but the composition root that wires them into the plain
-> `tortui` command (real config, real sources, real downloads) doesn't exist yet (tracked as
-> `T-950` and its follow-ons in `TASK_TRACKER.md`'s Backlog). What runs today: `tortui --version`,
-> `tortui doctor`, and `tortui --demo` (the full UI, end to end, against synthetic data). Running
-> `tortui` with no flags currently prints a stub line and exits. See
+> **Status:** under active development, pre-release. Plain `tortui` runs the real app — your
+> config, the bundled sources plus your own, the built-in engine, real downloads that resume
+> after a restart. `tortui --demo` runs the same UI against synthetic data. See
 > [`TASK_TRACKER.md`](TASK_TRACKER.md) for current build state.
 
 ---
@@ -201,12 +198,12 @@ with `asciinema play docs/assets/demo.cast` or at [asciinema.org](https://asciin
 captured straight from `--demo`, so every source id, filename, and path in it is synthetic
 fixture data, not anything real.
 
-Running `tortui` with no flags is meant to start the real thing — your own config, your own
-sources, real downloads — but that path isn't wired up yet (see the Status notice above): right
-now it prints a one-line stub and exits. `--demo` is the whole UI end to end today; `doctor`
-already reads and validates your real config. Once the composition root lands, `tortui` will
-write a default config on first run and tell you where, the same way `doctor` already resolves
-it.
+Running `tortui` with no flags starts the real thing — your own config, your own sources, real
+downloads. On first run it writes a default config (the status bar says where) and shows a
+one-time welcome with the legal notice. Each start fetches your sources' latest additions once,
+so there is something to browse straight away — once per launch, never on a timer. Only one
+tortui runs per state directory; a second one says so and exits. Quitting (`q`), `SIGINT`, or
+`SIGTERM` pauses and saves your downloads before exiting, and the next start resumes them.
 
 ---
 
@@ -397,8 +394,8 @@ kitty, Windows Terminal, the VS Code integrated terminal, tmux, GNU screen, and 
 
 - Colour degrades automatically: truecolor → 256 → 16 → monochrome. `NO_COLOR=1` forces
   monochrome.
-- `ascii = true` in `config.toml` swaps block glyphs for plain ASCII if your font renders them
-  badly. A `--ascii` flag is planned but not wired yet — see Status above.
+- `ascii = true` in `config.toml`, or the `--ascii` flag, swaps block glyphs for plain ASCII if
+  your font renders them badly.
 - Piping output or running with `TERM=dumb` prints a message and exits rather than emitting
   escape-sequence garbage.
 - Minimum usable size is 80×24. Below that, columns drop right-to-left rather than wrapping.

@@ -25,6 +25,7 @@ var completionShells = []string{"bash", "zsh", "fish", "powershell"}
 type globalFlags struct {
 	version  *bool
 	demo     *bool
+	ascii    *bool
 	config   *string
 	logLevel *string
 	logFile  *string
@@ -44,6 +45,7 @@ func globalFlagSet(out *os.File) (*flag.FlagSet, *globalFlags) {
 	g := &globalFlags{}
 	g.version = fs.Bool("version", false, "print version information and exit")
 	g.demo = fs.Bool("demo", false, "run the TUI against a fake engine and fixture indexer — zero network, zero writes outside a temp dir (AGENT.md §15)")
+	g.ascii = fs.Bool("ascii", false, "use ASCII glyphs instead of Unicode block characters (same as ascii = true in config.toml)")
 	g.config = fs.String("config", "", "path to config.toml (overrides the default XDG location)")
 	g.logLevel = fs.String("log-level", "", "override the configured log level (debug, info, warn, error)")
 	g.logFile = fs.String("log-file", "", "override the configured log file path")
