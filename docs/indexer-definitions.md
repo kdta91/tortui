@@ -98,9 +98,10 @@ between-result advertisements take care of themselves.
 | `regex` | Narrow the value: the first capture group of the first match, or the whole match when there is no group. No match yields empty. |
 | `transform` | A list of named transforms applied in order, at most eight. |
 | `layouts` | Go time layouts for `published`, tried before the built-in ones. Not allowed on any other field. |
+| `template` | Build the value from what was read: every `{{value}}` is replaced by it, path-escaped so it stays one path segment. For a source that returns only an item id and documents where that item's file lives — `template: /download/{{value}}/{{value}}.torrent` on `torrent_url`. `{{value}}` is the only placeholder and must appear at least once; an empty read value yields empty. |
 
 The value is read, **trimmed**, then matched against `regex`, then passed
-through `transform` in order.
+through `transform` in order, then placed into `template` if there is one.
 
 #### The fields, and what they become
 

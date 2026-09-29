@@ -4042,6 +4042,43 @@ mutation fails (quoted in the PR). No production behaviour change.
 
 ---
 
+### T-9010 · Internet Archive results carry the .torrent URL
+```
+status: done
+depends: T-9008
+tier: H
+```
+Owner decision (2026-09-29), from a real run: every Internet Archive download failed with
+"metadata fetch timed out after 1m0s: no peer supplied the torrent's info dictionary", because the
+definition maps only `btih` and the engine got a bare magnet with no trackers and no web seeds.
+
+**Acceptance:**
+- Every Internet Archive result, in both Search and Latest, carries `TorrentURL` =
+  `download/<identifier>/<identifier>_archive.torrent` under the definition's base URL, asserted
+  against the recorded Advanced Search fixture (no live network, AGENT.md §6.7).
+- The pattern is verified against the Archive's own documentation and cited in
+  `docs/bundled-sources.md`, as the definition's comments already are for other fields.
+- If the scraper cannot build that URL from `identifier`, the smallest general scraper capability
+  that can is added — no Internet Archive special-casing in Go (AGENT.md §1) — with validation
+  and tests of its own, and documented in `docs/indexer-definitions.md`.
+- Such a result reaches the engine by its `TorrentURL` alone: `Resolve` does not add a magnet
+  next to it (the engine refuses a source with two links).
+- A test proves the engine's TorrentURL fetch path hands the `.torrent`'s web seeds to the client:
+  with DHT, trackers and peer connections off, a download completes byte for byte from a
+  loopback web seed alone. It fails if the fetch path drops the web seeds.
+
+**Notes:** Scraper gains a general `template` field key (`{{value}}` only, path-escaped, must
+appear; empty value yields empty) and the bundled definition maps `torrent_url` with it. `Resolve`
+now returns a result with a `TorrentURL` unchanged even when it has an infohash. The Archive's
+items page says `/download/` addresses "may redirect" to a storage host, which httpx refused as
+cross-host; the engine's credential-free `.torrent` client now follows a redirect to a subdomain
+of the requested host only (new `httpx.Config.FollowSubdomainRedirects`, ignored when credentials
+are set; DEC-136). Unexported engine seams `webseeds` and `torrentTransport` drive
+`TestTorrentURLDownloadCompletesFromItsWebSeedWithNoPeers` (~5 s: the library's first web seed
+request waits on its own 5 s timer). All mutations named in the PR fail. Backlog T-9013, T-9014.
+
+---
+
 ## Blocked — Resolved
 
 

@@ -86,9 +86,11 @@
 //	            Result.Title into its dn=, and url.QueryEscape
 //	            percent-encodes that text rather than removing it, so an
 //	            opaque token survives unchanged.
-//	TorrentURL  The page's own download address, resolved against base_url
-//	            and refused unless it is http or https — and safe to log
-//	            regardless: internal/logging masks on the name.
+//	TorrentURL  The page's own download address — or the address the
+//	            field's template built around a path-escaped page value —
+//	            resolved against base_url and refused unless it is http or
+//	            https, and safe to log regardless: internal/logging masks
+//	            on the name.
 //	SizeBytes   Derived. Parsed as a number of bytes.
 //	Seeders     Derived. Parsed as an integer.
 //	Leechers    Derived. Parsed as an integer.
@@ -370,10 +372,13 @@ func (a *Adapter) results(rows []row, block *blockPlan, q indexer.Query) []index
 //   - A result that already carries a magnet is returned unchanged. This is
 //     the no-op the frozen contract in AGENT.md §5 requires, and it is
 //     checked first so it holds regardless of anything else on the result.
-//   - A result with an infohash but no magnet gets one built from the hash
-//     and its title.
-//   - A result with only a torrent URL is already usable — the engine
-//     fetches the file — so it too is returned unchanged.
+//   - A result that carries a torrent URL is already usable — the engine
+//     fetches the file — so it too is returned unchanged, even when it
+//     also has an infohash. The source's own .torrent carries the trackers
+//     and web seeds a magnet built from a bare hash has none of, and a
+//     result must reach the engine with exactly one link (T-9010).
+//   - A result with an infohash but neither link gets a magnet built from
+//     the hash and its title.
 //   - A result with none of the three returns ErrUnresolvable.
 //
 // Fetching the details page to find a magnet that the listing page did not
@@ -385,16 +390,16 @@ func (a *Adapter) Resolve(_ context.Context, r indexer.Result) (indexer.Result, 
 		return r, nil
 	}
 
+	if strings.TrimSpace(r.TorrentURL) != "" {
+		return r, nil
+	}
+
 	if hash := normaliseInfoHash(r.InfoHash); hash != "" {
 		resolved := r
 		resolved.InfoHash = hash
 		resolved.Magnet = magnetFor(hash, r.Title)
 
 		return resolved, nil
-	}
-
-	if strings.TrimSpace(r.TorrentURL) != "" {
-		return r, nil
 	}
 
 	// The failing result is not named. Every field that could name it —

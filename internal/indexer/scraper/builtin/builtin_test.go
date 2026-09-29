@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -132,8 +131,9 @@ const internetArchiveJSON = `{
 // archive.org, points a copy of the bundled Internet Archive definition at
 // it (mutating only BaseURL — the field a definition's own source never
 // carries a credential in, DEC-074 — leaves the selectors under test
-// exactly as shipped), and builds an adapter from it.
-func internetArchiveAdapter(t *testing.T) *scraper.Adapter {
+// exactly as shipped), and builds an adapter from it. It also returns the
+// fixture server's address, which every templated link is built under.
+func internetArchiveAdapter(t *testing.T) (*scraper.Adapter, string) {
 	t.Helper()
 
 	defs, err := Definitions()
@@ -175,7 +175,7 @@ func internetArchiveAdapter(t *testing.T) *scraper.Adapter {
 		t.Fatalf("scraper.New: %v", err)
 	}
 
-	return a
+	return a, addr
 }
 
 // TestInternetArchiveSearchMapsResultFields drives the shipped definition
@@ -185,7 +185,7 @@ func internetArchiveAdapter(t *testing.T) *scraper.Adapter {
 func TestInternetArchiveSearchMapsResultFields(t *testing.T) {
 	t.Parallel()
 
-	a := internetArchiveAdapter(t)
+	a, base := internetArchiveAdapter(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -231,16 +231,31 @@ func TestInternetArchiveSearchMapsResultFields(t *testing.T) {
 		t.Errorf("Trust = %v, want TrustUnknown: this source publishes no uploader trust metadata", got.Trust)
 	}
 
-	// Resolve derives a magnet from the infohash: this is what makes the
-	// result actionable end to end without the definition needing a
-	// magnet or torrent_url field the search API does not return.
+	// T-9010: every result carries the Archive-generated .torrent for its
+	// own item, download/<identifier>/<identifier>_archive.torrent under
+	// the base address, so the engine gets the file's trackers and web
+	// seeds instead of a bare-infohash magnet that no peer may answer.
+	for _, r := range results {
+		want := base + "/download/" + r.ID + "/" + r.ID + "_archive.torrent"
+		if r.TorrentURL != want {
+			t.Errorf("%s: TorrentURL = %q, want %q", r.ID, r.TorrentURL, want)
+		}
+	}
+
+	// Resolve leaves such a result alone: it is already usable, and it must
+	// reach the engine by that URL alone, not with a magnet next to it.
 	resolved, err := a.Resolve(ctx, got)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 
-	if !strings.HasPrefix(resolved.Magnet, "magnet:?xt=urn:btih:"+wantHash) {
-		t.Errorf("Resolve did not derive a usable magnet: %q", resolved.Magnet)
+	if resolved.Magnet != "" || resolved.TorrentURL != got.TorrentURL {
+		t.Errorf("Resolve = magnet %q, torrent %q; want no magnet and the torrent URL unchanged",
+			resolved.Magnet, resolved.TorrentURL)
+	}
+
+	if err := resolved.Validate(); err != nil {
+		t.Errorf("the resolved result is not usable: %v", err)
 	}
 }
 
@@ -250,7 +265,7 @@ func TestInternetArchiveSearchMapsResultFields(t *testing.T) {
 func TestInternetArchiveLatestUsesRecentAdditionsFeed(t *testing.T) {
 	t.Parallel()
 
-	a := internetArchiveAdapter(t)
+	a, base := internetArchiveAdapter(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -262,6 +277,10 @@ func TestInternetArchiveLatestUsesRecentAdditionsFeed(t *testing.T) {
 
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
+	}
+
+	if want := base + "/download/fulltext-01_202609/fulltext-01_202609_archive.torrent"; results[1].TorrentURL != want {
+		t.Errorf("latest TorrentURL = %q, want %q", results[1].TorrentURL, want)
 	}
 }
 

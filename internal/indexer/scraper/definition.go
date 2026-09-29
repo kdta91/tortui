@@ -152,7 +152,8 @@ type Block struct {
 // Field is how one value is pulled out of one result row.
 //
 // The value is read, whitespace-trimmed, matched against Regex when one is
-// set, and then passed through Transform in order. A selector that matches
+// set, passed through Transform in order, and finally placed into Template
+// when one is set. A selector that matches
 // nothing yields the empty string, which becomes the zero value of the
 // Result field it feeds — never an error. Only a definition that is
 // *structurally* wrong (an uncompilable selector, an unknown transform) is
@@ -186,6 +187,16 @@ type Field struct {
 	// before the built-in ones. They are refused on any other field,
 	// where they would silently do nothing.
 	Layouts []string `yaml:"layouts"`
+
+	// Template builds the field's value out of the value read, after
+	// Regex and Transform: every {{value}} in it is replaced by that value,
+	// path-escaped, so it always stays one path segment. It is how a
+	// source that returns only a bare id still yields a link — for
+	// example "/download/{{value}}/{{value}}.torrent" on torrent_url,
+	// which is then resolved against base_url like any other link. An
+	// empty read value yields empty, never the template's literal text.
+	// {{value}} is the only placeholder, and it must appear at least once.
+	Template string `yaml:"template"`
 }
 
 // Trust maps what a row says about its uploader onto indexer.Trust.

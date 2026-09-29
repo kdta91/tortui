@@ -44,6 +44,7 @@ type fieldPlan struct {
 	sel        matcher
 	transforms []transform
 	layouts    []string
+	template   string
 }
 
 // trustPlan is a compiled trust mapping.
@@ -340,7 +341,13 @@ func compileField(where, name string, spec Field, mode string) (*fieldPlan, erro
 		return nil, invalidSelector(where+".selector", selector, err)
 	}
 
-	out := &fieldPlan{sel: sel, attr: attr, layouts: spec.Layouts}
+	out := &fieldPlan{sel: sel, attr: attr, layouts: spec.Layouts, template: strings.TrimSpace(spec.Template)}
+
+	if out.template != "" {
+		if err := checkFieldTemplate(where+".template", out.template); err != nil {
+			return nil, err
+		}
+	}
 
 	if expr := strings.TrimSpace(spec.Regex); expr != "" {
 		// RE2: no backreferences, no lookaround, linear time in the

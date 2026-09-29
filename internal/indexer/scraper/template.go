@@ -70,6 +70,14 @@ func (s substitution) value(name string) (string, bool) {
 // placeholder's own name included: a param value is one of the three places
 // a user may have written their own credential (DEC-073).
 func checkTemplate(where, tmpl string) error {
+	return checkPlaceholders(where, tmpl, substitution{}.value, placeholderNames)
+}
+
+// checkPlaceholders is checkTemplate over any placeholder set: known
+// reports whether a name is one this kind of template substitutes, and
+// names lists them for the message. A field template (Field.Template) has a
+// set of its own, which is why the loop is shared rather than duplicated.
+func checkPlaceholders(where, tmpl string, known func(string) (string, bool), names []string) error {
 	rest := tmpl
 
 	for {
@@ -87,7 +95,7 @@ func checkTemplate(where, tmpl string) error {
 
 		name := strings.ToLower(strings.TrimSpace(rest[:end]))
 
-		if _, ok := (substitution{}).value(name); !ok {
+		if _, ok := known(name); !ok {
 			// The placeholder's own name is not echoed. It is text out
 			// of a param value, and a param value is one of the three
 			// places a user may have written their own credential
@@ -95,7 +103,7 @@ func checkTemplate(where, tmpl string) error {
 			// line they have to look at.
 			return invalid(where, fmt.Errorf(
 				"a {{placeholder}} in this value is %w (they are %s)",
-				ErrPlaceholderUnknown, strings.Join(placeholderNames, ", "),
+				ErrPlaceholderUnknown, strings.Join(names, ", "),
 			))
 		}
 
@@ -114,6 +122,12 @@ func checkTemplate(where, tmpl string) error {
 // literal text, so a path template keeps its slashes while a keyword that
 // contains one does not grow a path segment.
 func expand(tmpl string, sub substitution, escape func(string) string) (string, bool) {
+	return expandWith(tmpl, sub.value, escape)
+}
+
+// expandWith is expand over any placeholder set; lookup returns a name's
+// value and whether the name is known.
+func expandWith(tmpl string, lookup func(string) (string, bool), escape func(string) string) (string, bool) {
 	var (
 		out      strings.Builder
 		complete = true
@@ -144,7 +158,7 @@ func expand(tmpl string, sub substitution, escape func(string) string) (string, 
 
 		name := strings.ToLower(strings.TrimSpace(rest[:end]))
 
-		value, known := sub.value(name)
+		value, known := lookup(name)
 		if !known || value == "" {
 			complete = false
 		}
@@ -218,4 +232,58 @@ func (b *blockPlan) request(base *url.URL, q indexer.Query) (string, url.Values,
 	}
 
 	return target.String(), params, nil
+}
+
+// placeholderValue is the one placeholder a field template may contain: the
+// value the field's selector read, after its regex and transforms.
+const placeholderValue = "value"
+
+// fieldTemplateNames lists the field-template placeholders for a
+// validation message.
+var fieldTemplateNames = []string{placeholderValue}
+
+// fieldValue returns the lookup a field template is expanded with.
+func fieldValue(v string) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		if name == placeholderValue {
+			return v, true
+		}
+
+		return "", false
+	}
+}
+
+// checkFieldTemplate validates a field template: every placeholder is
+// closed, every one is {{value}}, and there is at least one. Like
+// checkTemplate it names the key and never the template's text (DEC-073).
+func checkFieldTemplate(where, tmpl string) error {
+	if err := checkPlaceholders(where, tmpl, fieldValue(""), fieldTemplateNames); err != nil {
+		return err
+	}
+
+	// Expansion changes the text exactly when it substituted something —
+	// a placeholder is always longer than the one-byte value put in its
+	// place — so an unchanged expansion means there was no {{value}}.
+	// That asks the question without a second parser.
+	if got, _ := expandWith(tmpl, fieldValue("v"), nil); got == tmpl {
+		return invalid(where, ErrTemplateValueMissing)
+	}
+
+	return nil
+}
+
+// fillFieldTemplate places a read value into a validated field template.
+// The value is path-escaped, so a value read off the response can never
+// add a path segment, a query or a fragment to the address the template
+// builds; the template's own literal text is left alone. An empty value
+// yields empty: a row that carried no id has no link to build, and the
+// template's bare text would be a link to nothing.
+func fillFieldTemplate(tmpl, v string) string {
+	if v == "" {
+		return ""
+	}
+
+	out, _ := expandWith(tmpl, fieldValue(v), url.PathEscape)
+
+	return out
 }
