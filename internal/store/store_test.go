@@ -238,3 +238,56 @@ func TestTorrentResumeFieldsSurviveReopen(t *testing.T) {
 		t.Fatalf("reopened record = %+v, want %+v", got, rec)
 	}
 }
+
+func TestClearHistoryPersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tortui.db")
+
+	s, err := open(path, time.Hour)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	for _, q := range []string{"one", "two"} {
+		if err := s.AddHistory(q); err != nil {
+			t.Fatalf("AddHistory: %v", err)
+		}
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if err := s.ClearHistory(); err != nil {
+		t.Fatalf("ClearHistory: %v", err)
+	}
+	if got := s.ListHistory(); len(got) != 0 {
+		t.Fatalf("ListHistory after clear = %+v, want empty", got)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s2, err := open(path, time.Hour)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = s2.Close() }()
+
+	if got := s2.ListHistory(); len(got) != 0 {
+		t.Fatalf("ListHistory after reopen = %+v, want empty", got)
+	}
+	// New queries still record after a clear.
+	if err := s2.AddHistory("three"); err != nil {
+		t.Fatalf("AddHistory: %v", err)
+	}
+	if got := s2.ListHistory(); len(got) != 1 || got[0].Text != "three" {
+		t.Fatalf("ListHistory = %+v", got)
+	}
+}
+
+func TestClearHistoryOnClosedStore(t *testing.T) {
+	s, _ := openTest(t, time.Hour)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := s.ClearHistory(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("ClearHistory after Close = %v, want ErrClosed", err)
+	}
+}

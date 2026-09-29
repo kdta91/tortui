@@ -152,14 +152,17 @@ const (
 	// restricts the results table to TrustTrusted and above, toggling off
 	// again on a second press.
 	ActionToggleTrustFilter Action = "toggle-trust-filter"
-	ActionOpenFile          Action = "open-file"
-	ActionOpenFolder        Action = "open-folder"
-	ActionOpenSource        Action = "open-source"
-	ActionPauseResume       Action = "pause-resume"
-	ActionRemove            Action = "remove"
-	ActionConfirmYes        Action = "confirm-yes"
-	ActionConfirmNo         Action = "confirm-no"
-	ActionCancel            Action = "cancel"
+	// ActionClearHistory opens the search screen's clear-recent-searches
+	// confirm dialog (T-9034).
+	ActionClearHistory Action = "clear-history"
+	ActionOpenFile     Action = "open-file"
+	ActionOpenFolder   Action = "open-folder"
+	ActionOpenSource   Action = "open-source"
+	ActionPauseResume  Action = "pause-resume"
+	ActionRemove       Action = "remove"
+	ActionConfirmYes   Action = "confirm-yes"
+	ActionConfirmNo    Action = "confirm-no"
+	ActionCancel       Action = "cancel"
 
 	// ActionToggleErrorDetail opens the status bar's source-error detail
 	// panel (T-052) when at least one source has failed, and — bound to a
@@ -228,6 +231,9 @@ const (
 	// ContextRemoveConfirm is the downloads screen's `x` dialog (T-072):
 	// remove keeping data, remove deleting data, or cancel.
 	ContextRemoveConfirm Context = "modal:remove-confirm"
+	// ContextClearHistoryConfirm is the search screen's `c` dialog
+	// (T-9034): clear every recent search, or cancel.
+	ContextClearHistoryConfirm Context = "modal:clear-history-confirm"
 	// ContextDestination is the add flow's destination picker (T-074,
 	// destination.go).
 	ContextDestination Context = "modal:destination"
@@ -338,6 +344,10 @@ func GlobalBindings() []Binding {
 		{
 			Keys: []string{"t"}, Action: ActionToggleTrustFilter, Help: "toggle trust filter (Trusted and above)",
 			Contexts: []Context{screenContext(ScreenResults)},
+		},
+		{
+			Keys: []string{"c"}, Action: ActionClearHistory, Help: "clear recent searches (asks first)",
+			Contexts: []Context{screenContext(ScreenSearch)},
 		},
 		{
 			Keys: []string{"o"}, Action: ActionOpenFile, Help: "open downloaded file",
@@ -531,6 +541,20 @@ func removeConfirmBindings() []Binding {
 	}
 }
 
+// clearHistoryConfirmBindings are the bindings live while the search
+// screen's clear-recent-searches dialog (ContextClearHistoryConfirm) is
+// open. Cancel is the default choice, so a stray enter changes nothing.
+func clearHistoryConfirmBindings() []Binding {
+	ctx := []Context{ContextClearHistoryConfirm}
+
+	return []Binding{
+		{Keys: []string{"j", "down"}, Action: ActionMoveDown, Help: "next choice", Contexts: ctx},
+		{Keys: []string{"k", "up"}, Action: ActionMoveUp, Help: "previous choice", Contexts: ctx},
+		{Keys: []string{"enter"}, Action: ActionConfirmYes, Help: "confirm highlighted choice", Contexts: ctx},
+		{Keys: []string{"esc", "n"}, Action: ActionCancel, Help: "cancel", Contexts: ctx},
+	}
+}
+
 // destinationBindings are the bindings live while the destination picker
 // (ContextDestination) is open. j/k only move while the cursor is on a
 // fixed row; on the path field they type (destination.go).
@@ -555,6 +579,7 @@ func AllBindings() []Binding {
 	all = append(all, quitConfirmBindings()...)
 	all = append(all, errorDetailBindings()...)
 	all = append(all, removeConfirmBindings()...)
+	all = append(all, clearHistoryConfirmBindings()...)
 	all = append(all, destinationBindings()...)
 	all = append(all, sourceFormBindings()...)
 	all = append(all, sourceRemoveConfirmBindings()...)

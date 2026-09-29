@@ -4633,3 +4633,34 @@ definition's own `base_url` and never reads the config URL.
 `def.BaseURL`. `config.Validate` also stopped requiring `url` for scraper indexers, otherwise the
 saved config would fail to load on restart (test added). Import fills Name with the definition id
 (existing behaviour), so the doc says so. Backlog T-9032, T-9033.
+
+### T-9034 · Clear recent searches; source-toggle hint
+
+```
+status: done
+depends: T-9031
+tier: M
+```
+Owner request (2026-09-29). The Search screen keeps up to five recent queries with no way to
+clear them, and nothing on screen says how to toggle a source in or out of a search.
+
+**Acceptance:**
+1. On the Search screen a key clears recent searches. It does not clash with AGENT.md §7's keymap
+   or the screen's existing keys, and is documented in the keymap table, README and the `?`
+   overlay. It opens the standard confirm dialog, at most one modal deep. On confirm all stored
+   query history is removed (`HistoryStore` and `store.Store` gain a clear method; the bbolt write
+   runs off the Update goroutine, §6.1 and §13) and the "Recent:" line disappears. Cancel changes
+   nothing.
+2. The clear survives a restart: history is empty after reopening the store (tested).
+3. The Search screen's help line says how to toggle a source: on a source row, space toggles it in
+   or out of the search (hint only; `toggleAtCursor` already exists). Goldens updated if they
+   change, diffs inspected.
+4. Tests: clear with confirm, cancel keeps history, store clear persists, no blocking I/O in Update
+   (the clear runs as a `tea.Cmd`).
+
+**Notes:** Key is `c` (search screen only; typing into the query still wins while editing). The
+dialog defaults to Cancel. `store.ClearHistory` empties memory and flushes at once so the clear is
+durable without waiting on the debounce. The legend line under the form always shows the space
+hint and adds `c clear recent` only while history exists. The overlay for Search hit the 24-row
+floor with the new binding, so `renderHelp` no longer emits a trailing newline. No golden files
+cover the Search screen. Backlog T-9035, T-9036 (PR #72 review notes).

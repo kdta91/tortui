@@ -56,6 +56,9 @@ type Searcher interface {
 type HistoryStore interface {
 	ListHistory() []store.HistoryEntry
 	AddHistory(text string) error
+	// ClearHistory removes every stored query. It may block on disk, so the
+	// search screen only ever calls it from a tea.Cmd.
+	ClearHistory() error
 }
 
 // maxRecentSuggestions caps how many recent queries are offered as
@@ -774,6 +777,9 @@ func (m Model) renderSearchScreen() string {
 		b.WriteString(th.Muted.Render("Recent: " + strings.Join(s.recent, ", ")))
 	}
 
+	b.WriteString("\n\n")
+	b.WriteString(th.Muted.Render(searchHelpLine(len(s.recent) > 0)))
+
 	return truncateLines(b.String(), m.width)
 }
 
@@ -883,4 +889,17 @@ func truncateLines(s string, width int) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// searchHelpLine is the Search screen's one-line key legend. The space and
+// esc behaviours are claimed directly by handleKey rather than declared as
+// Bindings (keymap.go: the ? overlay's 80x24 budget), so this line is where
+// a user finds them. `c` is offered only while there is history to clear.
+func searchHelpLine(hasRecent bool) string {
+	line := "space on a source row toggles it in or out of the search"
+	if hasRecent {
+		line += " · c clear recent"
+	}
+
+	return line
 }
