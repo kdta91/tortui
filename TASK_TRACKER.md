@@ -708,6 +708,12 @@ when it reaches it and does not start backlog items on its own.
   `ErrAmbiguousSource`. A torznab item with a magnet and an enclosure, or a scraper definition
   mapping both `magnet` and `torrent_url`, therefore cannot be added. Pick one (prefer the
   `.torrent`, which carries trackers and web seeds) in the TUI, with a test. Found in T-9010.
+- `T-9015` On an httpx client built with `FollowSubdomainRedirects`, a per-request header set by
+  the caller (a `Cookie` or `Authorization` in the Request's own headers, as opposed to injected
+  credentials) would be forwarded by net/http to the subdomain a redirect lands on. Not reachable
+  today: the engine's `.torrent` fetch passes no headers. Either strip or refuse sensitive
+  per-request headers when the option is on, or document the limitation on the option. Found in
+  review of T-9010 (PR #64).
 
 ---
 

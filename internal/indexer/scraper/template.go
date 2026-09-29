@@ -273,17 +273,31 @@ func checkFieldTemplate(where, tmpl string) error {
 }
 
 // fillFieldTemplate places a read value into a validated field template.
-// The value is path-escaped, so a value read off the response can never
-// add a path segment, a query or a fragment to the address the template
-// builds; the template's own literal text is left alone. An empty value
-// yields empty: a row that carried no id has no link to build, and the
-// template's bare text would be a link to nothing.
+// The value is escaped as one path segment (escapeSegment), so a value read
+// off the response can never add or cancel a path segment, or add a query
+// or a fragment, to the address the template builds; the template's own
+// literal text is left alone. An empty value yields empty: a row that
+// carried no id has no link to build, and the template's bare text would
+// be a link to nothing.
 func fillFieldTemplate(tmpl, v string) string {
 	if v == "" {
 		return ""
 	}
 
-	out, _ := expandWith(tmpl, fieldValue(v), url.PathEscape)
+	out, _ := expandWith(tmpl, fieldValue(v), escapeSegment)
 
 	return out
+}
+
+// escapeSegment path-escapes a value so it stays exactly one path segment.
+// url.PathEscape covers "/", "?" and "#", but leaves "." alone, so a value
+// that is exactly "." or ".." would still be a dot segment that URL
+// resolution removes — ".." cancelling the segment before it. Those two
+// are percent-encoded dot by dot instead, which resolution leaves in place.
+func escapeSegment(v string) string {
+	if v == "." || v == ".." {
+		return strings.Repeat("%2E", len(v))
+	}
+
+	return url.PathEscape(v)
 }

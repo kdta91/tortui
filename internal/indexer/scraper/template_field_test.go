@@ -32,12 +32,14 @@ search:
 `
 
 // templatedRows are the rows the fixture source answers with: an ordinary
-// id, one that tries to add path segments and a query of its own, and one
-// with no id at all.
+// id, one that tries to add path segments and a query of its own, one with
+// no id at all, and two that are dot segments on their own.
 const templatedRows = `{"items": [
 	{"id": "item-0001", "name": "Invented Public Domain Film"},
 	{"id": "a b/../../elsewhere?x=1#f", "name": "Invented Hostile Id"},
-	{"id": "", "name": "Invented Row Without Id"}
+	{"id": "", "name": "Invented Row Without Id"},
+	{"id": "..", "name": "Invented Dot-Dot Id"},
+	{"id": ".", "name": "Invented Dot Id"}
 ]}`
 
 // TestFieldTemplateBuildsALinkFromAReadValue is the T-9010 capability: a
@@ -60,8 +62,8 @@ func TestFieldTemplateBuildsALinkFromAReadValue(t *testing.T) {
 		t.Fatalf("Search: %v", err)
 	}
 
-	if len(results) != 3 {
-		t.Fatalf("got %d results, want 3", len(results))
+	if len(results) != 5 {
+		t.Fatalf("got %d results, want 5", len(results))
 	}
 
 	base := src.server.URL
@@ -85,6 +87,19 @@ func TestFieldTemplateBuildsALinkFromAReadValue(t *testing.T) {
 
 	if results[2].TorrentURL != "" {
 		t.Errorf("TorrentURL = %q for a row with no id, want empty", results[2].TorrentURL)
+	}
+
+	// An id that is exactly ".." or "." must not cancel or collapse the
+	// /download/ segment in front of it.
+	dots := map[int]string{
+		3: base + "/download/%2E%2E/%2E%2E_generated.torrent",
+		4: base + "/download/%2E/%2E_generated.torrent",
+	}
+
+	for i, want := range dots {
+		if got := results[i].TorrentURL; got != want {
+			t.Errorf("TorrentURL for id %q = %q, want %q", results[i].ID, got, want)
+		}
 	}
 }
 

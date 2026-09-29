@@ -38,6 +38,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -458,7 +459,11 @@ func checkRedirectHosts(req *http.Request, via []*http.Request, subdomains bool)
 // isSubdomainOf reports whether dest's host is a strict subdomain of
 // origin's — "store.files.example.org" under "files.example.org" — on the
 // same port. The comparison is by DNS label: "evilfiles.example.org" is not
-// under "files.example.org", and an IP-address origin has no subdomains.
+// under "files.example.org". Refused outright: an IP address on either side
+// (an address has no subdomains, and a label-shaped origin such as "0.1"
+// must not admit the address "10.0.0.1"), a parent with no dot (a bare
+// top-level name like "org" is not one operator's domain), and a target
+// with an empty label ("a..files.example.org").
 func isSubdomainOf(dest, origin *url.URL) bool {
 	if dest.Port() != origin.Port() {
 		return false
@@ -467,7 +472,11 @@ func isSubdomainOf(dest, origin *url.URL) bool {
 	parent := strings.ToLower(strings.TrimSuffix(origin.Hostname(), "."))
 	child := strings.ToLower(strings.TrimSuffix(dest.Hostname(), "."))
 
-	if parent == "" || net.ParseIP(parent) != nil {
+	if !strings.Contains(parent, ".") || net.ParseIP(parent) != nil || net.ParseIP(child) != nil {
+		return false
+	}
+
+	if slices.Contains(strings.Split(child, "."), "") {
 		return false
 	}
 

@@ -279,8 +279,11 @@ func TestInternetArchiveLatestUsesRecentAdditionsFeed(t *testing.T) {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
 
-	if want := base + "/download/fulltext-01_202609/fulltext-01_202609_archive.torrent"; results[1].TorrentURL != want {
-		t.Errorf("latest TorrentURL = %q, want %q", results[1].TorrentURL, want)
+	for _, r := range results {
+		want := base + "/download/" + r.ID + "/" + r.ID + "_archive.torrent"
+		if r.TorrentURL != want {
+			t.Errorf("latest %s: TorrentURL = %q, want %q", r.ID, r.TorrentURL, want)
+		}
 	}
 }
 

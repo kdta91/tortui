@@ -63,17 +63,43 @@ func TestSubdomainRedirectRules(t *testing.T) {
 	}
 }
 
-// TestAnIPAddressHasNoSubdomains covers the one rule the table cannot
-// spell: scripts/check-indexer-hostnames.sh reads a label in front of an IP
-// literal in a URL as a public hostname (backlog T-926), so the hosts are
-// given as bare url.URL hosts instead.
-func TestAnIPAddressHasNoSubdomains(t *testing.T) {
+// TestIsSubdomainOfRefusesWhatIsNotADomainOfItsOwn covers the rules the
+// URL table cannot spell: scripts/check-indexer-hostnames.sh reads a label
+// in front of an IP literal, or a bare IP target, in a URL as a public
+// hostname (backlog T-926), so these hosts are given as bare url.URL hosts.
+func TestIsSubdomainOfRefusesWhatIsNotADomainOfItsOwn(t *testing.T) {
 	t.Parallel()
 
 	const privateIP = "10.0.0.10"
 
-	if isSubdomainOf(&url.URL{Host: "node." + privateIP}, &url.URL{Host: privateIP}) {
-		t.Fatal("a label in front of an IP address was read as a subdomain of it")
+	cases := []struct {
+		name   string
+		dest   string
+		origin string
+	}{
+		{name: "a label in front of an IP origin", dest: "node." + privateIP, origin: privateIP},
+		{name: "an IPv4 target under a numeric-looking origin", dest: privateIP, origin: "0.10"},
+		{name: "an IPv4 target under a single-label origin", dest: privateIP, origin: "10"},
+		{name: "a mapped IPv6 target", dest: "[::ffff:" + privateIP + "]", origin: "0.10"},
+		{name: "a bare top-level name as the parent", dest: "example.org", origin: "org"},
+		{name: "an empty label in the target", dest: "a..files.example.org", origin: "files.example.org"},
+		{name: "an empty leading label in the target", dest: ".files.example.org", origin: "files.example.org"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			dest, origin := tc.dest, tc.origin
+
+			if isSubdomainOf(&url.URL{Host: dest}, &url.URL{Host: origin}) {
+				t.Fatalf("isSubdomainOf(%q, %q) = true, want false", tc.dest, tc.origin)
+			}
+		})
+	}
+
+	if !isSubdomainOf(&url.URL{Host: "node7.us.files.example.org"}, &url.URL{Host: "files.example.org"}) {
+		t.Fatal("an ordinary storage subdomain was refused")
 	}
 }
 
