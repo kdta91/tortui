@@ -11,8 +11,8 @@ import (
 )
 
 // Userinfo in a redirect target (T-9045). Go's http client turns
-// `https://user:pw@host/` into a Basic Authorization header on the next
-// hop, so a Location carrying userinfo is the server choosing credentials
+// a `user:pw@` part of a URL into a Basic Authorization header on the
+// next hop, so a Location carrying userinfo is the server choosing credentials
 // tortui would send. Every client built here refuses it, whatever the host.
 
 // userinfoLocations are redirect targets on the requested host (or, for
