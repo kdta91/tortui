@@ -91,25 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest.
-
-### T-9012 · Unknown seeders render as a dash
-```
-status: todo
-depends: T-9011
-tier: L
-```
-Owner decision (2026-09-29).
-
-**Acceptance:**
-- When a source does not report seeders or leechers, the S/L column shows `–` instead of `0/0`
-  (golden renders at 80×24, 120×40 and 60×20 updated and inspected, not regenerated blindly).
-- A source that does report a real zero still shows `0`.
-- Sorting on S/L keeps unknown values last, in both directions.
-- The "unknown" signal does not change the frozen §5 `Result` contract. If it cannot be carried
-  without changing it, that is a stop condition (AGENT.md §12), not a contract change.
-
----
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash.
 
 ### T-9019 · Shell-style path completion in the import field
 ```
@@ -636,7 +618,7 @@ when it reaches it and does not start backlog items on its own.
 
 - `T-992` The composition root builds each `[[indexer]]` torznab source with `torznab.New`, whose
   caps are the fail-closed baseline (keyword search only), and never calls `torznab.Discover`, so a
-  configured torznab source is greyed out for Latest (including the startup Latest query) until
+  configured torznab source is greyed out for Latest until
   something probes its caps. Run the caps probe once per source off the UI goroutine after startup
   (bounded, AGENT.md §6.2/§6.13) and re-register with the discovered caps. Found in T-095.
 
@@ -726,6 +708,13 @@ when it reaches it and does not start backlog items on its own.
   owner run of the add-source form.
 - `T-9018` (folded into T-9019) The import path is not `~`-expanded, so `~/x.yml` fails. Found
   in an owner run of the add-source form; T-9019's `~/` expansion covers it.
+- `T-9020` `TestSearchResultAlwaysMovesToResults` (`internal/tui/startup_test.go`) only starts from
+  `ScreenSearch`, so a stay-put guard coming back would pass it. It should also start from
+  `ScreenDownloads`. Found in review of T-9011.
+- `T-9021` `Query.MinSeeders` filtering in the torznab and scraper adapters compares the raw
+  `Seeders` int, so a result whose source reported no seeders (marked unknown, T-9012) is dropped by
+  any minimum above zero. Decide whether unknown should pass the filter (it may well have seeders)
+  and pin it with a test. Found in T-9012.
 
 ---
 
@@ -873,6 +862,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-135 | 2026-09-28 | T-9008: unexported Session.afterUnlock seam (runs after every lock release) makes the Close/seal no-gap window deterministic to test; the app wiring is pinned by a closed-session probe through the real add flow |
 | DEC-136 | 2026-09-29 | T-9010: the engine's credential-free .torrent client follows a redirect to a subdomain of the requested host (same port, never https to http) so a source's storage hand-off works; indexer clients keep DEC-062's same-host rule |
 | DEC-137 | 2026-09-29 | T-9011: supersedes DEC-129's startup Latest; the program opens on an empty Search screen and queries nothing until the user acts (owner decision) |
+| DEC-138 | 2026-09-29 | T-9012: an unreported swarm count travels as `Result.Extra` markers (`ExtraKeySeedersUnknown`/`ExtraKeyLeechersUnknown`), not a Result field; the TUI renders `–` |
 
 ## Blocked
 

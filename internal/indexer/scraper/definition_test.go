@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kdta91/tortui/internal/indexer"
 )
 
 // minimalDefinition is the smallest definition that validates. Every
@@ -521,6 +523,42 @@ func TestParseCount(t *testing.T) {
 	for in, want := range cases {
 		if got := parseCount(in); got != want {
 			t.Errorf("parseCount(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// TestUnknownSwarm pins T-9012's scraper half: a count whose extracted
+// text has no digit is marked unknown, a real "0" is not, and a row that
+// reported both carries no Extra at all.
+func TestUnknownSwarm(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		seeders, leechers string
+		wantSeeders       bool // marked unknown
+		wantLeechers      bool
+	}{
+		{seeders: "12", leechers: "3"},
+		{seeders: "0", leechers: "0"},
+		{seeders: "", leechers: "4", wantSeeders: true},
+		{seeders: "7", leechers: "", wantLeechers: true},
+		{seeders: "", leechers: "", wantSeeders: true, wantLeechers: true},
+		{seeders: "n/a", leechers: "-", wantSeeders: true, wantLeechers: true},
+	}
+
+	for _, tc := range cases {
+		extra := unknownSwarm(tc.seeders, tc.leechers)
+
+		if got := extra[indexer.ExtraKeySeedersUnknown] == "1"; got != tc.wantSeeders {
+			t.Errorf("unknownSwarm(%q, %q) seeders unknown = %v, want %v", tc.seeders, tc.leechers, got, tc.wantSeeders)
+		}
+
+		if got := extra[indexer.ExtraKeyLeechersUnknown] == "1"; got != tc.wantLeechers {
+			t.Errorf("unknownSwarm(%q, %q) leechers unknown = %v, want %v", tc.seeders, tc.leechers, got, tc.wantLeechers)
+		}
+
+		if !tc.wantSeeders && !tc.wantLeechers && extra != nil {
+			t.Errorf("unknownSwarm(%q, %q) = %v, want nil", tc.seeders, tc.leechers, extra)
 		}
 	}
 }

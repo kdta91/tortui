@@ -50,6 +50,9 @@ func goldenRows() []Row {
 		{ID: "r2", Cells: []string{"示例种子🎬.iso", "4.70 GB", "128/4", "TR", "2d", "research-repo"}},
 		{ID: "r3", Cells: []string{"a research dataset release, volume two", "18.2 GB", "56/3", "", "5d", "example.org"}},
 		{ID: "r4", Cells: []string{"sample.txt", "12 B", "1/0", "", "1y", "example.org"}},
+		// A source that reported no swarm counts at all (T-9012): the S/L
+		// cell is a bare en dash and must stay right-aligned under the header.
+		{ID: "r5", Cells: []string{"unreported-swarm.tar", "3.0 MB", "–", "", "9d", "example.org"}},
 	}
 }
 

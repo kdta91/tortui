@@ -178,9 +178,36 @@ func (p *plan) resultFrom(b *blockPlan, r row) (indexer.Result, bool) {
 		Uploader:   value(b, r, fieldUploader),
 		Trust:      b.trustFrom(r),
 		SourceURL:  page,
+		Extra:      unknownSwarm(value(b, r, fieldSeeders), value(b, r, fieldLeechers)),
 	}
 
 	return res, true
+}
+
+// unknownSwarm marks, via indexer.ExtraKeySeedersUnknown and
+// ExtraKeyLeechersUnknown (T-9012), each swarm count whose extracted text
+// carries no digit at all — the definition has no such field, the selector
+// matched nothing, or the cell held a placeholder. A real "0" has a digit
+// and so is not marked. It returns nil when both counts were reported.
+func unknownSwarm(seeders, leechers string) map[string]string {
+	var extra map[string]string
+
+	mark := func(raw, key string) {
+		if strings.IndexFunc(raw, func(r rune) bool { return r >= '0' && r <= '9' }) >= 0 {
+			return
+		}
+
+		if extra == nil {
+			extra = make(map[string]string, 2)
+		}
+
+		extra[key] = "1"
+	}
+
+	mark(seeders, indexer.ExtraKeySeedersUnknown)
+	mark(leechers, indexer.ExtraKeyLeechersUnknown)
+
+	return extra
 }
 
 // layoutsFor returns the layouts a field's definition supplied.

@@ -233,7 +233,7 @@ func resultFrom(indexerID string, it feedItem) indexer.Result {
 		Uploader:   uploaderFrom(idx),
 		Trust:      trustFrom(idx),
 		SourceURL:  sourceAddress(it),
-		Extra:      extraFrom(idx, it),
+		Extra:      markUnknownSwarm(extraFrom(idx, it), idx),
 	}
 
 	return res
@@ -348,6 +348,46 @@ func swarmFrom(idx attrIndex) (seeders, leechers int) {
 	}
 
 	return seeders, peers - seeders
+}
+
+// markUnknownSwarm records on extra which swarm counts the item did not
+// report, using indexer.ExtraKeySeedersUnknown/ExtraKeyLeechersUnknown
+// (T-9012), so a display layer can tell a source's "no data" from a real
+// zero. It mirrors swarmFrom: seeders are unknown without a
+// parseable seeders attribute; leechers are unknown without an explicit
+// leechers attribute unless peers is present and at least seeders (the
+// case swarmFrom derives a real difference from — including zero). It
+// returns extra unchanged, possibly nil, when nothing is unknown.
+func markUnknownSwarm(extra map[string]string, idx attrIndex) map[string]string {
+	// A negative count is a source's own spelling of "unknown" (a tracker
+	// scrape that failed reports -1), so it is not a reported number.
+	seeders, seedersKnown := idx.intAt(attrSeeders)
+	seedersKnown = seedersKnown && seeders >= 0
+
+	leechersKnown := false
+	if n, ok := idx.intAt(attrLeechers); ok {
+		leechersKnown = n >= 0
+	} else if peers, ok := idx.intAt(attrPeers); ok {
+		leechersKnown = peers >= max(seeders, 0)
+	}
+
+	if seedersKnown && leechersKnown {
+		return extra
+	}
+
+	if extra == nil {
+		extra = make(map[string]string, 2)
+	}
+
+	if !seedersKnown {
+		extra[indexer.ExtraKeySeedersUnknown] = "1"
+	}
+
+	if !leechersKnown {
+		extra[indexer.ExtraKeyLeechersUnknown] = "1"
+	}
+
+	return extra
 }
 
 // nonNegative reads an integer attribute, clamping a negative value to zero.

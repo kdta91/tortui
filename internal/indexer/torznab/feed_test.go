@@ -224,8 +224,12 @@ func TestFeedSurvivesEveryMalformedItem(t *testing.T) {
 			t.Errorf("Published = %s, want the zero time for an unparseable date", r.Published)
 		}
 
-		if r.Extra != nil {
-			t.Errorf("Extra = %v, want nil: a non-numeric grabs value is not carried", r.Extra)
+		if _, carried := r.Extra["torznab."+attrGrabs]; carried {
+			t.Errorf("Extra = %v: a non-numeric grabs value is not carried", r.Extra)
+		}
+
+		if r.Extra[indexer.ExtraKeyLeechersUnknown] != "1" {
+			t.Errorf("Extra = %v, want leechers marked unknown: peers was unparseable", r.Extra)
 		}
 
 		if strings.Contains(r.ID, "apikey") {
@@ -477,6 +481,44 @@ func TestSwarmCounts(t *testing.T) {
 
 			if seeders != tc.wantSeeders || leechers != tc.wantLeechers {
 				t.Fatalf("swarmFrom = %d/%d, want %d/%d", seeders, leechers, tc.wantSeeders, tc.wantLeechers)
+			}
+		})
+	}
+}
+
+func TestMarkUnknownSwarm(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		idx                       attrIndex
+		wantSeeders, wantLeechers bool // reported (true) or marked unknown (false)
+	}{
+		"both reported":                {idx: attrIndex{attrSeeders: {"10"}, attrLeechers: {"3"}}, wantSeeders: true, wantLeechers: true},
+		"real zeros are reported":      {idx: attrIndex{attrSeeders: {"0"}, attrLeechers: {"0"}}, wantSeeders: true, wantLeechers: true},
+		"peers derives leechers":       {idx: attrIndex{attrSeeders: {"10"}, attrPeers: {"25"}}, wantSeeders: true, wantLeechers: true},
+		"peers equals seeders is zero": {idx: attrIndex{attrSeeders: {"10"}, attrPeers: {"10"}}, wantSeeders: true, wantLeechers: true},
+		"peers below seeders":          {idx: attrIndex{attrSeeders: {"10"}, attrPeers: {"4"}}, wantSeeders: true},
+		"seeders only":                 {idx: attrIndex{attrSeeders: {"10"}}, wantSeeders: true},
+		"nothing at all":               {idx: attrIndex{}},
+		"peers only":                   {idx: attrIndex{attrPeers: {"8"}}, wantLeechers: true},
+		"negative counts are unknown":  {idx: attrIndex{attrSeeders: {"-1"}, attrLeechers: {"-1"}}},
+		"unparseable seeders":          {idx: attrIndex{attrSeeders: {"many"}, attrLeechers: {"2"}}, wantLeechers: true},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			extra := markUnknownSwarm(nil, tc.idx)
+
+			if got := extra[indexer.ExtraKeySeedersUnknown] != "1"; got != tc.wantSeeders {
+				t.Errorf("seeders reported = %v, want %v (Extra %v)", got, tc.wantSeeders, extra)
+			}
+
+			if got := extra[indexer.ExtraKeyLeechersUnknown] != "1"; got != tc.wantLeechers {
+				t.Errorf("leechers reported = %v, want %v (Extra %v)", got, tc.wantLeechers, extra)
+			}
+
+			if tc.wantSeeders && tc.wantLeechers && extra != nil {
+				t.Errorf("Extra = %v, want nil when nothing is unknown", extra)
 			}
 		})
 	}
