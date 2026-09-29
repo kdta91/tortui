@@ -210,8 +210,9 @@ grep -q "some-message-only-host.zzz" "$out_dir/out5.txt" ||
 # --- T-9026: capitalised final labels ------------------------------------
 # A Go selector expression on a url/host-style key (`URL: srv.URL`,
 # `var baseURL = ix.URL`) reads as a hostname to the key/value shape. The scanner
-# now skips a candidate whose final label has an uppercase letter in the
-# ORIGINAL text (DEC-141). Every identifier below is invented.
+# now skips a value that, as written, is exactly a bare two-part selector
+# whose second part has an uppercase letter (DEC-141). Every identifier below
+# is invented.
 
 # Case 6: selector expressions in a gated file no longer flag.
 (
@@ -259,9 +260,9 @@ if ! run_check "$head_case7" "$out_dir/out7.txt"; then
 	fail "Go selector expressions in a commit message were flagged as hostnames"
 fi
 
-# Case 8: still flagged -- an all-lowercase hostname, a lowercase selector
-# (the rule is case, not Go syntax), and a mixed-case hostname whose final
-# label is lowercase, in both the key/value and the scheme shape.
+# Case 8: still flagged, exactly as before T-9026 -- the skip only ever
+# applies to a bare two-part selector value, so every hostname below is
+# checked the way it always was, whatever its case or trailing text.
 (
 	cd "$tmp_repo"
 	git checkout -q "$base_sha"
@@ -278,61 +279,69 @@ var still = struct {
 
 func lower(ix holder) string { var url = ix.feedurl; return url }
 
-// Two candidates on one line: the second is cut at the right offset.
+// Two candidates on one line: the selector is skipped, the host is not.
 var pair = struct{ URL, Host string }{URL: srv.URL, Host: "second-invented.example.zzz"}
 var pairs = "https://Skip-Invented.example.ZZZ/ https://third-invented.example.zzz/"
 
-// Text after the host is never its final label: query, fragment, template,
-// and characters legal in an authority but not in a hostname.
+// Scheme shape: never skipped, whatever follows or precedes the host.
 var query = "https://query-invented.example.zzz?ApiKey=1"
 var frag = "https://frag-invented.example.zzz#Section"
 var tmpl = "https://tmpl-invented.example.zzz{{.Path}}"
 var atq = "https://atq-invented.example.zzz?u=a@Other"
 var amp = "https://amp-invented.example.zzz&X=1"
 var dollar = "https://dollar-invented.example.zzz${Path}"
-
-// A leading non-hostname run ("*.", "(") or an empty label ("..") never
-// hands the final label to the text after the host.
 var wild = "https://*.wild-invented.example.zzz,Next"
 var paren = "https://(paren-invented.example.zzz)Then"
 var dotdot = "https://dotdot-invented.example.zzz..Next"
+var nonascii = "https://ÄÄ.nonascii-invented.example.ZZZ/"
+var under = "https://My_Tracker.under-invented.example.zzz/"
+var dd = "https://A..dd-invented.example.zzz/"
+var star = "https://X*star-invented.example.zzz/"
 
-// Fail closed: an authority that does not start like one is never skipped.
-var failclosed = "https://ÄÄ.failclosed-invented.example.ZZZ/"
+// Key/value shape: a second dot, a port or a quote is never a bare selector.
+var kvdd = struct{ Host string }{Host: "A..kvdd-invented.example.zzz"}
+var port = struct{ Host string }{Host: cfg.Addr:8080}
+var deep = struct{ URL string }{URL: ix.URL.Host}
 
 // İİİİİİİİ ẞẞ K URL: srv.URL, Host: "multibyte-invented.example.zzz"
 EOF
 	git add -A
-	git commit -q -m "add lowercase and mixed-case hostnames"
+	git commit -q -m "add hostnames that must stay flagged"
 )
 head_case8=$(cd "$tmp_repo" && git rev-parse HEAD)
 
 if run_check "$head_case8" "$out_dir/out8.txt"; then
 	cat "$out_dir/out8.txt" >&2
-	fail "lowercase or lowercase-final-label hostnames were not flagged"
+	fail "hostnames that must stay flagged were not flagged"
 fi
+grep 'possible new indexer hostname:' "$out_dir/out8.txt" >"$out_dir/names8.txt" || true
+# Names are printed the way the scanner always printed them (the whole
+# lowercased authority), so match the host as a fixed substring. atq's
+# "?u=a@Other" is read as userinfo, so it is reported as "other" (T-9029).
 for want in lower-invented.example.zzz mixed-invented.example.zzz shouted-invented.example.zzz \
-	ix.feedurl second-invented.example.zzz third-invented.example.zzz \
+	ix.feedurl second-invented.example.zzz skip-invented.example.zzz third-invented.example.zzz \
 	query-invented.example.zzz frag-invented.example.zzz tmpl-invented.example.zzz \
-	atq-invented.example.zzz amp-invented.example.zzz dollar-invented.example.zzz \
+	': other' amp-invented.example.zzz dollar-invented.example.zzz \
 	wild-invented.example.zzz paren-invented.example.zzz dotdot-invented.example.zzz \
-	failclosed-invented.example.zzz multibyte-invented.example.zzz; do
-	grep -q "possible new indexer hostname: $want\$" "$out_dir/out8.txt" || {
+	nonascii-invented.example.zzz my_tracker.under-invented.example.zzz \
+	a..dd-invented.example.zzz 'x*star-invented.example.zzz' a..kvdd-invented.example.zzz \
+	cfg.addr ix.url.host multibyte-invented.example.zzz; do
+	grep -qF -e "$want" "$out_dir/names8.txt" || {
 		cat "$out_dir/out8.txt" >&2
 		fail "violation output did not name $want"
 	}
 done
-grep -q "skip-invented\|srv.url" "$out_dir/out8.txt" && {
+grep -qF "srv.url" "$out_dir/names8.txt" && {
 	cat "$out_dir/out8.txt" >&2
-	fail "an uppercase-final-label candidate on a shared line was flagged"
+	fail "a bare srv.URL selector on a shared line was flagged"
 }
-[ "$(grep -c 'possible new indexer hostname:' "$out_dir/out8.txt")" -eq 17 ] || {
+[ "$(wc -l <"$out_dir/names8.txt")" -eq 24 ] || {
 	cat "$out_dir/out8.txt" >&2
-	fail "expected exactly 17 violations in case 8"
+	fail "expected exactly 24 violations in case 8"
 }
 
-# Case 9: a mixed-case reserved-TLD placeholder with a lowercase final label
-# is still auto-allowed exactly as before (the skip rule never runs for it).
+# Case 9: a mixed-case reserved-TLD placeholder is still auto-allowed
+# exactly as before.
 (
 	cd "$tmp_repo"
 	git checkout -q "$base_sha"
@@ -351,18 +360,21 @@ if ! run_check "$head_case9" "$out_dir/out9.txt"; then
 	fail "a mixed-case reserved placeholder was flagged"
 fi
 
-# Case 10: the owner-accepted residual gap (DEC-141), pinned so any change to
-# it is deliberate -- a hostname whose final label has ANY uppercase letter
-# passes, even with a non-reserved TLD.
+# Case 10: a capitalised final label does NOT buy a pass anywhere but a bare
+# selector. A URL, a quoted value (even one shaped exactly like a selector)
+# and a multi-label value with an uppercase final label are all FLAGGED
+# (DEC-141 narrowed the earlier, wider gap).
 (
 	cd "$tmp_repo"
 	git checkout -q "$base_sha"
-	cat >internal/indexer/fixture/case_gap.go <<'EOF'
+	cat >internal/indexer/fixture/case_upper_final.go <<'EOF'
 package fixture
 
-var gap = struct{ Host, BaseURL string }{
-	Host:    "gap-invented.example.zZz",
-	BaseURL: "https://gap-invented.example.ZZZ/",
+var upper = struct{ Host, BaseURL, Endpoint, URL string }{
+	Host:     "quoted-invented.example.zZz",
+	BaseURL:  "https://url-invented.example.ZZZ/",
+	Endpoint: "quotedtwolabel.Zzz",
+	URL:      multi.label-invented.Zzz,
 }
 EOF
 	git add -A
@@ -370,13 +382,20 @@ EOF
 )
 head_case10=$(cd "$tmp_repo" && git rev-parse HEAD)
 
-if ! run_check "$head_case10" "$out_dir/out10.txt"; then
+if run_check "$head_case10" "$out_dir/out10.txt"; then
 	cat "$out_dir/out10.txt" >&2
-	fail "a hostname with an uppercase final label was flagged (DEC-141 gap changed)"
+	fail "a URL, quoted or multi-label hostname with an uppercase final label passed"
 fi
+for want in quoted-invented.example.zzz url-invented.example.zzz quotedtwolabel.zzz \
+	multi.label-invented.zzz; do
+	grep 'possible new indexer hostname:' "$out_dir/out10.txt" | grep -qF -e "$want" || {
+		cat "$out_dir/out10.txt" >&2
+		fail "violation output did not name $want"
+	}
+done
 
-# Case 11: the query, fragment, template, "*." and "(" forms in a commit message are
-# still flagged by their host. Keyword and hosts are joined at run time, the
+# Case 11: the query, fragment, template, "*.", "(" and "_" forms in a commit
+# message are still flagged. Keyword and hosts are joined at run time, the
 # same convention as case 5.
 (
 	cd "$tmp_repo"
@@ -389,20 +408,43 @@ fi
 	msg_t="https://msg-tmpl-invented.example.zzz{{.Keywords}}"
 	msg_w="https://*.msg-wild-invented.example.zzz,Next"
 	msg_p="https://(msg-paren-invented.example.zzz)Then"
-	git commit -q -m "feat: the ${msg_keyword} reads ${msg_q}, ${msg_f}, ${msg_t}, ${msg_w} and ${msg_p}"
+	msg_u="https://My_Tracker.msg-under-invented.example.zzz/rss"
+	git commit -q -m "feat: the ${msg_keyword} reads ${msg_q}, ${msg_f}, ${msg_t}, ${msg_w}, ${msg_p} and ${msg_u}"
 )
 head_case11=$(cd "$tmp_repo" && git rev-parse HEAD)
 
 if run_check "$head_case11" "$out_dir/out11.txt"; then
 	cat "$out_dir/out11.txt" >&2
-	fail "query/fragment/template/leading-form URLs in a commit message were not flagged"
+	fail "URLs in a commit message were not flagged"
 fi
 for want in msg-query-invented.example.zzz msg-frag-invented.example.zzz msg-tmpl-invented.example.zzz \
-	msg-wild-invented.example.zzz msg-paren-invented.example.zzz; do
-	grep -q "possible new indexer hostname: $want\$" "$out_dir/out11.txt" || {
+	msg-wild-invented.example.zzz msg-paren-invented.example.zzz my_tracker.msg-under-invented.example.zzz; do
+	grep 'possible new indexer hostname:' "$out_dir/out11.txt" | grep -qF -e "$want" || {
 		cat "$out_dir/out11.txt" >&2
 		fail "commit-message violation output did not name $want"
 	}
 done
+
+# Case 12: the owner-accepted residual gap (DEC-141), pinned so any change is
+# deliberate -- a bare, unquoted two-part value whose second part has an
+# uppercase letter reads exactly like a Go selector, so it passes even if it
+# is really a two-label hostname.
+(
+	cd "$tmp_repo"
+	git checkout -q "$base_sha"
+	cat >internal/indexer/fixture/case_gap.go <<'EOF'
+package fixture
+
+var gap = struct{ Host string }{Host: gapinvented.Zzz}
+EOF
+	git add -A
+	git commit -q -m "add a bare two-part value with an uppercase final label"
+)
+head_case12=$(cd "$tmp_repo" && git rev-parse HEAD)
+
+if ! run_check "$head_case12" "$out_dir/out12.txt"; then
+	cat "$out_dir/out12.txt" >&2
+	fail "a bare two-part selector-shaped value was flagged (DEC-141 gap changed)"
+fi
 
 echo "check-indexer-hostnames_test: all cases passed"

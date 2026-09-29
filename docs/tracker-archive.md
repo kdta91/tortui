@@ -4596,11 +4596,11 @@ safeguard. The scanner reads Go selector expressions such as `ix.URL` as hostnam
 - POSIX sh only (AGENT.md §14). CI behaviour is otherwise unchanged; the job name and required
   status are untouched.
 
-**Notes:** `check_host()` cuts the host out of each candidate (userinfo, port, a leading `*.`/`(`
-run, everything from the first non-hostname character or `..`) and skips it only if the host's
-final label has an uppercase letter in the original text, failing closed if a cut leaves nothing; `scan()` matches on the lowercased line and
-cuts candidates from the original at the same offset, with awk under `LC_ALL=C` so multibyte text
-cannot shift it (this also ends the macOS "illegal byte sequence" abort on invalid UTF-8). Both
-shapes. Test cases 6–11 cover selectors, lowercase, query/fragment/template, leading-form, multibyte
-and commit-message forms, run under a UTF-8 locale; check output now lives outside the scratch repo.
-Eleven mutations each fail the test. CI job untouched. Backlog T-9029, T-9030.
+**Notes:** Skip is limited to a key/value value that, as written, is an unquoted bare two-part
+selector with an uppercase letter after the dot (`is_selector()`); the scheme shape and
+`check_host()` are unchanged from main. Rounds 1–3 of PR #71 skipped any uppercase final label and
+each URL-parsing patch left a bypass, so that approach was dropped. awk runs under `LC_ALL=C` for
+byte-aligned offsets (also ends the macOS invalid-UTF-8 abort). Test cases 6–12: selectors pass;
+every URL, quoted, multi-label, port, `?`/`#`/`{{`/`&`/`${}`/`*.`/`(`/`..`/`_`, multibyte and
+commit-message form is flagged; the bare `name.Label` gap is pinned. Check output lives outside the
+scratch repo. Ten mutations each fail the test. CI job untouched. Backlog T-9029, T-9030.

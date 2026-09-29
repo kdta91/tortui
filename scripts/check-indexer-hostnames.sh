@@ -61,15 +61,14 @@
 #     to avoid matching arbitrary "word.number" text, so an IP only trips
 #     this check today when it appears after a scheme (`https://1.2.3.4/...`).
 #     Pre-existing, unrelated to the case-sensitivity fix above.
-#   - a candidate whose host (cut out of the candidate first: userinfo, port,
-#     a leading non-hostname run, and anything from the first non-hostname
-#     character or empty label on are dropped; if a cut leaves nothing the
-#     candidate is never skipped) has
-#     a final label with any uppercase letter in the original text
-#     (`example.Org`, `example.oRG`) is skipped, in both the scheme and the
-#     key/value shape, so a Go selector such as `ix.URL` or `a.baseURL`
-#     is not read as a hostname (T-9026). The owner accepted that such a
-#     hostname now passes; reviewers still check for named sites (DEC-141).
+#   - a key/value value that is, as written, exactly a bare two-part Go
+#     selector whose second part has an uppercase letter (`URL: srv.URL`,
+#     `Host: pkg.FeedURL(`, `url = a.baseURL`), unquoted and cut only at a
+#     space, quote or `(),;+}]`, is skipped (T-9026). A scheme'd URL, a
+#     quoted value, or anything with a second dot, a port, userinfo or any
+#     other character is never skipped. The owner accepted the residual gap:
+#     a bare unquoted `name.Label` that really is a two-label hostname with a
+#     capitalised final label passes; reviewers still check (DEC-141).
 # This is a lightweight net that catches the common, careless case -- it is
 # not a substitute for human review, which is what CONTRIBUTING.md still asks
 # for.
@@ -133,9 +132,9 @@ fi
 } >>"$diff_file"
 
 # LC_ALL=C: length(), substr() and tolower() all count bytes, so the
-# lowercased copy scan() matches on is byte-for-byte as long as the original
-# line (macOS awk in a UTF-8 locale shrinks some multibyte letters, e.g. a
-# dotted capital I, under tolower()), and an invalid UTF-8 byte is just a
+# lowercased copy scan() matches on lines up byte-for-byte with the original
+# line that is_selector() reads (macOS awk in a UTF-8 locale shrinks some
+# multibyte letters under tolower()), and an invalid UTF-8 byte is just a
 # byte instead of an "illegal byte sequence" abort (T-9026).
 LC_ALL=C awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 	BEGIN {
@@ -214,26 +213,20 @@ LC_ALL=C awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		if (o1 == 192 && o2 == 168) return 1
 		return 0
 	}
-	# Matching runs on the lowercased copy, but each candidate is cut from
-	# the ORIGINAL-case line at the same offset (under LC_ALL=C, tolower()
-	# never changes a length), so check_host() can see its real case
-	# (T-9026, DEC-141).
-	function scan(text, file, orig,    rest, off, m, om, start, len) {
+	function scan(text, file, orig,    rest, m, host, off, start, len, vstart, quoted) {
 		# Authority after the scheme: may carry userinfo (user:pass@) and a
 		# port, so match everything up to the first path/space/quote/angle
 		# separator and let check_host() pick the hostname apart from that.
 		rest = text
-		off = 0
 		while (match(rest, /https?:\/\/[^\/[:space:]"'\''<>]+/)) {
-			start = RSTART
-			len = RLENGTH
-			m = substr(rest, start, len)
+			m = substr(rest, RSTART, RLENGTH)
 			sub(/^https?:\/\//, "", m)
-			om = substr(orig, off + start + len - length(m), length(m))
-			check_host(om, file, orig)
-			off += start + len - 1
-			rest = substr(rest, start + len)
+			check_host(m, file, orig)
+			rest = substr(rest, RSTART + RLENGTH)
 		}
+		# Key/value shape. rest is a suffix of the lowercased line; off is
+		# how many bytes of it were consumed, so orig at off+i is the
+		# original-case byte for rest at i (T-9026).
 		rest = text
 		off = 0
 		while (match(rest, /(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z][A-Za-z]+/)) {
@@ -241,52 +234,37 @@ LC_ALL=C awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 			len = RLENGTH
 			m = substr(rest, start, len)
 			sub(/^(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?/, "", m)
-			om = substr(orig, off + start + len - length(m), length(m))
-			check_host(om, file, orig)
+			vstart = start + len - length(m)
+			quoted = (substr(rest, vstart - 1, 1) == "\"")
+			if (quoted || !is_selector(substr(orig, off + vstart)))
+				check_host(m, file, orig)
 			off += start + len - 1
 			rest = substr(rest, start + len)
 		}
 	}
-	function check_host(host, file, text,   colon, label, cut, noskip) {
+	# T-9026 (DEC-141): true only when the value, as written in the original
+	# text, is exactly a bare two-part Go selector whose second part has an
+	# uppercase letter -- `srv.URL`, `pkg.FeedURL(`, `a.baseURL,`. The token
+	# ends at the first space, quote or `(),;+}]`; anything else (a second
+	# dot, ":", "@", "/", "_" or "-" in the wrong place, ...) keeps it from
+	# matching, so it is checked exactly as before.
+	function is_selector(tail,   tok, dot) {
+		tok = tail
+		sub(/[[:space:]"'"'"'`(),;+}\]].*$/, "", tok)
+		if (tok !~ /^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/) return 0
+		dot = index(tok, ".")
+		return (substr(tok, dot + 1) ~ /[A-Z]/)
+	}
+	function check_host(host, file, text,   colon) {
 		# Strip a trailing quote/space/paren/sentence-punctuation run picked
 		# up from surrounding prose or markdown.
 		gsub(/[",'"'"' 	.,;)\]]+$/, "", host)
-		# Cut at the first character that cannot appear in an authority
-		# ("?query", "#fragment", "{{template}}", a backslash), so an "@"
-		# after it is never read as userinfo (T-9026). If this cut or the
-		# hostname cut below leaves nothing, the candidate is checked
-		# uncut, as before T-9026, and never skipped (noskip): text past the
-		# first non-hostname character never decides the skip.
-		noskip = 0
-		cut = host
-		sub(/[^-A-Za-z0-9._~%!$&()*+,;=:@\[\]].*$/, "", cut)
-		if (cut == "") noskip = 1
-		else host = cut
 		# Drop userinfo ("user:pass@host" -> "host"): a greedy match of
 		# everything up to the LAST "@" removes it even if the password
 		# itself contained "@".
 		sub(/^.*@/, "", host)
 		colon = index(host, ":")
 		if (colon > 0) host = substr(host, 1, colon - 1)
-		# Keep only the host itself: drop any leading non-hostname run ("*.",
-		# "("), cut at the first character that cannot appear in a hostname
-		# (",Next", ")Then", "${Path}", "&X=1") or at an empty label ("..X"),
-		# then drop trailing dots, so the final label below is the last label
-		# of the host itself and never text that merely follows it (T-9026).
-		cut = host
-		sub(/^[^-A-Za-z0-9]+/, "", cut)
-		sub(/[^-A-Za-z0-9.].*$/, "", cut)
-		sub(/\.\..*$/, "", cut)
-		sub(/\.+$/, "", cut)
-		if (cut == "") noskip = 1
-		else host = cut
-		# T-9026 (DEC-141): a final label with an uppercase letter is how a
-		# Go selector reads (`ix.URL`, `pkg.FeedURL`, `a.baseURL`), never how
-		# a hostname is written in practice, so skip it. A lowercase final
-		# label is checked as before, whatever case the other labels are.
-		label = host
-		sub(/^.*\./, "", label)
-		if (!noskip && label ~ /[A-Z]/) return
 		host = tolower(host)
 		if (host == "") return
 		if (!is_allowed(host)) {
