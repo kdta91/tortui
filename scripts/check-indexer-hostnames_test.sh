@@ -28,7 +28,10 @@ fail() {
 }
 
 tmp_repo=$(mktemp -d)
-cleanup() { rm -rf "$tmp_repo"; }
+# Check output lives outside the scratch repo so a later case's `git add -A`
+# never commits an earlier case's flagged output into its own diff (T-9026).
+out_dir=$(mktemp -d)
+cleanup() { rm -rf "$tmp_repo" "$out_dir"; }
 trap cleanup EXIT
 
 (
@@ -80,13 +83,13 @@ EOF
 )
 head_case1=$(cd "$tmp_repo" && git rev-parse HEAD)
 
-if run_check "$head_case1" "$tmp_repo/out1.txt"; then
-	cat "$tmp_repo/out1.txt" >&2
+if run_check "$head_case1" "$out_dir/out1.txt"; then
+	cat "$out_dir/out1.txt" >&2
 	fail "capitalized Host:/BaseURL: struct fields were not flagged (case-sensitivity regression)"
 fi
-grep -q "some-invented-source-host.zzz" "$tmp_repo/out1.txt" ||
+grep -q "some-invented-source-host.zzz" "$out_dir/out1.txt" ||
 	fail "violation output did not name the capitalized Host: hostname"
-grep -q "another-invented-source.zzz" "$tmp_repo/out1.txt" ||
+grep -q "another-invented-source.zzz" "$out_dir/out1.txt" ||
 	fail "violation output did not name the capitalized BaseURL: hostname"
 
 # --- Case 2: control -- a reserved-TLD placeholder in the same shape must --
@@ -110,8 +113,8 @@ EOF
 )
 head_case2=$(cd "$tmp_repo" && git rev-parse HEAD)
 
-if ! run_check "$head_case2" "$tmp_repo/out2.txt"; then
-	cat "$tmp_repo/out2.txt" >&2
+if ! run_check "$head_case2" "$out_dir/out2.txt"; then
+	cat "$out_dir/out2.txt" >&2
 	fail "reserved-TLD placeholder host was incorrectly flagged"
 fi
 
@@ -134,8 +137,8 @@ EOF
 )
 head_case3=$(cd "$tmp_repo" && git rev-parse HEAD)
 
-if ! run_check "$head_case3" "$tmp_repo/out3.txt"; then
-	cat "$tmp_repo/out3.txt" >&2
+if ! run_check "$head_case3" "$out_dir/out3.txt"; then
+	cat "$out_dir/out3.txt" >&2
 	fail "private IPv4 literal was incorrectly flagged"
 fi
 
@@ -159,11 +162,11 @@ EOF
 )
 head_case4=$(cd "$tmp_repo" && git rev-parse HEAD)
 
-if run_check "$head_case4" "$tmp_repo/out4.txt"; then
-	cat "$tmp_repo/out4.txt" >&2
+if run_check "$head_case4" "$out_dir/out4.txt"; then
+	cat "$out_dir/out4.txt" >&2
 	fail "public IPv4 literal was not flagged (DEC-040 regression)"
 fi
-grep -q "203.0.113.5" "$tmp_repo/out4.txt" ||
+grep -q "203.0.113.5" "$out_dir/out4.txt" ||
 	fail "violation output did not name the public IP literal"
 
 # --- Case 5: a site named only in a commit message (no diff content at ---
@@ -186,11 +189,155 @@ grep -q "203.0.113.5" "$tmp_repo/out4.txt" ||
 )
 head_case5=$(cd "$tmp_repo" && git rev-parse HEAD)
 
-if run_check "$head_case5" "$tmp_repo/out5.txt"; then
-	cat "$tmp_repo/out5.txt" >&2
+if run_check "$head_case5" "$out_dir/out5.txt"; then
+	cat "$out_dir/out5.txt" >&2
 	fail "a hostname named only in a commit message was not flagged"
 fi
-grep -q "some-message-only-host.zzz" "$tmp_repo/out5.txt" ||
+grep -q "some-message-only-host.zzz" "$out_dir/out5.txt" ||
 	fail "violation output did not name the commit-message-only hostname"
+
+# --- T-9026: capitalised final labels ------------------------------------
+# A Go selector expression on a url/host-style key (`URL: srv.URL`,
+# `var baseURL = ix.URL`) reads as a hostname to the key/value shape. The scanner
+# now skips a candidate whose final label has an uppercase letter in the
+# ORIGINAL text (DEC-141). Every identifier below is invented.
+
+# Case 6: selector expressions in a gated file no longer flag.
+(
+	cd "$tmp_repo"
+	git checkout -q "$base_sha"
+	cat >internal/indexer/fixture/case_selectors.go <<'EOF'
+package fixture
+
+func wire(ix, srv, a, pkg holder) []string {
+	var baseURL = ix.URL
+	feed := struct{ URL, Host, Endpoint string }{
+		URL:      srv.URL,
+		Host:     pkg.FeedURL,
+		Endpoint: a.baseURL,
+	}
+	return []string{baseURL, feed.URL, feed.Host, feed.Endpoint}
+}
+EOF
+	git add -A
+	git commit -q -m "add selector expressions on url-style keys"
+)
+head_case6=$(cd "$tmp_repo" && git rev-parse HEAD)
+
+if ! run_check "$head_case6" "$out_dir/out6.txt"; then
+	cat "$out_dir/out6.txt" >&2
+	fail "Go selector expressions (ix.URL, srv.URL, pkg.FeedURL, a.baseURL) were flagged as hostnames"
+fi
+
+# Case 7: the same selector shape in a commit message no longer flags. The
+# keyword and the selector are joined only at run time, the same convention
+# as case 5.
+(
+	cd "$tmp_repo"
+	git checkout -q "$base_sha"
+	echo "placeholder7" >internal/indexer/fixture/keep7.go
+	git add -A
+	msg_keyword="indexer"
+	msg_selector="url = ix.URL"
+	git commit -q -m "fix: the ${msg_keyword} reads ${msg_selector} and base_url = srv.FeedURL"
+)
+head_case7=$(cd "$tmp_repo" && git rev-parse HEAD)
+
+if ! run_check "$head_case7" "$out_dir/out7.txt"; then
+	cat "$out_dir/out7.txt" >&2
+	fail "Go selector expressions in a commit message were flagged as hostnames"
+fi
+
+# Case 8: still flagged -- an all-lowercase hostname, a lowercase selector
+# (the rule is case, not Go syntax), and a mixed-case hostname whose final
+# label is lowercase, in both the key/value and the scheme shape.
+(
+	cd "$tmp_repo"
+	git checkout -q "$base_sha"
+	cat >internal/indexer/fixture/case_still_flagged.go <<'EOF'
+package fixture
+
+var still = struct {
+	Host, BaseURL, Mirror, Feed string
+}{
+	Host:    "lower-invented.example.zzz",
+	BaseURL: "https://Mixed-Invented.Example.zzz/api",
+	Mirror:  "HTTPS://SHOUTED-INVENTED.EXAMPLE.zzz/",
+}
+
+func lower(ix holder) string { var url = ix.feedurl; return url }
+
+// Two candidates on one line: the second is cut at the right offset.
+var pair = struct{ URL, Host string }{URL: srv.URL, Host: "second-invented.example.zzz"}
+var pairs = "https://Skip-Invented.example.ZZZ/ https://third-invented.example.zzz/"
+EOF
+	git add -A
+	git commit -q -m "add lowercase and mixed-case hostnames"
+)
+head_case8=$(cd "$tmp_repo" && git rev-parse HEAD)
+
+if run_check "$head_case8" "$out_dir/out8.txt"; then
+	cat "$out_dir/out8.txt" >&2
+	fail "lowercase or lowercase-final-label hostnames were not flagged"
+fi
+for want in lower-invented.example.zzz mixed-invented.example.zzz shouted-invented.example.zzz \
+	ix.feedurl second-invented.example.zzz third-invented.example.zzz; do
+	grep -q "possible new indexer hostname: $want\$" "$out_dir/out8.txt" || {
+		cat "$out_dir/out8.txt" >&2
+		fail "violation output did not name $want"
+	}
+done
+grep -q "skip-invented\|srv.url" "$out_dir/out8.txt" && {
+	cat "$out_dir/out8.txt" >&2
+	fail "an uppercase-final-label candidate on a shared line was flagged"
+}
+[ "$(grep -c 'possible new indexer hostname:' "$out_dir/out8.txt")" -eq 6 ] || {
+	cat "$out_dir/out8.txt" >&2
+	fail "expected exactly 6 violations in case 8"
+}
+
+# Case 9: a mixed-case reserved-TLD placeholder with a lowercase final label
+# is still auto-allowed exactly as before (the skip rule never runs for it).
+(
+	cd "$tmp_repo"
+	git checkout -q "$base_sha"
+	cat >internal/indexer/fixture/case_mixed_reserved.go <<'EOF'
+package fixture
+
+var reserved = struct{ Host string }{Host: "Evil.example.net"}
+EOF
+	git add -A
+	git commit -q -m "add a mixed-case reserved placeholder"
+)
+head_case9=$(cd "$tmp_repo" && git rev-parse HEAD)
+
+if ! run_check "$head_case9" "$out_dir/out9.txt"; then
+	cat "$out_dir/out9.txt" >&2
+	fail "a mixed-case reserved placeholder was flagged"
+fi
+
+# Case 10: the owner-accepted residual gap (DEC-141), pinned so any change to
+# it is deliberate -- a hostname whose final label has ANY uppercase letter
+# passes, even with a non-reserved TLD.
+(
+	cd "$tmp_repo"
+	git checkout -q "$base_sha"
+	cat >internal/indexer/fixture/case_gap.go <<'EOF'
+package fixture
+
+var gap = struct{ Host, BaseURL string }{
+	Host:    "gap-invented.example.zZz",
+	BaseURL: "https://gap-invented.example.ZZZ/",
+}
+EOF
+	git add -A
+	git commit -q -m "add hostnames with an uppercase final label"
+)
+head_case10=$(cd "$tmp_repo" && git rev-parse HEAD)
+
+if ! run_check "$head_case10" "$out_dir/out10.txt"; then
+	cat "$out_dir/out10.txt" >&2
+	fail "a hostname with an uppercase final label was flagged (DEC-141 gap changed)"
+fi
 
 echo "check-indexer-hostnames_test: all cases passed"

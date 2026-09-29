@@ -61,6 +61,11 @@
 #     to avoid matching arbitrary "word.number" text, so an IP only trips
 #     this check today when it appears after a scheme (`https://1.2.3.4/...`).
 #     Pre-existing, unrelated to the case-sensitivity fix above.
+#   - a candidate whose final label has any uppercase letter in the original
+#     text (`example.Org`, `example.oRG`) is skipped, in both the scheme and
+#     the key/value shape, so a Go selector such as `ix.URL` or `a.baseURL`
+#     is not read as a hostname (T-9026). The owner accepted that such a
+#     hostname now passes; reviewers still check for named sites (DEC-141).
 # This is a lightweight net that catches the common, careless case -- it is
 # not a substitute for human review, which is what CONTRIBUTING.md still asks
 # for.
@@ -200,26 +205,39 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		if (o1 == 192 && o2 == 168) return 1
 		return 0
 	}
-	function scan(text, file, orig,    rest, m, host) {
+	# Matching runs on the lowercased copy, but each candidate is cut from
+	# the ORIGINAL-case line at the same offset (tolower() never changes a
+	# length), so check_host() can see its real case (T-9026, DEC-141).
+	function scan(text, file, orig,    rest, off, m, om, start, len) {
 		# Authority after the scheme: may carry userinfo (user:pass@) and a
 		# port, so match everything up to the first path/space/quote/angle
 		# separator and let check_host() pick the hostname apart from that.
 		rest = text
+		off = 0
 		while (match(rest, /https?:\/\/[^\/[:space:]"'\''<>]+/)) {
-			m = substr(rest, RSTART, RLENGTH)
+			start = RSTART
+			len = RLENGTH
+			m = substr(rest, start, len)
 			sub(/^https?:\/\//, "", m)
-			check_host(m, file, orig)
-			rest = substr(rest, RSTART + RLENGTH)
+			om = substr(orig, off + start + len - length(m), length(m))
+			check_host(om, file, orig)
+			off += start + len - 1
+			rest = substr(rest, start + len)
 		}
 		rest = text
+		off = 0
 		while (match(rest, /(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z][A-Za-z]+/)) {
-			m = substr(rest, RSTART, RLENGTH)
+			start = RSTART
+			len = RLENGTH
+			m = substr(rest, start, len)
 			sub(/^(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?/, "", m)
-			check_host(m, file, orig)
-			rest = substr(rest, RSTART + RLENGTH)
+			om = substr(orig, off + start + len - length(m), length(m))
+			check_host(om, file, orig)
+			off += start + len - 1
+			rest = substr(rest, start + len)
 		}
 	}
-	function check_host(host, file, text,   colon) {
+	function check_host(host, file, text,   colon, label) {
 		# Strip a trailing quote/space/paren/sentence-punctuation run picked
 		# up from surrounding prose or markdown.
 		gsub(/[",'"'"' 	.,;)\]]+$/, "", host)
@@ -229,6 +247,13 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		sub(/^.*@/, "", host)
 		colon = index(host, ":")
 		if (colon > 0) host = substr(host, 1, colon - 1)
+		# T-9026 (DEC-141): a final label with an uppercase letter is how a
+		# Go selector reads (`ix.URL`, `pkg.FeedURL`, `a.baseURL`), never how
+		# a hostname is written in practice, so skip it. A lowercase final
+		# label is checked as before, whatever case the other labels are.
+		label = host
+		sub(/^.*\./, "", label)
+		if (label ~ /[A-Z]/) return
 		host = tolower(host)
 		if (host == "") return
 		if (!is_allowed(host)) {
