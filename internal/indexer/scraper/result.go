@@ -309,6 +309,13 @@ func (p *plan) absolute(raw string) string {
 // webAddress resolves raw against base and returns it only when the result
 // is an http or https address, and empty otherwise. A details page's
 // torrent link goes through it against that page's own address.
+//
+// Any userinfo is dropped from what it returns, whether the link wrote it
+// or inherited it from base (T-9041). Go's http client sends an address's
+// userinfo as a Basic Authorization header, so a link a page chose would
+// choose credentials; and a torrent_url is stored in resume data, where a
+// user's own base_url credentials do not belong. The address that is left
+// is the host the link really names.
 func webAddress(base *url.URL, raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -321,6 +328,7 @@ func webAddress(base *url.URL, raw string) string {
 	}
 
 	resolved := base.ResolveReference(ref)
+	resolved.User = nil
 
 	switch strings.ToLower(resolved.Scheme) {
 	case "http", "https":

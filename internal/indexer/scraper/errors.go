@@ -182,9 +182,9 @@ var (
 
 	// ErrDetailsAddressRefused reports a result whose source_url is not an
 	// http or https address on the definition's own base_url host (or
-	// would drop https for http). It is refused before any request, and
-	// the address is never repeated back: it is text off the page
-	// (DEC-073).
+	// would drop https for http, or carries userinfo). It is refused
+	// before any request, and the address is never repeated back: it is
+	// text off the page (DEC-073).
 	ErrDetailsAddressRefused = errors.New("the details page is not on this source's own http(s) host")
 
 	// ErrDetailsNoLink reports a details page that was fetched and read
