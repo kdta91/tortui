@@ -76,7 +76,11 @@ func (a *Adapter) resolveDetails(ctx context.Context, r indexer.Result) (indexer
 
 // detailsAddress parses a result's source_url and refuses it unless it is
 // an http or https address on the definition's own base_url host — the same
-// host and port — without dropping https for http.
+// host and port — without dropping https for http, and with no userinfo.
+//
+// Userinfo is refused outright, even an empty `@` (T-9041): Go's http
+// client would send it as a Basic Authorization header, so a page that
+// chose it would choose the credentials tortui sends to this host.
 //
 // A Result reaching Resolve is not necessarily one this adapter produced,
 // and one it did produce carries an address a hostile page chose. Fetching
@@ -93,6 +97,10 @@ func (p *plan) detailsAddress(raw string) (*url.URL, error) {
 	scheme := strings.ToLower(parsed.Scheme)
 	if scheme != "http" && scheme != "https" {
 		return nil, fmt.Errorf("%w (it is not an http or https address)", ErrDetailsAddressRefused)
+	}
+
+	if parsed.User != nil {
+		return nil, fmt.Errorf("%w (it carries a user name or password)", ErrDetailsAddressRefused)
 	}
 
 	if parsed.Host == "" || !strings.EqualFold(parsed.Host, p.base.Host) {

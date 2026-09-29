@@ -113,13 +113,13 @@ through `transform` in order, then placed into `template` if there is one.
 | `title` | the title | **Required.** |
 | `infohash` | the infohash | Kept only if it is 40 hex or 32 base32 characters; otherwise taken from the magnet. |
 | `magnet` | the magnet URI | Kept only if it really starts `magnet:`. |
-| `torrent_url` | the `.torrent` address | Resolved against `base_url`; refused unless `http`/`https`. |
+| `torrent_url` | the `.torrent` address | Resolved against `base_url`; refused unless `http`/`https`; any `user:pw@` part is dropped. |
 | `size` | the size in bytes | `1.4 GiB`, `700 MB`, `1,024`, `1503238553`. A unit is read as a power of 1024 however it is spelled. A bare number is bytes. |
 | `seeders`, `leechers` | the swarm counts | The first run of digits in the value. |
 | `category` | tortui's coarse bucket | audio / video / image / text / software / data, or *other*. Anything tortui cannot place is *other* — never dropped. |
 | `published` | the date | Parsed with `layouts` first, then a built-in list. Unparseable leaves it blank rather than guessing. |
 | `uploader` | the uploader's name | |
-| `source_url` | the human-viewable details page | Resolved against `base_url`; refused unless `http`/`https`, so a `javascript:` link on a hostile page never reaches the "open in browser" key. |
+| `source_url` | the human-viewable details page | Resolved against `base_url`; refused unless `http`/`https`, so a `javascript:` link on a hostile page never reaches the "open in browser" key; any `user:pw@` part is dropped. |
 
 Any other key under `fields` is a validation error: a silently ignored field
 looks exactly like a selector that has rotted, and the whole point of the file
@@ -204,8 +204,13 @@ How it behaves:
   need it still show in the table.
 * **Only on the source's own host.** The page address must be `http` or
   `https` on exactly the host (and port) of `base_url`, and never `http` when
-  `base_url` is `https`. Anything else is refused before a request is made. A
-  redirect to another host is not followed.
+  `base_url` is `https`, and never with a user name or password in it
+  (`user:pw@`, even a bare `@`). Anything else is refused before a request is
+  made. A redirect to another host is not followed.
+* **Host and port compare literally.** A `base_url` written with an explicit
+  default port (`https://details.example.org:443`) does not match a page
+  address without it (`https://details.example.org/item/1`), so write
+  `base_url` the way the site writes its own links.
 * **Same rules as the listing.** A `magnet` must start `magnet:`; a
   `torrent_url` is resolved against the details page's own address and must be
   `http`/`https`; an `infohash` must be 40 hex or 32 base32 characters. The

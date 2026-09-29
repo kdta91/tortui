@@ -89,8 +89,9 @@
 //	TorrentURL  The page's own download address — or the address the
 //	            field's template built around a path-escaped page value —
 //	            resolved against base_url and refused unless it is http or
-//	            https, and safe to log regardless: internal/logging masks
-//	            on the name. One read off a details page by Resolve
+//	            https, with any userinfo dropped (T-9041), and safe to log
+//	            regardless: internal/logging masks on the name. One read
+//	            off a details page by Resolve
 //	            (details.go) is resolved against that page's address
 //	            instead, under the same scheme rule; a magnet or infohash
 //	            read there follows the Magnet and InfoHash rules above.
@@ -109,8 +110,9 @@
 //	Trust       Derived. An indexer.Trust enum value, from the
 //	            definition's own value map.
 //	SourceURL   The page's own details address, resolved against base_url
-//	            and refused unless it is http or https — and safe to log:
-//	            internal/logging masks on the name.
+//	            and refused unless it is http or https, with any userinfo
+//	            dropped (T-9041) — and safe to log: internal/logging masks
+//	            on the name.
 //	Extra       Only ever the two swarm-unknown markers
 //	            (indexer.ExtraKeySeedersUnknown/ExtraKeyLeechersUnknown),
 //	            set when the page carried no digit for that count; nil

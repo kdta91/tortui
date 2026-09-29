@@ -4716,3 +4716,37 @@ block and a `source_url` (`ErrDetailsSourceMissing`). Opening details does not c
 never did; criterion 3 only bars Search/listing). TUI: new test drives a link-less result from
 `handleSearchResult` through enter to the status bar. Fixtures `testdata/scraper/fixture-details.yml`
 plus six pages. Backlog T-939 marked done here; T-9038, T-9039, T-9040 (PR #73 review notes).
+
+### T-9041 · Details-page address refuses userinfo
+
+```
+status: done
+depends: T-9037
+tier: H
+```
+From the PR #74 review (2026-09-29). `internal/indexer/scraper/details.go` `detailsAddress`
+accepts same-host userinfo (`https://user:pw@<base host>/...`). Go then sends Basic auth with
+credentials the hostile page chose. A relative torrent link resolved against that page address also
+keeps the userinfo, which ends up in `TorrentURL` and is stored in resume data.
+
+**Acceptance:**
+1. `detailsAddress` refuses any address with userinfo (`parsed.User != nil`), including an empty
+   `@`, with `ErrDetailsAddressRefused`, before any request. The error doesn't echo the address.
+2. A torrent_url resolved from a details page never carries userinfo; if the resolved link has any,
+   it's dropped. Check whether the listing path (`webAddress`/`absolute` in result.go) has the same
+   issue for torrent_url and source_url; if it does, strip or refuse there too, and test it.
+3. Tests: same-host userinfo refused with zero requests (counting transport); a resolved relative
+   torrent link has no userinfo; the listing-path case if it applies.
+4. docs/indexer-definitions.md, Details pages section: one line saying containment compares host
+   and port literally, so `base_url` with an explicit default port (`:443`) won't match a page URL
+   without it.
+
+**Notes:** DEC-143. `detailsAddress` refuses any `parsed.User != nil` right after the scheme check
+("it carries a user name or password"; no address or credential in the error). The listing path had
+the same issue: a page's `u:p@` link and any relative link under a `base_url` carrying
+userinfo kept it in `TorrentURL`, `SourceURL` and the URL-derived `ID`. Fixed in the one shared
+place, `webAddress`, which now sets `User = nil` on every resolved link (both paths): the userinfo
+is dropped, the link kept. New `userinfo_test.go`: five refused shapes with a counting transport
+(zero requests, no leak in the error); details-page absolute/empty-`@`/scheme-relative/relative
+links; `webAddress` against a base with userinfo; a listing Search end to end. Docs: literal host
+and port bullet, userinfo in the containment bullet and field table. Backlog T-9042, T-9043, T-9044.
