@@ -4131,6 +4131,39 @@ seeders and `SortMissingLast` pins them last both ways (`TestSeedersSortKeepsUnk
 Component goldens gained an unreported-swarm row at 80x24, 120x40 and 60x20; diffs inspected, the
 only change is that row. Backlog T-9020, T-9021.
 
+### T-9019 · Shell-style path completion in the import field
+```
+status: done
+depends: T-9012
+tier: M
+```
+Owner decision (2026-09-29). Also covers Backlog T-9018 (`~` expansion).
+
+**Acceptance:**
+- On the "Import from (path or URL)" field, when the text is non-empty and a completion exists,
+  `tab` completes it. If several entries match, it completes the longest common prefix, and
+  further `tab` presses cycle the matches. When there is nothing to complete, `tab` moves to the
+  next field as it does today. `shift+tab` always moves back.
+- A leading `~/` is expanded to the user's home.
+- Only directories and `.yml`/`.yaml` files are offered. When the field is empty, completion
+  starts in the definitions directory. URLs (http/https) are never completed.
+- The directory read runs in a `tea.Cmd`, never in Update (AGENT.md §6.1). A stale result (the
+  text changed since the read started) is dropped.
+- Tests use a temp directory and cover: a unique match, a common prefix, cycling, no match
+  falling through to next-field, `~` expansion, the URL passthrough, and the stale-result drop.
+- It works on Windows paths too (tests use `filepath`). Home expansion goes through the existing
+  platform/config helpers; no `runtime.GOOS`.
+
+**Notes:** New `internal/tui/pathcomplete.go`. `tab` on the import field reads the directory in a
+`tea.Cmd` (`formCompleteMsg`, dropped when the field text changed or the generation moved on) and
+applies the single match, else the common prefix, else cycles matches on further tabs; nothing to
+complete (no match, URL, fully typed file, empty field with no definitions dir) advances a field as
+before. Only directories and .yml/.yaml files; dotfiles only when the prefix starts with `.`. `~/` is
+expanded via `os.UserHomeDir` (the call the platform path resolvers use; no GOOS) both in completion
+and when enter imports, so `~/x.yml` works (T-9018). `tui.WithDefinitionsDir` wired from the app.
+Ten tests over a temp dir cover the criteria. Backlog: T-9022, T-9023 (PR #66 review notes).
+
+
 ---
 
 ---

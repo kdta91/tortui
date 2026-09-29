@@ -182,6 +182,11 @@ type sourceForm struct {
 	idOverride string
 	importText string
 
+	// completion and completeGen drive tab-completion on the import field
+	// (pathcomplete.go, T-9019).
+	completion  *pathCompletion
+	completeGen int
+
 	cursor  int
 	reveal  bool
 	dirty   bool
@@ -1151,8 +1156,11 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "tab", "down":
-		f = f.clampCursor()
-		f.cursor = (f.cursor + 1) % len(f.fields())
+		if msg.String() == "tab" && f.current() == fieldImport && !isURLSource(f.importText) {
+			return m.handleImportTab(f)
+		}
+
+		f = f.advanceField()
 		m.settings.form = &f
 
 		return m, nil
@@ -1189,7 +1197,7 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			f.info = ""
 			m.settings.form = &f
 
-			return m, importDefinitionCmd(m.sources, f.importText)
+			return m, importDefinitionCmd(m.sources, expandHome(strings.TrimSpace(f.importText)))
 		}
 
 		// On the aggregator-import field, enter replaces the add form with
@@ -1501,7 +1509,7 @@ func (m Model) renderSourceForm() string {
 	}
 
 	body := th.Border.Width(inner).Render(strings.TrimRight(b.String(), "\n"))
-	help := "tab/shift+tab/↑/↓ move · left/right toggle type · ctrl+s/enter save · enter on import field imports · ctrl+t test · ctrl+r reveal · esc cancel"
+	help := "tab/shift+tab/↑/↓ move · left/right toggle type · ctrl+s/enter save · tab completes import path · enter on import field imports · ctrl+t test · ctrl+r reveal · esc cancel"
 
 	return body + "\n" + th.Muted.Render(theme.Truncate(help, m.width))
 }

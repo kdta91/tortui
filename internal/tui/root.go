@@ -193,6 +193,9 @@ type Model struct {
 	// relative or empty value offers no Default row.
 	downloadDir string
 
+	// definitionsDir is where completion starts on an empty import field.
+	definitionsDir string
+
 	// dest is the add flow's destination picker while it is open
 	// (destination.go, T-074).
 	dest destPicker
@@ -615,6 +618,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case formImportResultMsg:
 		return m.handleFormImportResult(msg)
+
+	case formCompleteMsg:
+		return m.handleFormComplete(msg)
 
 	case reloadResultMsg:
 		return m.handleReloadResult(msg)
