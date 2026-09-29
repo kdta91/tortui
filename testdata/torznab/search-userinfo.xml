@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture: links that carry userinfo (T-9045). Go's http client sends a
+  `user:pw@` part as Basic auth, so a feed must never get to choose one for
+  a link tortui will fetch, store in resume data, or open in a browser.
+  Every link below keeps its host, path and query once the userinfo is
+  dropped. The magnet's tracker carries userinfo too, and must come back
+  exactly as published: magnets are passed through untouched.
+
+    3001  userinfo in the enclosure and in <comments>
+    3002  an empty `@` in <link> (no enclosure) and in a permalink guid, no
+          infohash, so the guid is also the result's identity
+    3003  userinfo in a magnet's tracker parameter only
+
+  The xmlns:torznab declaration is omitted, as in every fixture here (see
+  latest-feed.xml and backlog T-933).
+-->
+<rss version="2.0">
+  <channel>
+    <title>Fixture Feed</title>
+    <item>
+      <title>Invented Userinfo Enclosure</title>
+      <guid isPermaLink="false">fixture-3001</guid>
+      <comments>https://alice:s3cret@feed.example.org/details/3001</comments>
+      <enclosure url="https://alice:s3cret@feed.example.org/download/3001.torrent?apikey=redacted-in-fixture" length="4096" type="application/x-bittorrent"/>
+      <torznab:attr name="seeders" value="3"/>
+      <torznab:attr name="infohash" value="3001300130013001300130013001300130013001"/>
+    </item>
+    <item>
+      <title>Invented Userinfo Link</title>
+      <guid isPermaLink="true">https://@feed.example.org/details/3002</guid>
+      <link>http://@feed.example.org:8080/download/3002.torrent</link>
+      <torznab:attr name="seeders" value="2"/>
+    </item>
+    <item>
+      <title>Invented Userinfo Magnet</title>
+      <guid isPermaLink="false">fixture-3003</guid>
+      <torznab:attr name="seeders" value="1"/>
+      <torznab:attr name="magneturl" value="magnet:?xt=urn:btih:3003300330033003300330033003300330033003&amp;tr=https%3A%2F%2Falice%3As3cret%40tracker.example.org%2Fannounce"/>
+    </item>
+  </channel>
+</rss>

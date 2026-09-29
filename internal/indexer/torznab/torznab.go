@@ -54,11 +54,11 @@
 //	            as 40 hex or 32 base32 characters. Otherwise a guid,
 //	            comments or link goes through withoutQuery, and that
 //	            reduces less than "scheme, host and path" suggests: it
-//	            removes the query string and fragment from a candidate
-//	            url.Parse gives a scheme to, and returns every other
-//	            candidate exactly as it stands. An opaque scheme:token
-//	            value has no query string, so it is reduced by nothing;
-//	            userinfo and path survive in a full URL. PASSED THROUGH:
+//	            removes the userinfo, query string and fragment from a
+//	            candidate url.Parse gives a scheme to, and returns every
+//	            other candidate exactly as it stands. An opaque
+//	            scheme:token value has no query string, so it is reduced
+//	            by nothing; the path survives in a full URL. PASSED THROUGH:
 //	            whatever withoutQuery leaves, and the last-resort fallback
 //	            to the title.
 //	Title       PASSED THROUGH, whitespace-trimmed and otherwise verbatim.
@@ -75,7 +75,8 @@
 //	            itself passed through. Reproduced by QA on PR #12,
 //	            round 3; pinned by
 //	            TestResolveDerivesAMagnetThatInheritsTheTitlesGap.
-//	TorrentURL  The source's own download URL, verbatim — and safe:
+//	TorrentURL  The source's own download URL, verbatim but for any
+//	            userinfo, which is dropped (T-9045) — and safe:
 //	            internal/logging masks on the name.
 //	SizeBytes   Derived. Parsed as an integer.
 //	Seeders     Derived. Parsed as an integer.
@@ -86,7 +87,8 @@
 //	            dropped. That refusal keeps a link out. It cannot keep an
 //	            opaque token out, and an api_key is an opaque token.
 //	Trust       Derived. An indexer.Trust enum value.
-//	SourceURL   The source's own page URL, verbatim — and safe:
+//	SourceURL   The source's own page URL, verbatim but for any
+//	            userinfo, which is dropped (T-9045) — and safe:
 //	            internal/logging masks on the name.
 //	Extra       Derived. Fixed "torznab."-prefixed keys, and only values
 //	            that parse as a number.

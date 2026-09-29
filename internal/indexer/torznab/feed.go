@@ -289,7 +289,7 @@ func resultID(hash string, it feedItem) string {
 }
 
 // withoutQuery trims a candidate identifier and, when it is an absolute URL,
-// strips its query and fragment. A non-URL is returned as it stands —
+// strips its userinfo, query and fragment. A non-URL is returned as it stands —
 // including one that is an api_key a source echoed back, which is why
 // resultID's doc comment lists this branch as a pass-through rather than a
 // derivation.
@@ -305,6 +305,7 @@ func withoutQuery(raw string) string {
 	}
 
 	stripped := *parsed
+	stripped.User = nil
 	stripped.RawQuery = ""
 	stripped.ForceQuery = false
 	stripped.Fragment = ""
@@ -714,7 +715,7 @@ func isBase32(s string) bool {
 func torrentAddress(it feedItem) string {
 	for _, candidate := range []string{it.Enclosure.Address, it.Link} {
 		if isWebAddress(candidate) {
-			return strings.TrimSpace(candidate)
+			return linkWithoutUserinfo(candidate)
 		}
 	}
 
@@ -731,14 +732,39 @@ func torrentAddress(it feedItem) string {
 // this field as the page.
 func sourceAddress(it feedItem) string {
 	if isWebAddress(it.Comments) {
-		return strings.TrimSpace(it.Comments)
+		return linkWithoutUserinfo(it.Comments)
 	}
 
 	if set, ok := boolAttr(it.GUID.IsPermaLink); ok && set && isWebAddress(it.GUID.Value) {
-		return strings.TrimSpace(it.GUID.Value)
+		return linkWithoutUserinfo(it.GUID.Value)
 	}
 
 	return ""
+}
+
+// linkWithoutUserinfo trims an http(s) link and drops any userinfo from it
+// — `user:pw@`, or a bare `@` — keeping the rest of the link (T-9045,
+// matching the scraper's DEC-143). Go's http client would send userinfo as
+// Basic auth, so a feed must not get to choose it for a link tortui
+// fetches, writes into resume data, or opens in a browser. A link with no
+// userinfo comes back exactly as published. One that will not parse is
+// dropped: url.Parse is what every consumer of the link runs first, so it
+// was never usable, and its userinfo cannot be found to strip.
+func linkWithoutUserinfo(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return ""
+	}
+
+	if parsed.User == nil {
+		return trimmed
+	}
+
+	parsed.User = nil
+
+	return parsed.String()
 }
 
 // isWebAddress reports whether raw is an absolute http or https URL.

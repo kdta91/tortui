@@ -3,6 +3,8 @@ package scraper
 import (
 	"errors"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -157,8 +159,10 @@ func TestWebAddressDropsUserinfo(t *testing.T) {
 
 // TestListedLinksNeverCarryUserinfo is criterion 2 on the listing path:
 // torrent_url and source_url read off a listing reach the result without
-// userinfo, whether the page wrote it into the link or a relative link
-// would have inherited it from a base_url that carries some.
+// userinfo when the page wrote it into the link. A base_url that carries
+// userinfo no longer validates (T-9045), so a relative link cannot inherit
+// any through New; TestWebAddressDropsUserinfo still pins that webAddress
+// drops it if a base ever had some.
 func TestListedLinksNeverCarryUserinfo(t *testing.T) {
 	const listing = `
 id: fixture-userinfo
@@ -191,7 +195,7 @@ search:
 		t.Fatalf("parse: %v", err)
 	}
 
-	address := strings.Replace(src.server.URL, "://", "://alice:s3cret@", 1)
+	address := src.server.URL
 	def.BaseURL = address
 
 	a, err := New(Options{Definition: def, Client: testClient(httpx.Config{})})
@@ -223,6 +227,164 @@ search:
 
 		if strings.Contains(r.ID, "s3cret") || strings.Contains(r.ID, "@") {
 			t.Errorf("%q: ID = %q carries userinfo", r.Title, r.ID)
+		}
+	}
+}
+
+// userinfoBases are base_url shapes that carry userinfo (T-9045). Each
+// secret part is distinct so a test can tell exactly what leaked.
+var userinfoBases = map[string]string{
+	"user and password": "https://alice:s3cret@base.example.org",
+	"user only":         "https://alice@base.example.org",
+	"empty password":    "https://alice:@base.example.org",
+	"empty user":        "https://:s3cret@base.example.org/browse",
+	"bare at":           "https://@base.example.org",
+	"http with a path":  "http://alice:s3cret@base.example.org:8080/api/",
+}
+
+// withBase is aDefinition with its base_url replaced.
+func withBase(t *testing.T, id, base string) string {
+	t.Helper()
+
+	body := strings.Replace(aDefinition(id), "base_url: https://"+id+".example.org", "base_url: "+base, 1)
+	if !strings.Contains(body, "base_url: "+base) {
+		t.Fatalf("aDefinition(%q) has no base_url line to replace", id)
+	}
+
+	return body
+}
+
+// assertNoUserinfoEcho fails when text repeats any part of a refused
+// base_url: the credential, the separator, or the address itself.
+func assertNoUserinfoEcho(t *testing.T, what, text string) {
+	t.Helper()
+
+	for _, leak := range []string{"alice", "s3cret", "@", "base.example.org", "://"} {
+		if strings.Contains(text, leak) {
+			t.Errorf("%s %q repeats %q from the refused base_url", what, text, leak)
+		}
+	}
+}
+
+// TestABaseURLWithUserinfoFailsValidation is T-9045 criterion 1: a
+// definition whose base_url carries any userinfo — even a bare `@` — is
+// refused at validation, on the base_url key, and the error repeats
+// neither the address nor the credential in it.
+func TestABaseURLWithUserinfoFailsValidation(t *testing.T) {
+	t.Parallel()
+
+	for name, base := range userinfoBases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if !hasUserinfo(t, base) {
+				t.Fatalf("case %q does not carry userinfo", base)
+			}
+
+			_, err := Parse([]byte(withBase(t, "fixture-userinfo", base)))
+			if !errors.Is(err, ErrBaseAddressUserinfo) {
+				t.Fatalf("Parse error = %v, want ErrBaseAddressUserinfo", err)
+			}
+
+			var verr *ValidationError
+			if !errors.As(err, &verr) || verr.Location != "base_url" {
+				t.Fatalf("error = %v, want a *ValidationError on base_url", err)
+			}
+
+			if !strings.Contains(err.Error(), "base_url") {
+				t.Errorf("error %q does not name the base_url key", err)
+			}
+
+			assertNoUserinfoEcho(t, "error", err.Error())
+		})
+	}
+}
+
+// TestNewRefusesABaseURLWithUserinfo pins the same rule for a Definition
+// built or edited in code: New validates too, so a base_url with userinfo
+// set after Parse never reaches a request.
+func TestNewRefusesABaseURLWithUserinfo(t *testing.T) {
+	t.Parallel()
+
+	def, err := Parse([]byte(aDefinition("fixture-userinfo")))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	def.BaseURL = userinfoBases["user and password"]
+
+	transport := &countingTransport{}
+
+	_, err = New(Options{Definition: def, Client: testClient(httpx.Config{Transport: transport})})
+	if !errors.Is(err, ErrBaseAddressUserinfo) {
+		t.Fatalf("New error = %v, want ErrBaseAddressUserinfo", err)
+	}
+
+	if n := transport.calls.Load(); n != 0 {
+		t.Fatalf("New made %d requests, want none", n)
+	}
+
+	assertNoUserinfoEcho(t, "error", err.Error())
+}
+
+// TestImportRejectsABaseURLWithUserinfoAndWritesNothing is criterion 1 on
+// the import path: the file is refused and nothing lands in the
+// definitions directory.
+func TestImportRejectsABaseURLWithUserinfoAndWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	for name, base := range userinfoBases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			src := filepath.Join(t.TempDir(), "userinfo.yml")
+			if err := os.WriteFile(src, []byte(withBase(t, "fixture-userinfo", base)), 0o600); err != nil {
+				t.Fatalf("write source file: %v", err)
+			}
+
+			dir := t.TempDir()
+			im := newTestImporter(t, dir)
+
+			_, _, err := im.Import(testContext(t), src)
+			if !errors.Is(err, ErrBaseAddressUserinfo) {
+				t.Fatalf("Import error = %v, want ErrBaseAddressUserinfo", err)
+			}
+
+			assertNoUserinfoEcho(t, "error", err.Error())
+			assertDirEmpty(t, dir)
+		})
+	}
+}
+
+// TestReloadSkipsABaseURLWithUserinfo is criterion 1 on the reload path:
+// the file is skipped rather than loaded, and neither the skipped entry
+// nor the log repeats the credential.
+func TestReloadSkipsABaseURLWithUserinfo(t *testing.T) {
+	t.Parallel()
+
+	dir := definitionsDir(t, map[string]string{"archive.yml": htmlDefinitionFile})
+	writeDefinitionFile(t, dir, "userinfo.yml", withBase(t, "fixture-userinfo", userinfoBases["user and password"]))
+
+	loader, logs := newTestLoader(t, dir)
+
+	if err := loader.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	if got := ids(loader.Definitions()); len(got) != 1 || got[0] != htmlID {
+		t.Fatalf("loaded %v, want only the valid definition", got)
+	}
+
+	skipped := loader.Skipped()
+	if len(skipped) != 1 || !errors.Is(skipped[0].Err, ErrBaseAddressUserinfo) {
+		t.Fatalf("skipped %v, want the userinfo definition on ErrBaseAddressUserinfo", skipped)
+	}
+
+	assertNoUserinfoEcho(t, "the skipped error", skipped[0].Err.Error())
+
+	for _, leak := range []string{"alice", "s3cret"} {
+		if strings.Contains(logs.String(), leak) {
+			t.Errorf("the log repeats %q from the refused base_url:\n%s", leak, logs)
 		}
 	}
 }

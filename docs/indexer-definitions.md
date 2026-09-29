@@ -16,7 +16,7 @@ release.
 
 > **A definition never contains a credential.** There is no placeholder for an
 > API key, a cookie or a passkey, and a definition that names one fails
-> validation. Credentials you obtained from your own account on a site go in
+> validation, as does a `base_url` carrying a user name or password. Credentials you obtained from your own account on a site go in
 > your own config file; tortui injects them into every request it makes to that
 > source. Keeping them out of the definition is what makes a definition a file
 > you can read, edit and hand to someone else.
@@ -51,7 +51,7 @@ is merged key by key, so a block can replace one selector and keep the rest.
 |---|---|---|
 | `id` | yes | Stable identifier. It is the config key, the registry key, and the source column in the results table. |
 | `name` | no | Display name. Defaults to `id`. |
-| `base_url` | yes | Absolute `http`/`https` address. Every request and every relative link on the page is resolved against it. |
+| `base_url` | yes | Absolute `http`/`https` address. Every request and every relative link on the page is resolved against it. A `base_url` with a user name or password in it (`user:pw@`, or even a bare `@`) is rejected. |
 | `mode` | no | `html` (default) reads CSS selectors with goquery; `json` reads path expressions. |
 | `requires_auth` | no | `true` if the site needs credentials you supplied from your own account. It is a display and capability flag only. |
 | `rows` | no* | Default row selector. Required somewhere — on the top level or on every block. |
@@ -206,7 +206,8 @@ How it behaves:
   `https` on exactly the host (and port) of `base_url`, and never `http` when
   `base_url` is `https`, and never with a user name or password in it
   (`user:pw@`, even a bare `@`). Anything else is refused before a request is
-  made. A redirect to another host is not followed.
+  made. A redirect to another host, or to an address with a user name or
+  password in it, is not followed.
 * **Host and port compare literally.** A `base_url` written with an explicit
   default port (`https://details.example.org:443`) does not match a page
   address without it (`https://details.example.org/item/1`), so write

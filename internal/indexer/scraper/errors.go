@@ -36,6 +36,13 @@ var (
 	// what a bare path parses as.
 	ErrBaseAddressHostMissing = errors.New("definition base_url has no host")
 
+	// ErrBaseAddressUserinfo reports a base_url that carries a user name
+	// or password (`user:pw@`, or even a bare `@`). A definition never
+	// holds a credential, and Go's http client would send one written
+	// there as Basic auth on every request. Neither the value nor the
+	// credential is repeated back (T-9045).
+	ErrBaseAddressUserinfo = errors.New("definition base_url carries a user name or password, which a definition never holds")
+
 	// ErrDefinitionEmpty reports a definition file with no YAML document
 	// in it at all — empty, whitespace, or comments alone.
 	ErrDefinitionEmpty = errors.New("the definition file contains no YAML document")

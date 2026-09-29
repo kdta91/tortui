@@ -159,6 +159,14 @@ var (
 
 	// ErrTooManyRedirects reports a redirect chain longer than the limit.
 	ErrTooManyRedirects = errors.New("too many redirects")
+
+	// ErrUserinfoRedirect reports a redirect whose target carries a user
+	// name or password (`user:pw@`, or even a bare `@`), on any host.
+	// net/http sends userinfo as a Basic Authorization header, so
+	// following it would send credentials the server chose rather than
+	// ones the user supplied (AGENT.md §2). Refused before the hop, on
+	// every client; the error names the host, never the target (T-9045).
+	ErrUserinfoRedirect = errors.New("refusing to follow a redirect to an address carrying a user name or password")
 )
 
 // Credentials are the values the user supplied from their own account for
@@ -413,8 +421,9 @@ func newDialer(connect time.Duration) *net.Dialer {
 }
 
 // checkRedirect refuses to leave the host the request was addressed to,
-// refuses to drop from https to http on the way, and bounds the chain
-// length. No error names a URL — only hosts and schemes.
+// refuses to drop from https to http on the way, refuses a target that
+// carries userinfo, and bounds the chain length. No error names a URL —
+// only hosts and schemes.
 //
 // The scheme matters as much as the host here. The api_key travels in the
 // query string, and a Location that preserves the query is the common case,
@@ -436,10 +445,15 @@ func checkRedirectToSubdomain(req *http.Request, via []*http.Request) error {
 }
 
 // checkRedirectHosts is the redirect rule itself; subdomains admits a hop to
-// a subdomain of the original host on the same port.
+// a subdomain of the original host on the same port. A target carrying
+// userinfo is refused first, whatever its host (ErrUserinfoRedirect).
 func checkRedirectHosts(req *http.Request, via []*http.Request, subdomains bool) error {
 	if len(via) >= maxRedirects {
 		return fmt.Errorf("httpx: %w (%d hops)", ErrTooManyRedirects, len(via))
+	}
+
+	if req.URL.User != nil {
+		return fmt.Errorf("httpx: %w (at %s)", ErrUserinfoRedirect, hostOf(req.URL))
 	}
 
 	origin := via[0].URL

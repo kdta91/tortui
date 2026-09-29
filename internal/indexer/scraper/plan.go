@@ -254,6 +254,10 @@ func parseBase(raw string) (*url.URL, error) {
 		return nil, ErrBaseAddressHostMissing
 	}
 
+	if parsed.User != nil {
+		return nil, ErrBaseAddressUserinfo
+	}
+
 	return parsed, nil
 }
 

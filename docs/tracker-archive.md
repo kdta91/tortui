@@ -4750,3 +4750,43 @@ is dropped, the link kept. New `userinfo_test.go`: five refused shapes with a co
 (zero requests, no leak in the error); details-page absolute/empty-`@`/scheme-relative/relative
 links; `webAddress` against a base with userinfo; a listing Search end to end. Docs: literal host
 and port bullet, userinfo in the containment bullet and field table. Backlog T-9042, T-9043, T-9044.
+
+### T-9045 · Userinfo hardening: base_url, redirects, torznab links
+
+```
+status: done
+depends: T-9041
+tier: H
+```
+Owner decision (2026-09-29): bundle the three remaining non-blocking userinfo findings from the
+PR #75 review.
+
+**Acceptance:**
+1. Scraper definition validation refuses a `base_url` that carries userinfo (`url.User != nil`,
+   including a bare `@`). The validation error names the key (`base_url`) but never echoes the
+   value or the credential. This enforces the documented rule "a definition never contains a
+   credential" (docs/indexer-definitions.md). The bundled definition still validates; import and
+   reload reject such a file with nothing written.
+2. httpx's redirect check (`checkRedirectHosts` in internal/indexer/httpx/client.go, and the
+   `FollowSubdomainRedirects` path) refuses any redirect whose target URL carries userinfo, with a
+   clear error that doesn't echo the URL. This covers the scraper, torznab and the engine's
+   .torrent client alike.
+3. Torznab result links (`TorrentURL` and `SourceURL`/comments/guid links, wherever
+   internal/indexer/torznab builds them) never carry userinfo: strip it and keep the link,
+   consistent with DEC-143. Magnets are untouched.
+4. Tests, recorded fixtures only: a base_url with userinfo refused (several shapes) with no echo;
+   a same-host redirect with userinfo refused (0 follow-up requests) for a plain client and for a
+   `FollowSubdomainRedirects` client; a torznab feed item with userinfo in its enclosure and
+   comments links comes back stripped; existing tests unchanged.
+5. Docs: note in docs/indexer-definitions.md that a base_url with a user name or password is
+   rejected.
+
+**Notes:** DEC-144. `parseBase` refuses `User != nil` (after the host check) with
+`ErrBaseAddressUserinfo`; the ValidationError names `base_url` only. Import writes nothing, reload
+skips the file, the bundled definition still parses. `checkRedirectHosts` refuses a userinfo target
+before the host rule on both paths. Torznab `torrentAddress`/`sourceAddress` use
+`linkWithoutUserinfo`; `withoutQuery` drops userinfo from a URL-shaped ID. New tests:
+scraper `userinfo_test.go` (six shapes: validation, New, import, reload), httpx
+`userinfo_redirect_test.go` (rule table, end to end with one request only, both clients), torznab
+`userinfo_test.go` + `testdata/torznab/search-userinfo.xml`. `TestListedLinksNeverCarryUserinfo` now
+uses a clean base_url, since one with userinfo no longer reaches New. Three mutations killed.
