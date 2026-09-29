@@ -93,29 +93,6 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 **Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash.
 
-### T-9019 · Shell-style path completion in the import field
-```
-status: todo
-depends: T-9012
-tier: M
-```
-Owner decision (2026-09-29). Also covers Backlog T-9018 (`~` expansion).
-
-**Acceptance:**
-- On the "Import from (path or URL)" field, when the text is non-empty and a completion exists,
-  `tab` completes it. If several entries match, it completes the longest common prefix, and
-  further `tab` presses cycle the matches. When there is nothing to complete, `tab` moves to the
-  next field as it does today. `shift+tab` always moves back.
-- A leading `~/` is expanded to the user's home.
-- Only directories and `.yml`/`.yaml` files are offered. When the field is empty, completion
-  starts in the definitions directory. URLs (http/https) are never completed.
-- The directory read runs in a `tea.Cmd`, never in Update (AGENT.md §6.1). A stale result (the
-  text changed since the read started) is dropped.
-- Tests use a temp directory and cover: a unique match, a common prefix, cycling, no match
-  falling through to next-field, `~` expansion, the URL passthrough, and the stale-result drop.
-- It works on Windows paths too (tests use `filepath`). Home expansion goes through the existing
-  platform/config helpers; no `runtime.GOOS`.
-
 ---
 
 ## v1.0 release criteria
@@ -706,8 +683,8 @@ when it reaches it and does not start backlog items on its own.
 - `T-9017` While the import field is the only thing being used, the add-source form still shows
   "! name is required", which suggests Name is needed for an import when it isn't. Found in an
   owner run of the add-source form.
-- `T-9018` (folded into T-9019) The import path is not `~`-expanded, so `~/x.yml` fails. Found
-  in an owner run of the add-source form; T-9019's `~/` expansion covers it.
+- `T-9018` (done in T-9019) The import path was not `~`-expanded, so `~/x.yml` failed. Found in an
+  owner run of the add-source form; T-9019's `~/` expansion covers it.
 - `T-9020` `TestSearchResultAlwaysMovesToResults` (`internal/tui/startup_test.go`) only starts from
   `ScreenSearch`, so a stay-put guard coming back would pass it. It should also start from
   `ScreenDownloads`. Found in review of T-9011.
@@ -715,6 +692,13 @@ when it reaches it and does not start backlog items on its own.
   `Seeders` int, so a result whose source reported no seeders (marked unknown, T-9012) is dropped by
   any minimum above zero. Decide whether unknown should pass the filter (it may well have seeders)
   and pin it with a test. Found in T-9012.
+- `T-9022` `registry.mergeResults` replaces a duplicate only when it has strictly more seeders. When
+  one source reports a real 0 and another reports unknown, whichever arrived first wins, so the S/L
+  cell can show `–` or `0` depending on order. Prefer a known count on a tie. Found in review of
+  T-9012 (PR #66).
+- `T-9023` The component goldens build the `–` cell by hand in `goldenRows()` instead of going
+  through `resultRow`/`formatSwarm`, so no golden exercises the real results model. Found in review
+  of T-9012 (PR #66).
 
 ---
 

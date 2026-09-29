@@ -210,6 +210,7 @@ func (a *App) buildModel(opts Options, storeRecovered string) tui.Model {
 		tui.WithMinFreeSpace(minFreeSpace(cfg.MinFreeSpace, a.logger)),
 		tui.WithSessionSaver(a.session),
 		tui.WithSourceManager(a.settings),
+		tui.WithDefinitionsDir(a.loaded.Paths.DefinitionsDir),
 		tui.WithPreferencesManager(a.settings),
 		tui.WithStartupNotice(startupNotices(a.loaded, storeRecovered, a.report)...),
 	}
