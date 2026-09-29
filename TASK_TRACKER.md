@@ -103,12 +103,17 @@ tier: M
 Owner decision (2026-09-29). `go test -race ./...` is a v1.0 criterion but no CI job runs it.
 
 **Acceptance:**
-- A new job in `.github/workflows/ci.yml` runs `go test -race` over `./...` on `macos-latest`,
-  `ubuntu-latest` and `windows-latest`, through a make target (`make race PKG=./...` or a new
-  target), per AGENT.md §8. No raw `go test` in the workflow.
+- A new job in `.github/workflows/ci.yml`, named `go test -race`, runs over `./...` on a matrix of
+  `macos-latest`, `ubuntu-latest` and `windows-latest`, giving the jobs `go test -race
+  (macos-latest)`, `go test -race (ubuntu-latest)` and `go test -race (windows-latest)`. It runs
+  through a make target (`make race PKG=./...` or a new target), per AGENT.md §8. No raw
+  `go test` in the workflow.
+- `-race` needs cgo and a C toolchain: the job confirms one is present on the ubuntu and windows
+  runners (and installs or pins it if not), rather than assuming it.
 - Existing job names are unchanged.
 - The new jobs are advisory per PR under the macOS-first gate (DEC-107) but must be green on all
-  three OSes before a release tag; the v1.0 criterion that mentions `go test -race` says so.
+  three OSes before a release tag. AGENT.md §11 and the DEC-107 description list them as
+  advisory, updated in T-9025's own PR.
 - Branch protection is not changed (owner-only, AGENT.md §12).
 
 ### T-9026 · Hostname scanner ignores capitalised selector names
@@ -118,7 +123,8 @@ status: todo
 depends: T-9025
 tier: H
 ```
-Owner decision (2026-09-29), promoted from Backlog T-999. Tier H because it changes an AGENT.md §2
+Owner decision (2026-09-29), promoted from Backlog T-999. `depends: T-9025` is for ordering only;
+there is no technical dependency. Tier H because it changes an AGENT.md §2
 safeguard. The scanner reads Go selector expressions such as `ix.URL` as hostnames.
 
 **Acceptance:**
@@ -126,12 +132,13 @@ safeguard. The scanner reads Go selector expressions such as `ix.URL` as hostnam
   letter in the ORIGINAL (un-lowercased) text. Selector expressions such as `ix.URL`, `srv.URL`,
   `pkg.FeedURL` no longer flag, in both diffs and commit messages.
 - Every all-lowercase hostname is still flagged exactly as today, and so is a mixed-case one whose
-  final label is lowercase, such as `Evil.example.net`.
+  final label is lowercase, such as `Evil.example.net`. An unexported selector such as
+  `a.baseURL` no longer flags either.
 - The scanner's existing test script gains cases for both lists, using only invented `example.*`
   names and invented identifiers.
-- The residual gap (a hostname with a capitalised final label, such as `example.Org`, now passes)
-  is recorded in a DEC entry as accepted by the owner, with a note that reviewers still check for
-  named sites.
+- The residual gap is recorded in a DEC entry as accepted by the owner: a hostname whose final
+  label contains ANY uppercase letter, for example `example.Org` or `example.oRG`, now passes.
+  The entry notes that reviewers still check for named sites.
 - POSIX sh only (AGENT.md §14). CI behaviour is otherwise unchanged; the job name and required
   status are untouched.
 
