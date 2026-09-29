@@ -4570,3 +4570,36 @@ only if missing. AGENT.md section 11 and the DEC-107 row now list the three race
 advisory. Not run locally on the runners; first CI run is the evidence. Branch protection
 unchanged.
 
+### T-9026 · Hostname scanner ignores capitalised selector names
+
+```
+status: done
+depends: T-9025
+tier: H
+```
+Owner decision (2026-09-29), promoted from Backlog T-999. `depends: T-9025` is for ordering only;
+there is no technical dependency. Tier H because it changes an AGENT.md §2
+safeguard. The scanner reads Go selector expressions such as `ix.URL` as hostnames.
+
+**Acceptance:**
+- `scripts/check-indexer-hostnames.sh` skips a candidate whose final label contains an uppercase
+  letter in the ORIGINAL (un-lowercased) text. Selector expressions such as `ix.URL`, `srv.URL`,
+  `pkg.FeedURL` no longer flag, in both diffs and commit messages.
+- Every all-lowercase hostname is still flagged exactly as today, and so is a mixed-case one whose
+  final label is lowercase, such as `Evil.example.net`. An unexported selector such as
+  `a.baseURL` no longer flags either.
+- The scanner's existing test script gains cases for both lists, using only invented `example.*`
+  names and invented identifiers.
+- The residual gap is recorded in a DEC entry as accepted by the owner: a hostname whose final
+  label contains ANY uppercase letter, for example `example.Org` or `example.oRG`, now passes.
+  The entry notes that reviewers still check for named sites.
+- POSIX sh only (AGENT.md §14). CI behaviour is otherwise unchanged; the job name and required
+  status are untouched.
+
+**Notes:** `check_host()` now skips a candidate whose final label has an uppercase letter in the
+original text; `scan()` still matches on the lowercased line but cuts each candidate from the
+original at the same offset. Applies to both the scheme and the key/value shape. Test script gains
+cases 6–10 (selectors in a file and in a commit message pass; lowercase, lowercase-final-label and
+second-on-a-line hosts still flag; `Evil.example.net` still allowed; the DEC-141 gap pinned) and
+now writes check output outside the scratch repo so one case's output never lands in the next
+case's diff. Five mutations of the new logic each fail the test. CI job untouched.
