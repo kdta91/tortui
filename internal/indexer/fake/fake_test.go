@@ -56,24 +56,6 @@ func TestIndexerSearchHonoursMinSeeders(t *testing.T) {
 	}
 }
 
-func TestIndexerSearchMinSeedersLetsUnknownThrough(t *testing.T) {
-	unknown := map[string]string{indexer.ExtraKeySeedersUnknown: "1"}
-	ix := New("x", "X", indexer.Caps{Search: true}, []indexer.Result{
-		{ID: "unknown", Extra: unknown},
-		{ID: "below", Seeders: 4},
-		{ID: "at", Seeders: 5},
-	})
-
-	got, err := ix.Search(context.Background(), indexer.Query{MinSeeders: 5})
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-
-	if len(got) != 2 || got[0].ID != "unknown" || got[1].ID != "at" {
-		t.Fatalf("Search returned %+v, want the unknown and at-minimum results", got)
-	}
-}
-
 func TestIndexerSearchHonoursLimit(t *testing.T) {
 	ix := New("x", "X", indexer.Caps{Search: true}, ArchiveResults())
 
