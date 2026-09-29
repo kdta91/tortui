@@ -91,39 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo.
-
-### T-9045 · Userinfo hardening: base_url, redirects, torznab links
-
-```
-status: in-progress
-depends: T-9041
-tier: H
-```
-Owner decision (2026-09-29): bundle the three remaining non-blocking userinfo findings from the
-PR #75 review.
-
-**Acceptance:**
-1. Scraper definition validation refuses a `base_url` that carries userinfo (`url.User != nil`,
-   including a bare `@`). The validation error names the key (`base_url`) but never echoes the
-   value or the credential. This enforces the documented rule "a definition never contains a
-   credential" (docs/indexer-definitions.md). The bundled definition still validates; import and
-   reload reject such a file with nothing written.
-2. httpx's redirect check (`checkRedirectHosts` in internal/indexer/httpx/client.go, and the
-   `FollowSubdomainRedirects` path) refuses any redirect whose target URL carries userinfo, with a
-   clear error that doesn't echo the URL. This covers the scraper, torznab and the engine's
-   .torrent client alike.
-3. Torznab result links (`TorrentURL` and `SourceURL`/comments/guid links, wherever
-   internal/indexer/torznab builds them) never carry userinfo: strip it and keep the link,
-   consistent with DEC-143. Magnets are untouched.
-4. Tests, recorded fixtures only: a base_url with userinfo refused (several shapes) with no echo;
-   a same-host redirect with userinfo refused (0 follow-up requests) for a plain client and for a
-   `FollowSubdomainRedirects` client; a torznab feed item with userinfo in its enclosure and
-   comments links comes back stripped; existing tests unchanged.
-5. Docs: note in docs/indexer-definitions.md that a base_url with a user name or password is
-   rejected.
-
-**Notes:**
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links.
 
 ---
 
@@ -132,7 +100,7 @@ PR #75 review.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037 and T-9041, are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041 and T-9045, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI. The race jobs
       (T-9025) are advisory per PR under DEC-107 but must all be green before the release tag.
 - [ ] Coverage thresholds from AGENT.md §9 met.
@@ -927,6 +895,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-141 | 2026-09-29 | T-9026: the hostname scanner skips only an unquoted bare two-part Go selector value (`srv.URL`); URLs and multi-label values are never skipped |
 | DEC-142 | 2026-09-29 | T-9037: scraper `details:` block; Resolve fetches the item page once, at add time only, through the same client, refused unless on base_url's own host and port without https to http; one link filled (magnet, else torrent, else infohash) |
 | DEC-143 | 2026-09-29 | T-9041: a scraper details address with any userinfo is refused before a request; every link the scraper resolves (listing and details) has its userinfo dropped, the link kept |
+| DEC-144 | 2026-09-29 | T-9045: a scraper base_url with any userinfo fails validation; httpx refuses any redirect whose target carries userinfo; torznab links have their userinfo dropped, the link kept; magnets untouched |
 
 ## Blocked
 
