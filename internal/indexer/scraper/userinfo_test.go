@@ -11,7 +11,7 @@ import (
 )
 
 // Userinfo in an address read off a page (T-9041). Go's http client turns
-// `https://user:pw@host/` into a Basic Authorization header, so a page
+// `https://user:pw@feed.example.org/` into a Basic Authorization header, so a page
 // that picks the userinfo picks credentials tortui would send; and a link
 // carrying it would land in Result.TorrentURL, and from there in resume
 // data. None of the addresses below is ever fetched.
