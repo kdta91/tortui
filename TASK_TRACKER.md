@@ -705,6 +705,10 @@ when it reaches it and does not start backlog items on its own.
 - `T-9028` The Windows `go test -race` job installs make and mingw through Chocolatey, which DEC-107
   moved shellcheck off after the T-932 outage; a Chocolatey outage would turn that advisory check
   red for a cause unrelated to the code. Found in review of T-9025 (PR #70), non-blocking.
+- `T-9029` In `https://host.org@Other` the hostname scanner reads `host.org` as userinfo and never
+  checks it. Pre-existing, but main at least flagged `other`; since T-9026 the uppercase final
+  label means the whole URL passes. Consider checking a hostname-shaped userinfo too. Found in
+  review of T-9026 (PR #71).
 
 ---
 
@@ -855,7 +859,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-138 | 2026-09-29 | T-9012: an unreported swarm count travels as `Result.Extra` markers (`ExtraKeySeedersUnknown`/`ExtraKeyLeechersUnknown`), not a Result field; the TUI renders `–` |
 | DEC-139 | 2026-09-29 | T-9024: tab on an empty import field always advances; completion (incl. the definitions-dir start) needs typed text; supersedes T-9019's third criterion |
 | DEC-140 | 2026-09-29 | T-9021: a result with unknown seeders passes `MinSeeders`; a real count below the minimum is still dropped; one shared `indexer.MeetsMinSeeders` |
-| DEC-141 | 2026-09-29 | T-9026: the hostname scanner skips a candidate whose final label has an uppercase letter (Go selectors); owner accepts that `example.Org`-style hosts now pass |
+| DEC-141 | 2026-09-29 | T-9026: the hostname scanner skips a candidate whose host (cut out of it first) has an uppercase final label (Go selectors); owner accepts that `example.Org`-style hosts now pass |
 
 ## Blocked
 

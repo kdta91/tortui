@@ -46,14 +46,25 @@ trap cleanup EXIT
 )
 base_sha=$(cd "$tmp_repo" && git rev-parse HEAD)
 
+# T-9026: run every case under a UTF-8 locale when the host has one, since
+# that is where macOS awk counts characters and tolower() can shrink a
+# multibyte letter. The scanner must pin its own locale to stay correct.
+utf8_locale=$(locale -a 2>/dev/null | grep -i -x -e 'en_US\.UTF-8' -e 'en_US\.utf8' -e 'C\.UTF-8' -e 'C\.utf8' | head -n 1 || true)
+
 run_check() {
 	# $1 = head sha, $2 = output file. Never let set -e kill the script on a
 	# nonzero (expected) exit -- the caller inspects the captured status.
 	head="$1"
 	out="$2"
 	set +e
-	(cd "$tmp_repo" && INDEXER_HOSTNAME_ALLOWLIST="$ALLOWLIST" "$CHECK_SCRIPT" "$base_sha" "$head") \
-		>"$out" 2>&1
+	(
+		cd "$tmp_repo" || exit 1
+		if [ -n "$utf8_locale" ]; then
+			LC_ALL=$utf8_locale
+			export LC_ALL
+		fi
+		INDEXER_HOSTNAME_ALLOWLIST="$ALLOWLIST" "$CHECK_SCRIPT" "$base_sha" "$head"
+	) >"$out" 2>&1
 	status=$?
 	set -e
 	return "$status"
@@ -270,6 +281,17 @@ func lower(ix holder) string { var url = ix.feedurl; return url }
 // Two candidates on one line: the second is cut at the right offset.
 var pair = struct{ URL, Host string }{URL: srv.URL, Host: "second-invented.example.zzz"}
 var pairs = "https://Skip-Invented.example.ZZZ/ https://third-invented.example.zzz/"
+
+// Text after the host is never its final label: query, fragment, template,
+// and characters legal in an authority but not in a hostname.
+var query = "https://query-invented.example.zzz?ApiKey=1"
+var frag = "https://frag-invented.example.zzz#Section"
+var tmpl = "https://tmpl-invented.example.zzz{{.Path}}"
+var atq = "https://atq-invented.example.zzz?u=a@Other"
+var amp = "https://amp-invented.example.zzz&X=1"
+var dollar = "https://dollar-invented.example.zzz${Path}"
+
+// İİİİİİİİ ẞẞ K URL: srv.URL, Host: "multibyte-invented.example.zzz"
 EOF
 	git add -A
 	git commit -q -m "add lowercase and mixed-case hostnames"
@@ -281,7 +303,10 @@ if run_check "$head_case8" "$out_dir/out8.txt"; then
 	fail "lowercase or lowercase-final-label hostnames were not flagged"
 fi
 for want in lower-invented.example.zzz mixed-invented.example.zzz shouted-invented.example.zzz \
-	ix.feedurl second-invented.example.zzz third-invented.example.zzz; do
+	ix.feedurl second-invented.example.zzz third-invented.example.zzz \
+	query-invented.example.zzz frag-invented.example.zzz tmpl-invented.example.zzz \
+	atq-invented.example.zzz amp-invented.example.zzz dollar-invented.example.zzz \
+	multibyte-invented.example.zzz; do
 	grep -q "possible new indexer hostname: $want\$" "$out_dir/out8.txt" || {
 		cat "$out_dir/out8.txt" >&2
 		fail "violation output did not name $want"
@@ -291,9 +316,9 @@ grep -q "skip-invented\|srv.url" "$out_dir/out8.txt" && {
 	cat "$out_dir/out8.txt" >&2
 	fail "an uppercase-final-label candidate on a shared line was flagged"
 }
-[ "$(grep -c 'possible new indexer hostname:' "$out_dir/out8.txt")" -eq 6 ] || {
+[ "$(grep -c 'possible new indexer hostname:' "$out_dir/out8.txt")" -eq 13 ] || {
 	cat "$out_dir/out8.txt" >&2
-	fail "expected exactly 6 violations in case 8"
+	fail "expected exactly 13 violations in case 8"
 }
 
 # Case 9: a mixed-case reserved-TLD placeholder with a lowercase final label
@@ -339,5 +364,32 @@ if ! run_check "$head_case10" "$out_dir/out10.txt"; then
 	cat "$out_dir/out10.txt" >&2
 	fail "a hostname with an uppercase final label was flagged (DEC-141 gap changed)"
 fi
+
+# Case 11: the query, fragment and template forms in a commit message are
+# still flagged by their host. Keyword and hosts are joined at run time, the
+# same convention as case 5.
+(
+	cd "$tmp_repo"
+	git checkout -q "$base_sha"
+	echo "placeholder11" >internal/indexer/fixture/keep11.go
+	git add -A
+	msg_keyword="indexer"
+	msg_q="https://msg-query-invented.example.zzz?Feed=rss"
+	msg_f="https://msg-frag-invented.example.zzz#Top"
+	msg_t="https://msg-tmpl-invented.example.zzz{{.Keywords}}"
+	git commit -q -m "feat: the ${msg_keyword} reads ${msg_q}, ${msg_f} and ${msg_t}"
+)
+head_case11=$(cd "$tmp_repo" && git rev-parse HEAD)
+
+if run_check "$head_case11" "$out_dir/out11.txt"; then
+	cat "$out_dir/out11.txt" >&2
+	fail "query/fragment/template URLs in a commit message were not flagged"
+fi
+for want in msg-query-invented.example.zzz msg-frag-invented.example.zzz msg-tmpl-invented.example.zzz; do
+	grep -q "possible new indexer hostname: $want\$" "$out_dir/out11.txt" || {
+		cat "$out_dir/out11.txt" >&2
+		fail "commit-message violation output did not name $want"
+	}
+done
 
 echo "check-indexer-hostnames_test: all cases passed"

@@ -61,9 +61,11 @@
 #     to avoid matching arbitrary "word.number" text, so an IP only trips
 #     this check today when it appears after a scheme (`https://1.2.3.4/...`).
 #     Pre-existing, unrelated to the case-sensitivity fix above.
-#   - a candidate whose final label has any uppercase letter in the original
-#     text (`example.Org`, `example.oRG`) is skipped, in both the scheme and
-#     the key/value shape, so a Go selector such as `ix.URL` or `a.baseURL`
+#   - a candidate whose host (cut out of the candidate first: userinfo, port,
+#     and anything from the first non-hostname character on are dropped) has
+#     a final label with any uppercase letter in the original text
+#     (`example.Org`, `example.oRG`) is skipped, in both the scheme and the
+#     key/value shape, so a Go selector such as `ix.URL` or `a.baseURL`
 #     is not read as a hostname (T-9026). The owner accepted that such a
 #     hostname now passes; reviewers still check for named sites (DEC-141).
 # This is a lightweight net that catches the common, careless case -- it is
@@ -128,7 +130,12 @@ fi
 	git log --no-color --format='%B' "$COMMIT_RANGE" 2>/dev/null | sed 's/^/+/'
 } >>"$diff_file"
 
-awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
+# LC_ALL=C: length(), substr() and tolower() all count bytes, so the
+# lowercased copy scan() matches on is byte-for-byte as long as the original
+# line (macOS awk in a UTF-8 locale shrinks some multibyte letters, e.g. a
+# dotted capital I, under tolower()), and an invalid UTF-8 byte is just a
+# byte instead of an "illegal byte sequence" abort (T-9026).
+LC_ALL=C awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 	BEGIN {
 		n = 0
 		while ((getline line < allowfile) > 0) {
@@ -206,8 +213,9 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		return 0
 	}
 	# Matching runs on the lowercased copy, but each candidate is cut from
-	# the ORIGINAL-case line at the same offset (tolower() never changes a
-	# length), so check_host() can see its real case (T-9026, DEC-141).
+	# the ORIGINAL-case line at the same offset (under LC_ALL=C, tolower()
+	# never changes a length), so check_host() can see its real case
+	# (T-9026, DEC-141).
 	function scan(text, file, orig,    rest, off, m, om, start, len) {
 		# Authority after the scheme: may carry userinfo (user:pass@) and a
 		# port, so match everything up to the first path/space/quote/angle
@@ -237,16 +245,32 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 			rest = substr(rest, start + len)
 		}
 	}
-	function check_host(host, file, text,   colon, label) {
+	function check_host(host, file, text,   colon, label, cut) {
 		# Strip a trailing quote/space/paren/sentence-punctuation run picked
 		# up from surrounding prose or markdown.
 		gsub(/[",'"'"' 	.,;)\]]+$/, "", host)
+		# Cut at the first character that cannot appear in an authority
+		# ("?query", "#fragment", "{{template}}", a backslash), so an "@"
+		# after it is never read as userinfo (T-9026). Each cut here and below
+		# keeps the uncut value if it would leave nothing, so an odd shape
+		# ("[2001:db8::1]") is still checked as before rather than dropped.
+		cut = host
+		sub(/[^-A-Za-z0-9._~%!$&()*+,;=:@\[\]].*$/, "", cut)
+		if (cut != "") host = cut
 		# Drop userinfo ("user:pass@host" -> "host"): a greedy match of
 		# everything up to the LAST "@" removes it even if the password
 		# itself contained "@".
 		sub(/^.*@/, "", host)
 		colon = index(host, ":")
 		if (colon > 0) host = substr(host, 1, colon - 1)
+		# Keep only the host itself: cut at the first character that cannot
+		# appear in a hostname (",Next", ")Then", "${Path}", "&X=1"), then
+		# drop any trailing dots, so the final label below is the last label of
+		# the host itself and never text that merely follows it (T-9026).
+		cut = host
+		sub(/[^-A-Za-z0-9.].*$/, "", cut)
+		sub(/\.+$/, "", cut)
+		if (cut != "") host = cut
 		# T-9026 (DEC-141): a final label with an uppercase letter is how a
 		# Go selector reads (`ix.URL`, `pkg.FeedURL`, `a.baseURL`), never how
 		# a hostname is written in practice, so skip it. A lowercase final
