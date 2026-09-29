@@ -641,9 +641,7 @@ func (m Model) handleSearchResult(msg searchResultMsg) (tea.Model, tea.Cmd) {
 	// T-060 acceptance ("L ... jumps to results") and the natural reading
 	// of enter's own dispatch: once there is something to show, go show
 	// it. T-061's results.go is what actually renders m.lastResults.
-	if msg.gen != m.startupGen || m.screen == ScreenSearch {
-		m.screen = ScreenResults
-	}
+	m.screen = ScreenResults
 
 	return m, nil
 }

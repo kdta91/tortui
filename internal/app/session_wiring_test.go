@@ -101,9 +101,8 @@ func TestAddFlowRecordsThroughTheSession(t *testing.T) {
 
 	waitForAny(t, tm, "Welcome to tortui")
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	// Startup's Latest ends with no results (the bundled sources answer
-	// 404), so search instead: the lab feed's one result is selected.
-	waitForAny(t, tm, "sources failed")
+	// The program opens on Search with nothing queried (T-9011): search
+	// for the lab feed's one result.
 	tm.Type("/corpus")
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // commit the query field
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // submit the search

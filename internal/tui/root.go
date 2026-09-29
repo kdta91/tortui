@@ -250,15 +250,10 @@ type Model struct {
 	// manager configured" via the status bar, the same nil-is-valid
 	// convention SourceManager already establishes.
 	prefsManager PreferencesManager
-	// sessionSaver, startupNotices, startupLatest, and startupGen are the
-	// composition root's startup and session hooks (startup.go, T-095).
-	// startupGen is the search generation the startup Latest query ran
-	// as, so its result only moves the user to Results if they are still
-	// on Search when it lands.
+	// sessionSaver and startupNotices are the composition root's startup
+	// and session hooks (startup.go, T-095).
 	sessionSaver   SessionSaver
 	startupNotices []string
-	startupLatest  bool
-	startupGen     int
 
 	// configSnapshot is the preferences panel's model-side cache of
 	// prefsManager.Config(): populated once at construction (New, below)
@@ -519,7 +514,7 @@ type sourceStatusMsg struct {
 type transientMessageMsg struct{ text string }
 
 // Init subscribes to the engine's update stream and queues the one-shot
-// startup commands WithStartupNotice/WithStartupLatest ask for (startup.go).
+// startup commands WithStartupNotice asks for (startup.go).
 // It performs no other I/O and blocks on nothing itself — the actual channel receive happens inside
 // the tea.Cmd returned by waitForEngineUpdate, on bubbletea's own goroutine
 // (AGENT.md §6.1).
@@ -572,9 +567,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		return m, nil
-
-	case startupLatestMsg:
-		return m.handleStartupLatest()
 
 	case transientMessageMsg:
 		var cmd tea.Cmd

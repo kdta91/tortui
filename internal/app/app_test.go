@@ -236,10 +236,10 @@ func TestZeroConfigRegistersTheBundledSources(t *testing.T) {
 	}
 }
 
-// TestZeroConfigStartsOnLatestBehindTheFirstRunOverlay: the first render is
-// the first-run overlay and nothing else, the program runs one Latest query
-// against the bundled sources by itself, and one key lands on its results.
-func TestZeroConfigStartsOnLatestBehindTheFirstRunOverlay(t *testing.T) {
+// TestZeroConfigOpensOnSearchAndQueriesNothing: the first render is the
+// first-run overlay, dismissing it leaves an empty Search screen, and no
+// request reaches a bundled source until the user acts (T-9011).
+func TestZeroConfigOpensOnSearchAndQueriesNothing(t *testing.T) {
 	guardDefaultTransport(t)
 	sandbox(t)
 
@@ -251,7 +251,7 @@ func TestZeroConfigStartsOnLatestBehindTheFirstRunOverlay(t *testing.T) {
 
 	waitForAny(t, tm, "Welcome to tortui")
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	waitForAny(t, tm, "Sources queried", "sources failed")
+	waitForAny(t, tm, "enter runs Latest")
 
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("Quit: %v", err)
@@ -259,8 +259,8 @@ func TestZeroConfigStartsOnLatestBehindTheFirstRunOverlay(t *testing.T) {
 
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 
-	if n := rt.count(); n < 1 {
-		t.Fatal("no Latest request reached the bundled sources at startup")
+	if n := rt.count(); n != 0 {
+		t.Fatalf("%d request(s) reached the bundled sources at startup, want 0", n)
 	}
 }
 

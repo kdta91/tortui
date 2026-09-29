@@ -4,8 +4,6 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/kdta91/tortui/internal/indexer"
 )
 
 // SessionSaver is the subset of internal/lifecycle.Session the add and
@@ -40,21 +38,9 @@ func WithStartupNotice(texts ...string) Option {
 	}
 }
 
-// WithStartupLatest makes the program run one Latest query against the
-// search screen's selected sources as it starts, exactly as pressing `L`
-// would, so a fresh install shows the bundled sources' recent additions
-// with no input (AGENT.md §1, T-095, DEC-129). It is one fetch per launch,
-// never a timer (AGENT.md §6.13). A source set with nothing that serves
-// Latest runs nothing and says nothing.
-func WithStartupLatest(b bool) Option {
-	return func(m *Model) { m.startupLatest = b }
-}
-
-// startupLatestMsg asks Update to run WithStartupLatest's one query.
-type startupLatestMsg struct{}
-
 // startupCmds returns the one-shot commands Init adds for the startup
-// options above: the queued notices and the startup Latest query.
+// option above: the queued notices. Nothing queries a source at launch
+// (T-9011, DEC-137): the program opens on an empty Search screen.
 func (m Model) startupCmds() []tea.Cmd {
 	var cmds []tea.Cmd
 
@@ -68,25 +54,7 @@ func (m Model) startupCmds() []tea.Cmd {
 		cmds = append(cmds, tea.Sequence(notices...))
 	}
 
-	if m.startupLatest {
-		cmds = append(cmds, func() tea.Msg { return startupLatestMsg{} })
-	}
-
 	return cmds
-}
-
-// handleStartupLatest runs the startup Latest query, or does nothing when
-// no selected source serves Latest — a startup the user did not ask for
-// must not greet them with "select at least one source".
-func (m Model) handleStartupLatest() (tea.Model, tea.Cmd) {
-	if m.searcher == nil || len(m.search.selectedIDs(indexer.ModeLatest)) == 0 {
-		return m, nil
-	}
-
-	m, cmd := m.dispatchSearch(true)
-	m.startupGen = m.search.generation
-
-	return m, cmd
 }
 
 // saveSessionCmd returns the tea.Cmd that saves s, reporting a failure on
