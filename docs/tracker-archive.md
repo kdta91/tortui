@@ -4106,6 +4106,33 @@ sees zero requests reach the bundled sources). `L` still runs Latest (`TestLates
 Internet Archive stays enabled. v1.0 criterion, README and `docs/running.md` reworded. DEC-137.
 Backlog T-9016..T-9018 from an owner run of the add-source form.
 
+### T-9012 · Unknown seeders render as a dash
+```
+status: done
+depends: T-9011
+tier: L
+```
+Owner decision (2026-09-29).
+
+**Acceptance:**
+- When a source does not report seeders or leechers, the S/L column shows `–` instead of `0/0`
+  (golden renders at 80×24, 120×40 and 60×20 updated and inspected, not regenerated blindly).
+- A source that does report a real zero still shows `0`.
+- Sorting on S/L keeps unknown values last, in both directions.
+- The "unknown" signal does not change the frozen §5 `Result` contract. If it cannot be carried
+  without changing it, that is a stop condition (AGENT.md §12), not a contract change.
+
+**Notes:** The unknown signal rides in `Result.Extra` (new consts `indexer.ExtraKeySeedersUnknown` /
+`ExtraKeyLeechersUnknown`, value "1"), so the frozen §5 struct is untouched (DEC-138). Torznab marks
+a count unknown when the attribute is absent, unparseable or negative (peers below seeders too);
+the scraper marks a count with no digit in its extracted text. Results table shows `–` (bare when
+both are unknown, else `–/4`, `9/–`); a reported zero stays `0`. S/L sort key carries `?` for unknown
+seeders and `SortMissingLast` pins them last both ways (`TestSeedersSortKeepsUnknownLastBothDirections`).
+Component goldens gained an unreported-swarm row at 80x24, 120x40 and 60x20; diffs inspected, the
+only change is that row. Backlog T-9020, T-9021.
+
+---
+
 ---
 
 ## Blocked — Resolved

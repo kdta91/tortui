@@ -730,3 +730,91 @@ func TestHandleRefreshWithNoPriorSearchPushesHint(t *testing.T) {
 		t.Fatalf("SearchAll called %d times, want 0", searcher.callCount())
 	}
 }
+
+// TestFormatSwarmDistinguishesUnknownFromZero is T-9012's rendering
+// acceptance: a count the source did not report shows "–", a reported zero
+// shows "0", and one half unknown leaves the other half's number alone.
+func TestFormatSwarmDistinguishesUnknownFromZero(t *testing.T) {
+	unknownS := map[string]string{indexer.ExtraKeySeedersUnknown: "1"}
+	unknownL := map[string]string{indexer.ExtraKeyLeechersUnknown: "1"}
+	unknownBoth := map[string]string{
+		indexer.ExtraKeySeedersUnknown:  "1",
+		indexer.ExtraKeyLeechersUnknown: "1",
+	}
+
+	cases := map[string]struct {
+		res  indexer.Result
+		want string
+	}{
+		"reported":        {res: indexer.Result{Seeders: 12, Leechers: 3}, want: "12/3"},
+		"reported zero":   {res: indexer.Result{}, want: "0/0"},
+		"both unknown":    {res: indexer.Result{Extra: unknownBoth}, want: "–"},
+		"seeders unknown": {res: indexer.Result{Leechers: 4, Extra: unknownS}, want: "–/4"},
+		"leechers unknown": {
+			res: indexer.Result{Seeders: 9, Extra: unknownL}, want: "9/–",
+		},
+		"unrelated extra": {res: indexer.Result{Extra: map[string]string{"k": "v"}}, want: "0/0"},
+	}
+
+	for name, tc := range cases {
+		if got := formatSwarm(tc.res); got != tc.want {
+			t.Errorf("%s: formatSwarm = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+// TestSeedersSortKeepsUnknownLastBothDirections is T-9012's sort
+// acceptance, driven through the real results columns: unknown seeders go
+// last ascending and descending, and a real zero sorts as a number.
+func TestSeedersSortKeepsUnknownLastBothDirections(t *testing.T) {
+	now := time.Now()
+	unknown := map[string]string{
+		indexer.ExtraKeySeedersUnknown:  "1",
+		indexer.ExtraKeyLeechersUnknown: "1",
+	}
+
+	results := []indexer.Result{
+		{IndexerID: "a", ID: "unknown", Title: "unknown", Extra: unknown},
+		{IndexerID: "a", ID: "zero", Title: "zero", Seeders: 0},
+		{IndexerID: "a", ID: "ten", Title: "ten", Seeders: 10},
+		{IndexerID: "a", ID: "two", Title: "two", Seeders: 2},
+	}
+
+	ids := func(m resultsModel) []string {
+		var out []string
+		for _, r := range m.table.Rows() {
+			out = append(out, r.ID)
+		}
+
+		return out
+	}
+
+	desc := newResultsModel().setResults(results, indexer.ModeSearch, now).sortDescBy(colSL)
+	if got, want := ids(desc), []string{"a|ten", "a|two", "a|zero", "a|unknown"}; !equalStrings(got, want) {
+		t.Fatalf("descending = %v, want %v", got, want)
+	}
+
+	asc := desc
+	asc.table = asc.table.SortBy(colSL) // toggles to ascending
+	if !asc.table.SortAscending() {
+		t.Fatal("second SortBy did not toggle to ascending")
+	}
+
+	if got, want := ids(asc), []string{"a|zero", "a|two", "a|ten", "a|unknown"}; !equalStrings(got, want) {
+		t.Fatalf("ascending = %v, want %v", got, want)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
+}

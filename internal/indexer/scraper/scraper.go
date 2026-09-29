@@ -108,8 +108,10 @@
 //	SourceURL   The page's own details address, resolved against base_url
 //	            and refused unless it is http or https — and safe to log:
 //	            internal/logging masks on the name.
-//	Extra       Never set. This schema has no extra block, so the map is
-//	            always nil.
+//	Extra       Only ever the two swarm-unknown markers
+//	            (indexer.ExtraKeySeedersUnknown/ExtraKeyLeechersUnknown),
+//	            set when the page carried no digit for that count; nil
+//	            otherwise. This schema has no extra block of its own.
 //
 // The fields that carry page text under a name internal/logging does not
 // mask are therefore, exhaustively: Title, Magnet, Uploader, and ID on

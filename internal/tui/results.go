@@ -41,7 +41,7 @@ func resultsColumns() []components.Column {
 	return []components.Column{
 		{Key: "title", Title: "Title", Flex: true, MinWidth: 20, Align: components.AlignLeft},
 		{Key: "size", Title: "Size", Width: 8, Align: components.AlignRight, Less: sizeLess},
-		{Key: "sl", Title: "S/L", Width: 9, Align: components.AlignRight, Less: seedersLess},
+		{Key: "sl", Title: "S/L", Width: 9, Align: components.AlignRight, Less: seedersLess, SortMissingLast: seedersSortMissing},
 		{
 			Key: "trust", Title: "Trust", Width: 6, Align: components.AlignLeft, Priority: 3,
 			Less: trustLess, SortMissingLast: trustSortMissing, Accent: true,
@@ -210,7 +210,7 @@ func resultRow(r indexer.Result, now time.Time) components.Row {
 		Cells: []string{
 			r.Title,
 			formatSize(r.SizeBytes),
-			fmt.Sprintf("%d/%d", r.Seeders, r.Leechers),
+			formatSwarm(r),
 			r.Trust.Badge(),
 			formatAge(now, r.Published),
 			resultSource(r),
@@ -221,7 +221,7 @@ func resultRow(r indexer.Result, now time.Time) components.Row {
 		// identical blank text, so trustLess/trustSortMissing could never
 		// tell them apart from Cells alone. Every other index is left
 		// empty, falling back to that column's own Cells text.
-		SortKey: []string{"", "", "", strconv.Itoa(int(r.Trust)), "", ""},
+		SortKey: []string{"", "", seedersSortKey(r), strconv.Itoa(int(r.Trust)), "", ""},
 	}
 }
 
@@ -367,6 +367,56 @@ func parseSize(cell string) float64 {
 }
 
 func sizeLess(a, b string) bool { return parseSize(a) < parseSize(b) }
+
+// unknownCount is what the S/L cell shows for a swarm count the source did
+// not report (T-9012), instead of a misleading 0.
+const unknownCount = "–"
+
+// seedersUnknownKey is the S/L column's SortKey for a result whose seeder
+// count is unknown. Any non-numeric text would do; it only has to be
+// something seedersSortMissing recognises and no real count can equal.
+const seedersUnknownKey = "?"
+
+// swarmUnknown reports whether the adapter marked the count under key as
+// not reported (indexer.ExtraKeySeedersUnknown / ExtraKeyLeechersUnknown).
+func swarmUnknown(r indexer.Result, key string) bool { return r.Extra[key] == "1" }
+
+// formatSwarm renders the S/L cell: "seeders/leechers", a bare "–" when
+// neither was reported, and "–" in place of just the missing half. A real
+// zero still renders as "0".
+func formatSwarm(r indexer.Result) string {
+	seedersUnknown := swarmUnknown(r, indexer.ExtraKeySeedersUnknown)
+	leechersUnknown := swarmUnknown(r, indexer.ExtraKeyLeechersUnknown)
+
+	if seedersUnknown && leechersUnknown {
+		return unknownCount
+	}
+
+	seeders, leechers := strconv.Itoa(r.Seeders), strconv.Itoa(r.Leechers)
+	if seedersUnknown {
+		seeders = unknownCount
+	}
+
+	if leechersUnknown {
+		leechers = unknownCount
+	}
+
+	return seeders + "/" + leechers
+}
+
+// seedersSortKey is the S/L column's sort value: the seeder count, or
+// seedersUnknownKey when the source did not report one.
+func seedersSortKey(r indexer.Result) string {
+	if swarmUnknown(r, indexer.ExtraKeySeedersUnknown) {
+		return seedersUnknownKey
+	}
+
+	return strconv.Itoa(r.Seeders)
+}
+
+// seedersSortMissing pins unknown seeder counts to the end of the S/L
+// column in both sort directions (the table's SortMissingLast contract).
+func seedersSortMissing(key string) bool { return key == seedersUnknownKey }
 
 // parseSeeders reads the seeder count back off an "S/L" cell (e.g.
 // "3421/12"), for seedersLess — the S/L column's sort key is seeders, the

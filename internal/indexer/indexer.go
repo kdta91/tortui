@@ -247,6 +247,20 @@ var ErrNoLink = errors.New("result has neither a magnet nor a torrent URL")
 // (AGENT.md §6.11).
 const ExtraKeyFiles = "tortui.files"
 
+// ExtraKeySeedersUnknown and ExtraKeyLeechersUnknown are well-known,
+// optional Result.Extra keys an adapter sets (to "1") when its source did
+// not report that swarm count at all. Result.Seeders and Result.Leechers
+// are plain ints and cannot tell "the source said zero" from "the source
+// said nothing" — both are zero — so this is how the difference travels
+// without changing the Result struct (T-9012). Absent means the count is
+// as reported, including a real zero. Like ExtraKeyFiles they are a
+// documented, source-agnostic convention: a display layer may read them,
+// and no core logic may branch on them.
+const (
+	ExtraKeySeedersUnknown  = "tortui.seeders_unknown"
+	ExtraKeyLeechersUnknown = "tortui.leechers_unknown"
+)
+
 // Validate reports whether a Result is usable, which means exactly one thing:
 // it has a link the engine could act on. A Result with neither Magnet nor
 // TorrentURL is rejected with an error wrapping ErrNoLink; a value that is only
