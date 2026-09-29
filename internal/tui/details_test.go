@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1260,5 +1261,71 @@ func TestDetailsScreenEndToEndSelectAndAdd(t *testing.T) {
 			t.Fatal("engine never received the added torrent")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestALinklessResultIsListedAndItsResolveErrorReachesTheStatusBar is
+// T-9037's TUI criterion: a search result with neither a magnet nor a
+// torrent link — only a details page, which the source's Resolve fetches —
+// still shows in the results table, enter on it dispatches Resolve off the
+// Update goroutine, and the source's own error text reaches the status bar
+// without engine.Add ever being called.
+func TestALinklessResultIsListedAndItsResolveErrorReachesTheStatusBar(t *testing.T) {
+	eng := newTestEngine(t)
+	t.Cleanup(func() { _ = eng.Close() })
+
+	const reason = "details page had no magnet, torrent link or infohash"
+
+	ix := &resolvingIndexer{id: "src-details", resolveFn: func(r indexer.Result) (indexer.Result, error) {
+		return r, fmt.Errorf("scraper src-details: %s", reason)
+	}}
+
+	m := New(eng, testTheme(), WithSearcher(newStubResolveSearcher(ix)))
+	m.search.generation = 1
+
+	linkless := indexer.Result{
+		IndexerID: "src-details", ID: "item-1", Title: "details-only.iso",
+		SourceURL: "https://details.example.org/item/1",
+	}
+
+	updated, _ := m.handleSearchResult(searchResultMsg{
+		gen: 1, query: indexer.Query{Mode: indexer.ModeSearch, Text: "x"},
+		results: []indexer.Result{linkless}, queried: 1, queriedIDs: []string{"src-details"},
+	})
+	m = updated.(Model)
+
+	if m.screen != ScreenResults {
+		t.Fatalf("screen = %v, want ScreenResults", m.screen)
+	}
+	if m.results.table.SelectedID() == "" {
+		t.Fatal("the link-less result is not in the results table")
+	}
+
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("enter on a link-less result dispatched nothing, want a Resolve cmd")
+	}
+	if ix.calls != 0 {
+		t.Fatalf("Resolve ran inside Update (calls=%d), want it deferred to the cmd", ix.calls)
+	}
+
+	resolveMsg, ok := cmd().(resolveResultMsg)
+	if !ok {
+		t.Fatal("cmd() did not produce resolveResultMsg")
+	}
+	if ix.calls != 1 {
+		t.Fatalf("Resolve calls = %d, want 1", ix.calls)
+	}
+
+	updated, _ = m.Update(resolveMsg)
+	m = updated.(Model)
+
+	if msg := m.statusBar.Message(); !strings.Contains(msg, reason) {
+		t.Errorf("statusBar.Message() = %q, want it to carry %q", msg, reason)
+	}
+	if len(eng.List()) != 0 {
+		t.Fatalf("engine.List() has %d entries, want 0 — Add must not have been called", len(eng.List()))
 	}
 }

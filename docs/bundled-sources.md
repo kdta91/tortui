@@ -34,8 +34,8 @@ post:
   (`https://archive.org/metadata/{identifier}`) lists against a file named
   `{identifier}_archive.torrent`. Getting the infohash from the search response itself, rather
   than a second per-item request, is what makes this source work within the scraper framework's
-  one-request-per-query model (T-022): the framework does not chain a details-page fetch, and
-  this task does not extend it to (see "What was deliberately not built" below).
+  one-request-per-query model (T-022): a search is one request, and this source needs no
+  details-page fetch at add time either (T-9037 added one for sources that do).
 - `item_size` (bytes) and `publicdate` (RFC 3339) are ordinary metadata fields returned by the
   same request, also verified live.
 - **The `.torrent` address (T-9010).** Each result's `TorrentURL` is
@@ -142,11 +142,9 @@ place, so `enabled = false` under that `id` turns the default off.
 ## What was deliberately not built here
 
 - **A second, per-item HTTP request to resolve a magnet or details page.** `Adapter.Resolve`
-  (T-022) makes no network call by design; extending it to fetch a details page is backlog
-  **T-939**, opened before this task. Nothing about Internet Archive needed it, since `btih` is
-  available directly from the search response, but a future bundled source that only publishes
-  a details-page link and no direct infohash would need it. Not built here — out of this task's
-  scope, and building it "for later" would be building ahead (AGENT.md §11.5).
+  (T-022) made no network call by design; fetching a details page was backlog **T-939**, since
+  built as the scraper's `details:` block (T-9037). Nothing about Internet Archive needed it,
+  since `btih` is available directly from the search response, so its definition has none.
 - **A distro release-listing source.** AGENT.md §2's own examples list "distro release
   listings" alongside archives and dataset repositories. This task did not evaluate a specific
   one: the two named candidates (Internet Archive, Academic Torrents) already produced the

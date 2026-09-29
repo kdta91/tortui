@@ -89,8 +89,9 @@ func statusReply(status int) reply {
 
 // request is one request the fake source received.
 type request struct {
-	query url.Values
-	path  string
+	query     url.Values
+	path      string
+	cookieHdr string
 }
 
 // fakeSource is an httptest.Server that answers each path with a canned
@@ -114,7 +115,7 @@ func newSource(t *testing.T, replies map[string]reply) *fakeSource {
 	src := &fakeSource{replies: replies}
 	src.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		src.mu.Lock()
-		src.seen = append(src.seen, request{path: r.URL.Path, query: r.URL.Query()})
+		src.seen = append(src.seen, request{path: r.URL.Path, query: r.URL.Query(), cookieHdr: r.Header.Get("Cookie")})
 		src.mu.Unlock()
 
 		res, ok := src.replies[r.URL.Path]

@@ -1,0 +1,40 @@
+# An invented site whose listing carries only a link to each item's own
+# page: the magnet, the torrent link or the infohash sits on that page, and
+# the details block below says how to read it. Used by this repository's
+# own tests (T-9037) and documented in docs/indexer-definitions.md.
+#
+# Nothing here refers to a real source (AGENT.md section 2). There is no
+# credential in this file and no way to put one in it.
+
+id: fixture-details
+name: Fixture Details
+base_url: https://details.example.org
+mode: html
+
+search:
+  path: /search
+  params:
+    q: "{{query}}"
+  rows: ul.listing li.item
+  fields:
+    title:
+      selector: a.name
+    source_url:
+      selector: a.name
+      attr: href
+    size:
+      selector: .size
+    seeders:
+      selector: .seeders
+
+# Fetched once, only when the user adds a result that has none of the three.
+details:
+  fields:
+    magnet:
+      selector: a.magnet
+      attr: href
+    torrent_url:
+      selector: a.torrent
+      attr: href
+    infohash:
+      selector: .hash

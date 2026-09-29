@@ -90,7 +90,10 @@
 //	            field's template built around a path-escaped page value —
 //	            resolved against base_url and refused unless it is http or
 //	            https, and safe to log regardless: internal/logging masks
-//	            on the name.
+//	            on the name. One read off a details page by Resolve
+//	            (details.go) is resolved against that page's address
+//	            instead, under the same scheme rule; a magnet or infohash
+//	            read there follows the Magnet and InfoHash rules above.
 //	SizeBytes   Derived. Parsed as a number of bytes.
 //	Seeders     Derived. Parsed as an integer.
 //	Leechers    Derived. Parsed as an integer.
@@ -366,10 +369,10 @@ func (a *Adapter) results(rows []row, block *blockPlan, q indexer.Query) []index
 
 // Resolve fills in what a result is missing so the engine can act on it.
 //
-// It makes no network call, and the reasoning is the same as the torznab
-// adapter's: what this adapter knows about an item is what the listing page
-// carried, and there is nothing to derive that is not already in the
-// Result it was handed.
+// It makes no network call except in one case, the last below: what this
+// adapter knows about an item is otherwise what the listing page carried,
+// and there is nothing to derive that is not already in the Result it was
+// handed.
 //
 //   - A result that already carries a magnet is returned unchanged. This is
 //     the no-op the frozen contract in AGENT.md §5 requires, and it is
@@ -381,13 +384,17 @@ func (a *Adapter) results(rows []row, block *blockPlan, q indexer.Query) []index
 //     result must reach the engine with exactly one link (T-9010).
 //   - A result with an infohash but neither link gets a magnet built from
 //     the hash and its title.
-//   - A result with none of the three returns ErrUnresolvable.
+//   - A result with none of the three, when the definition has a details
+//     block and the result has a source_url, has that page fetched once
+//     and the link read off it (resolveDetails, T-9037). The page must be
+//     on the definition's own host; a page with no usable link returns
+//     ErrDetailsNoLink.
+//   - Any other result with none of the three returns ErrUnresolvable.
 //
-// Fetching the details page to find a magnet that the listing page did not
-// carry is the obvious next thing and is deliberately not here: it needs a
-// `detail` block in the schema, and the schema this task ships is the one
-// its acceptance criteria enumerate. Backlog T-939.
-func (a *Adapter) Resolve(_ context.Context, r indexer.Result) (indexer.Result, error) {
+// Search never calls Resolve; the TUI's add flow does, when the user adds a
+// result, so a details page is fetched once per add, never once per listed
+// row.
+func (a *Adapter) Resolve(ctx context.Context, r indexer.Result) (indexer.Result, error) {
 	if strings.TrimSpace(r.Magnet) != "" {
 		return r, nil
 	}
@@ -402,6 +409,10 @@ func (a *Adapter) Resolve(_ context.Context, r indexer.Result) (indexer.Result, 
 		resolved.Magnet = magnetFor(hash, r.Title)
 
 		return resolved, nil
+	}
+
+	if a.plan.details != nil && strings.TrimSpace(r.SourceURL) != "" {
+		return a.resolveDetails(ctx, r)
 	}
 
 	// The failing result is not named. Every field that could name it —
