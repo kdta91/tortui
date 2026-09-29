@@ -342,6 +342,7 @@ markers — regenerate and paste instead.
 | `s` | cycle sort column | results |
 | `S` | reverse sort | results |
 | `t` | toggle trust filter (Trusted and above) | results |
+| `c` | clear recent searches (asks first) | search |
 | `o` | open downloaded file | downloads |
 | `f` | open containing folder | downloads |
 | `u` | open source page in browser | global |
@@ -351,6 +352,9 @@ markers — regenerate and paste instead.
 | `q` / `ctrl+c` | quit (prompts if downloads active) | global |
 | `e` | view source errors, if any (T-052; DEC-092) | search, results, details, downloads |
 <!-- keymap:end -->
+
+On the Search screen, `space` on a source row toggles that source in or out of the search (the
+screen's help line says so), and `c` clears the recent-searches list after a confirm dialog.
 
 ### Settings screen
 

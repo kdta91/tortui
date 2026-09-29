@@ -156,6 +156,24 @@ type stubHistory struct {
 	// recording anything — the search_test.go "history save failed"
 	// coverage for AGENT.md §6.9's "never swallow an error with _".
 	addErr error
+	// clearErr, when non-nil, is returned by ClearHistory instead of
+	// clearing anything; clearCalls counts ClearHistory invocations.
+	clearErr   error
+	clearCalls int
+}
+
+func (h *stubHistory) ClearHistory() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.clearCalls++
+	if h.clearErr != nil {
+		return h.clearErr
+	}
+
+	h.entries = nil
+
+	return nil
 }
 
 func (h *stubHistory) ListHistory() []store.HistoryEntry {

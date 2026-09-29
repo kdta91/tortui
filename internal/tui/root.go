@@ -89,7 +89,11 @@ type Model struct {
 	// captured by ID when it opened so a snapshot reordering the rows
 	// underneath the dialog cannot redirect the removal.
 	removeConfirm components.Dialog
-	removeTarget  removeTarget
+
+	// clearHistoryConfirm is the search screen's `c` dialog (T-9034,
+	// history_clear.go).
+	clearHistoryConfirm components.Dialog
+	removeTarget        removeTarget
 	// errorDetail is true while the status bar's source-error detail panel
 	// (T-052, ContextErrorDetail) is open. This is an info panel, not a
 	// confirm dialog, so it stays a plain bool rather than a Dialog.
@@ -376,6 +380,8 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 		statusBar:     components.New(),
 		quitConfirm:   newQuitDialog(),
 		removeConfirm: newRemoveDialog(),
+
+		clearHistoryConfirm: newClearHistoryDialog(),
 	}
 
 	for _, opt := range opts {
@@ -637,6 +643,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case aggregatorImportResultMsg:
 		return m.handleAggregatorImportResult(msg)
 
+	case historyClearedMsg:
+		return m.handleHistoryCleared(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -654,6 +663,8 @@ func (m Model) context() Context {
 		return ContextQuitConfirm
 	case m.removeConfirm.IsOpen():
 		return ContextRemoveConfirm
+	case m.clearHistoryConfirm.IsOpen():
+		return ContextClearHistoryConfirm
 	case m.dest.open:
 		return ContextDestination
 	case m.settings.form != nil:
@@ -742,7 +753,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// ScreenSearch while the quit-confirm dialog (or help, or the error
 	// detail panel) is open over it, and those must keep their own esc
 	// meaning.
-	if m.screen == ScreenSearch && !m.quitConfirm.IsOpen() && !m.showHelp && !m.errorDetail {
+	if m.screen == ScreenSearch && !m.quitConfirm.IsOpen() && !m.clearHistoryConfirm.IsOpen() &&
+		!m.showHelp && !m.errorDetail {
 		switch msg.String() {
 		case "esc":
 			return m.handleSearchCancel()
@@ -822,6 +834,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.context() == ContextSourceRemoveConfirm {
 		return m.handleSourceRemoveConfirmAction(action)
+	}
+
+	if m.context() == ContextClearHistoryConfirm {
+		return m.handleClearHistoryConfirmAction(action)
 	}
 
 	switch action {
@@ -968,6 +984,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ActionToggleTrustFilter:
 		m.results = m.results.toggleTrustFilter()
 		return m, nil
+	case ActionClearHistory:
+		// Bound only on ScreenSearch (keymap.go).
+		return m.handleClearHistory()
 	case ActionFocusSearch:
 		m.screen = ScreenSearch
 		m.search.cursor = 0
@@ -1061,6 +1080,8 @@ func (m Model) View() string {
 		body = m.renderQuitConfirm()
 	case ContextRemoveConfirm:
 		body = m.renderRemoveConfirm()
+	case ContextClearHistoryConfirm:
+		body = m.renderClearHistoryConfirm()
 	case ContextDestination:
 		body = m.renderDestinationPicker()
 	case ContextSourceForm:
@@ -1209,7 +1230,11 @@ func (m Model) renderHelp() string {
 		b.WriteString("\n")
 	}
 
-	return b.String()
+	// View appends "\n\n" before the status bar; without this trim the
+	// overlay's own trailing newline would cost a row, and the search
+	// screen's overlay (the longest) would scroll its "Keys" heading off an
+	// 80x24 terminal (T-9034 added one binding to it).
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // renderQuitConfirm draws the one-shot "active downloads" quit prompt
