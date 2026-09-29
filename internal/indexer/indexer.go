@@ -142,8 +142,10 @@ type Query struct {
 	Categories []Category
 
 	// MinSeeders drops results below this seeder count. Zero means no
-	// minimum. An adapter may push this to the source when the source
-	// supports it, or apply it locally; either is correct.
+	// minimum. A result whose seeders are unknown (ExtraKeySeedersUnknown)
+	// is never dropped by it; see MeetsMinSeeders. An adapter may push this
+	// to the source when the source supports it, or apply it locally;
+	// either is correct.
 	MinSeeders int
 
 	// Limit caps how many results to return. Zero means "the source's own
@@ -255,7 +257,8 @@ const ExtraKeyFiles = "tortui.files"
 // without changing the Result struct (T-9012). Absent means the count is
 // as reported, including a real zero. Like ExtraKeyFiles they are a
 // documented, source-agnostic convention: a display layer may read them,
-// and no core logic may branch on them.
+// and no core logic may branch on them, with one deliberate exception:
+// MeetsMinSeeders lets an unknown-seeders result through a minimum (T-9021).
 const (
 	ExtraKeySeedersUnknown  = "tortui.seeders_unknown"
 	ExtraKeyLeechersUnknown = "tortui.leechers_unknown"

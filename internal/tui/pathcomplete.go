@@ -22,7 +22,7 @@ import (
 var userHomeDir = os.UserHomeDir
 
 // WithDefinitionsDir tells the settings form where the user's scraper
-// definitions live, so completion on an empty import field starts there.
+// definitions live, so a bare typed prefix in the import field completes there.
 func WithDefinitionsDir(dir string) Option {
 	return func(m *Model) { m.definitionsDir = dir }
 }

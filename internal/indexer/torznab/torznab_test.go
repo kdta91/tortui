@@ -289,6 +289,45 @@ func TestSearchFiltersOnMinSeeders(t *testing.T) {
 	}
 }
 
+// TestSearchMinSeedersLetsUnknownThrough pins T-9021: an item with no
+// seeders attribute passes a minimum, a reported count below it is dropped,
+// and a count exactly at it is kept.
+func TestSearchMinSeedersLetsUnknownThrough(t *testing.T) {
+	t.Parallel()
+
+	item := func(id, attrs string) string {
+		return `<item><title>Invented ` + id + `</title>` +
+			`<guid>https://feed.example.org/details/` + id + `</guid>` +
+			`<link>https://feed.example.org/download/` + id + `.torrent</link>` + attrs + `</item>`
+	}
+
+	feed := `<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>` +
+		item("at", `<torznab:attr name="seeders" value="10"/>`) +
+		item("below", `<torznab:attr name="seeders" value="9"/>`) +
+		item("unknown", ``) +
+		`</channel></rss>`
+
+	replies := searchable(t)
+	replies[functionSearch] = xmlReply(feed)
+
+	a := mustNew(t, newSource(t, replies))
+
+	results, err := a.Search(testContext(t), indexer.Query{Text: "invented", MinSeeders: 10})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	var titles []string
+	for _, r := range results {
+		titles = append(titles, r.Title)
+	}
+
+	want := []string{"Invented at", "Invented unknown"}
+	if len(titles) != len(want) || titles[0] != want[0] || titles[1] != want[1] {
+		t.Fatalf("Search returned %v, want %v", titles, want)
+	}
+}
+
 func TestSearchOutcomes(t *testing.T) {
 	t.Parallel()
 

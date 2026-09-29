@@ -4515,3 +4515,27 @@ completes against the definitions dir when set (else the working dir), emitting 
 enter-path `expandHome` stays, now pinned by a test that records what `ImportDefinition` receives
 (fake gained `importedSources`). LCP trims invalid UTF-8 tails. `~\` literal off Windows.
 `withTrailingSep(dir)` single parameter. DEC-139.
+
+### T-9021 · Unknown seeders pass the minimum-seeders filter
+```
+status: done
+depends: T-9024
+tier: M
+```
+Owner decision (2026-09-29), promoted from Backlog. Records DEC-140.
+
+**Acceptance:**
+- A result whose seeders are unknown (the DEC-138 Extra marker) passes any MinSeeders filter.
+- Unknown results still sort last, as they do today.
+- A real reported count below the minimum is still dropped.
+- This applies to every place the filter runs (the torznab and scraper adapters, and the registry
+  if it filters). All are checked.
+- Tests cover unknown passing, known-below-minimum dropped, and known-at-minimum kept.
+- The decision is recorded as a short DEC entry.
+
+**Notes:** New `indexer.MeetsMinSeeders(r, min)` is the single rule; torznab, scraper and the
+demo fixture indexer call it. The registry does not filter (MinSeeders is only in its cache key)
+and the prowlarr adapter does not filter. Sort order untouched (`SortMissingLast`). Tests:
+`TestMeetsMinSeeders` table (unknown, below, at, above, zero minimum), torznab feed with an item
+lacking seeders, scraper fixture "n/a" row. Also fixed the stale `WithDefinitionsDir` comment in
+`pathcomplete.go` (DEC-139). DEC-140.

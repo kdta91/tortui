@@ -413,19 +413,34 @@ func TestMinSeedersAndLimitAreAppliedLocally(t *testing.T) {
 
 	_, a := archive(t)
 
-	results, err := a.Search(testContext(t), indexer.Query{Text: "invented", MinSeeders: 40})
+	// MinSeeders is 42, so the 42-seeder row is kept at the boundary, the
+	// 1-seeder row is dropped, and the row whose seeders read "n/a" is
+	// unknown and passes (T-9021, DEC-140).
+	results, err := a.Search(testContext(t), indexer.Query{Text: "invented", MinSeeders: 42})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
 
-	if len(results) != 2 {
-		t.Fatalf("got %d results with MinSeeders=40, want 2 (1204 and 42 seeders)", len(results))
+	if len(results) != 3 {
+		t.Fatalf("got %d results with MinSeeders=42, want 3 (1204, 42 and one unknown): %+v", len(results), results)
 	}
 
+	var unknown int
+
 	for _, res := range results {
-		if res.Seeders < 40 {
-			t.Errorf("a result below MinSeeders survived: %+v", res)
+		if res.Extra[indexer.ExtraKeySeedersUnknown] != "" {
+			unknown++
+
+			continue
 		}
+
+		if res.Seeders < 42 {
+			t.Errorf("a known result below MinSeeders survived: %+v", res)
+		}
+	}
+
+	if unknown != 1 {
+		t.Errorf("got %d unknown-seeder results, want 1", unknown)
 	}
 
 	capped, err := a.Search(testContext(t), indexer.Query{Text: "invented", Limit: 1})

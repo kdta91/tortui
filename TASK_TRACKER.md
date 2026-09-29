@@ -91,7 +91,56 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter.
+
+### T-9025 · Race-detector CI job
+
+```
+status: todo
+depends: T-9021
+tier: M
+```
+Owner decision (2026-09-29). `go test -race ./...` is a v1.0 criterion but no CI job runs it.
+
+**Acceptance:**
+- A new job in `.github/workflows/ci.yml`, named `go test -race`, runs over `./...` on a matrix of
+  `macos-latest`, `ubuntu-latest` and `windows-latest`, giving the jobs `go test -race
+  (macos-latest)`, `go test -race (ubuntu-latest)` and `go test -race (windows-latest)`. It runs
+  through a make target (`make race PKG=./...` or a new target), per AGENT.md §8. No raw
+  `go test` in the workflow.
+- `-race` needs cgo and a C toolchain: the job confirms one is present on the ubuntu and windows
+  runners (and installs or pins it if not), rather than assuming it.
+- Existing job names are unchanged.
+- The new jobs are advisory per PR under the macOS-first gate (DEC-107) but must be green on all
+  three OSes before a release tag. AGENT.md §11 and the DEC-107 description list them as
+  advisory, updated in T-9025's own PR.
+- Branch protection is not changed (owner-only, AGENT.md §12).
+
+### T-9026 · Hostname scanner ignores capitalised selector names
+
+```
+status: todo
+depends: T-9025
+tier: H
+```
+Owner decision (2026-09-29), promoted from Backlog T-999. `depends: T-9025` is for ordering only;
+there is no technical dependency. Tier H because it changes an AGENT.md §2
+safeguard. The scanner reads Go selector expressions such as `ix.URL` as hostnames.
+
+**Acceptance:**
+- `scripts/check-indexer-hostnames.sh` skips a candidate whose final label contains an uppercase
+  letter in the ORIGINAL (un-lowercased) text. Selector expressions such as `ix.URL`, `srv.URL`,
+  `pkg.FeedURL` no longer flag, in both diffs and commit messages.
+- Every all-lowercase hostname is still flagged exactly as today, and so is a mixed-case one whose
+  final label is lowercase, such as `Evil.example.net`. An unexported selector such as
+  `a.baseURL` no longer flags either.
+- The scanner's existing test script gains cases for both lists, using only invented `example.*`
+  names and invented identifiers.
+- The residual gap is recorded in a DEC entry as accepted by the owner: a hostname whose final
+  label contains ANY uppercase letter, for example `example.Org` or `example.oRG`, now passes.
+  The entry notes that reviewers still check for named sites.
+- POSIX sh only (AGENT.md §14). CI behaviour is otherwise unchanged; the job name and required
+  status are untouched.
 
 ---
 
@@ -100,8 +149,9 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019 and T-9024, are `done`.
-- [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025 and T-9026, are `done`.
+- [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI. The race jobs
+      (T-9025) are advisory per PR under DEC-107 but must all be green before the release tag.
 - [ ] Coverage thresholds from AGENT.md §9 met.
 - [ ] `govulncheck` clean; `NOTICE` current; no GPL/AGPL dependency.
 - [ ] Terminal matrix (T-094) passes on macOS for v1.0 (DEC-132 — owner has no Windows/Linux
@@ -627,7 +677,7 @@ when it reaches it and does not start backlog items on its own.
   the in-memory update already succeeded, so the TUI keeps its old snapshot while disk and memory
   hold the new one. Only `ErrClosed` during shutdown can cause it in practice (roots are pre-checked);
   log it instead of returning it, or document the divergence. Found in review of T-096 (PR #57).
-- `T-999` *(owner decision)* The indexer hostname check (T-007) reads Go field or function access
+- `T-999` (promoted to T-9026, 2026-09-29) *(owner decision)* The indexer hostname check (T-007) reads Go field or function access
   on a url-style name (a struct field or package function whose name ends in URL, inside an
   indexer-context line) as a hostname, and it scans commit messages too. T-095 and T-096 both hit
   it; the workaround is binding the value to a local first. Record this as a known false-positive
@@ -688,10 +738,9 @@ when it reaches it and does not start backlog items on its own.
 - `T-9020` `TestSearchResultAlwaysMovesToResults` (`internal/tui/startup_test.go`) only starts from
   `ScreenSearch`, so a stay-put guard coming back would pass it. It should also start from
   `ScreenDownloads`. Found in review of T-9011.
-- `T-9021` `Query.MinSeeders` filtering in the torznab and scraper adapters compares the raw
-  `Seeders` int, so a result whose source reported no seeders (marked unknown, T-9012) is dropped by
-  any minimum above zero. Decide whether unknown should pass the filter (it may well have seeders)
-  and pin it with a test. Found in T-9012.
+- `T-9021` (promoted to task, 2026-09-29) `Query.MinSeeders` filtering in the torznab and scraper
+  adapters compares the raw `Seeders` int, so a result whose source reported no seeders (marked
+  unknown, T-9012) is dropped by any minimum above zero. Found in T-9012.
 - `T-9022` `registry.mergeResults` replaces a duplicate only when it has strictly more seeders. When
   one source reports a real 0 and another reports unknown, whichever arrived first wins, so the S/L
   cell can show `–` or `0` depending on order. Prefer a known count on a tie. Found in review of
@@ -848,6 +897,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-137 | 2026-09-29 | T-9011: supersedes DEC-129's startup Latest; the program opens on an empty Search screen and queries nothing until the user acts (owner decision) |
 | DEC-138 | 2026-09-29 | T-9012: an unreported swarm count travels as `Result.Extra` markers (`ExtraKeySeedersUnknown`/`ExtraKeyLeechersUnknown`), not a Result field; the TUI renders `–` |
 | DEC-139 | 2026-09-29 | T-9024: tab on an empty import field always advances; completion (incl. the definitions-dir start) needs typed text; supersedes T-9019's third criterion |
+| DEC-140 | 2026-09-29 | T-9021: a result with unknown seeders passes `MinSeeders`; a real count below the minimum is still dropped; one shared `indexer.MeetsMinSeeders` |
 
 ## Blocked
 
