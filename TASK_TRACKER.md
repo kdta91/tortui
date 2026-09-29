@@ -93,6 +93,38 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 **Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo.
 
+### T-9045 · Userinfo hardening: base_url, redirects, torznab links
+
+```
+status: in-progress
+depends: T-9041
+tier: H
+```
+Owner decision (2026-09-29): bundle the three remaining non-blocking userinfo findings from the
+PR #75 review.
+
+**Acceptance:**
+1. Scraper definition validation refuses a `base_url` that carries userinfo (`url.User != nil`,
+   including a bare `@`). The validation error names the key (`base_url`) but never echoes the
+   value or the credential. This enforces the documented rule "a definition never contains a
+   credential" (docs/indexer-definitions.md). The bundled definition still validates; import and
+   reload reject such a file with nothing written.
+2. httpx's redirect check (`checkRedirectHosts` in internal/indexer/httpx/client.go, and the
+   `FollowSubdomainRedirects` path) refuses any redirect whose target URL carries userinfo, with a
+   clear error that doesn't echo the URL. This covers the scraper, torznab and the engine's
+   .torrent client alike.
+3. Torznab result links (`TorrentURL` and `SourceURL`/comments/guid links, wherever
+   internal/indexer/torznab builds them) never carry userinfo: strip it and keep the link,
+   consistent with DEC-143. Magnets are untouched.
+4. Tests, recorded fixtures only: a base_url with userinfo refused (several shapes) with no echo;
+   a same-host redirect with userinfo refused (0 follow-up requests) for a plain client and for a
+   `FollowSubdomainRedirects` client; a torznab feed item with userinfo in its enclosure and
+   comments links comes back stripped; existing tests unchanged.
+5. Docs: note in docs/indexer-definitions.md that a base_url with a user name or password is
+   rejected.
+
+**Notes:**
+
 ---
 
 ## v1.0 release criteria
