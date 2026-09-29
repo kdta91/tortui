@@ -91,33 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job.
-
-### T-9026 · Hostname scanner ignores capitalised selector names
-
-```
-status: todo
-depends: T-9025
-tier: H
-```
-Owner decision (2026-09-29), promoted from Backlog T-999. `depends: T-9025` is for ordering only;
-there is no technical dependency. Tier H because it changes an AGENT.md §2
-safeguard. The scanner reads Go selector expressions such as `ix.URL` as hostnames.
-
-**Acceptance:**
-- `scripts/check-indexer-hostnames.sh` skips a candidate whose final label contains an uppercase
-  letter in the ORIGINAL (un-lowercased) text. Selector expressions such as `ix.URL`, `srv.URL`,
-  `pkg.FeedURL` no longer flag, in both diffs and commit messages.
-- Every all-lowercase hostname is still flagged exactly as today, and so is a mixed-case one whose
-  final label is lowercase, such as `Evil.example.net`. An unexported selector such as
-  `a.baseURL` no longer flags either.
-- The scanner's existing test script gains cases for both lists, using only invented `example.*`
-  names and invented identifiers.
-- The residual gap is recorded in a DEC entry as accepted by the owner: a hostname whose final
-  label contains ANY uppercase letter, for example `example.Org` or `example.oRG`, now passes.
-  The entry notes that reviewers still check for named sites.
-- POSIX sh only (AGENT.md §14). CI behaviour is otherwise unchanged; the job name and required
-  status are untouched.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names.
 
 ---
 
@@ -725,6 +699,20 @@ when it reaches it and does not start backlog items on its own.
 - `T-9023` The component goldens build the `–` cell by hand in `goldenRows()` instead of going
   through `resultRow`/`formatSwarm`, so no golden exercises the real results model. Found in review
   of T-9012 (PR #66).
+- `T-9027` The `go test -race` job's "Confirm C toolchain" step prints `go env CGO_ENABLED` but does
+  not assert it is `1`, so a runner where cgo silently ends up off would only fail later, less
+  clearly, in `-race` itself. Found in review of T-9025 (PR #70), non-blocking.
+- `T-9028` The Windows `go test -race` job installs make and mingw through Chocolatey, which DEC-107
+  moved shellcheck off after the T-932 outage; a Chocolatey outage would turn that advisory check
+  red for a cause unrelated to the code. Found in review of T-9025 (PR #70), non-blocking.
+- `T-9029` In `https://host.org@Other` the hostname scanner reads `host.org` as userinfo and never
+  checks it; it reports `other` instead, so the check still fails but names the wrong host.
+  Pre-existing, unchanged by T-9026. Consider checking a hostname-shaped userinfo too. Found in
+  review of T-9026 (PR #71).
+- `T-9030` Under `LC_ALL=C` (T-9026) the key/value shape no longer matches a value that starts with
+  a non-ASCII letter, such as `Host: "İİİİ.some-host.example.zzz"`; main matched it after
+  lowercasing. Non-ASCII letters are also no longer lowercased in reported names. Minor, since
+  such labels are not valid registrable hostnames. Found in review of T-9026 (PR #71).
 
 ---
 
@@ -875,6 +863,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-138 | 2026-09-29 | T-9012: an unreported swarm count travels as `Result.Extra` markers (`ExtraKeySeedersUnknown`/`ExtraKeyLeechersUnknown`), not a Result field; the TUI renders `–` |
 | DEC-139 | 2026-09-29 | T-9024: tab on an empty import field always advances; completion (incl. the definitions-dir start) needs typed text; supersedes T-9019's third criterion |
 | DEC-140 | 2026-09-29 | T-9021: a result with unknown seeders passes `MinSeeders`; a real count below the minimum is still dropped; one shared `indexer.MeetsMinSeeders` |
+| DEC-141 | 2026-09-29 | T-9026: the hostname scanner skips only an unquoted bare two-part Go selector value (`srv.URL`); URLs and multi-label values are never skipped |
 
 ## Blocked
 

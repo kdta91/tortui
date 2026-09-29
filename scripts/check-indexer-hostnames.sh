@@ -61,6 +61,14 @@
 #     to avoid matching arbitrary "word.number" text, so an IP only trips
 #     this check today when it appears after a scheme (`https://1.2.3.4/...`).
 #     Pre-existing, unrelated to the case-sensitivity fix above.
+#   - a key/value value that is, as written, exactly a bare two-part Go
+#     selector whose second part has an uppercase letter (`URL: srv.URL`,
+#     `Host: pkg.FeedURL(`, `url = a.baseURL`), unquoted and cut only at a
+#     space, quote or `(),;+}]`, is skipped (T-9026). A scheme'd URL, a
+#     quoted value, or anything with a second dot, a port, userinfo or any
+#     other character is never skipped. The owner accepted the residual gap:
+#     a bare unquoted `name.Label` that really is a two-label hostname with a
+#     capitalised final label passes; reviewers still check (DEC-141).
 # This is a lightweight net that catches the common, careless case -- it is
 # not a substitute for human review, which is what CONTRIBUTING.md still asks
 # for.
@@ -123,7 +131,12 @@ fi
 	git log --no-color --format='%B' "$COMMIT_RANGE" 2>/dev/null | sed 's/^/+/'
 } >>"$diff_file"
 
-awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
+# LC_ALL=C: length(), substr() and tolower() all count bytes, so the
+# lowercased copy scan() matches on lines up byte-for-byte with the original
+# line that is_selector() reads (macOS awk in a UTF-8 locale shrinks some
+# multibyte letters under tolower()), and an invalid UTF-8 byte is just a
+# byte instead of an "illegal byte sequence" abort (T-9026).
+LC_ALL=C awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 	BEGIN {
 		n = 0
 		while ((getline line < allowfile) > 0) {
@@ -200,7 +213,7 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		if (o1 == 192 && o2 == 168) return 1
 		return 0
 	}
-	function scan(text, file, orig,    rest, m, host) {
+	function scan(text, file, orig,    rest, m, host, off, start, len, vstart, quoted) {
 		# Authority after the scheme: may carry userinfo (user:pass@) and a
 		# port, so match everything up to the first path/space/quote/angle
 		# separator and let check_host() pick the hostname apart from that.
@@ -211,13 +224,36 @@ awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 			check_host(m, file, orig)
 			rest = substr(rest, RSTART + RLENGTH)
 		}
+		# Key/value shape. rest is a suffix of the lowercased line; off is
+		# how many bytes of it were consumed, so orig at off+i is the
+		# original-case byte for rest at i (T-9026).
 		rest = text
+		off = 0
 		while (match(rest, /(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z][A-Za-z]+/)) {
-			m = substr(rest, RSTART, RLENGTH)
+			start = RSTART
+			len = RLENGTH
+			m = substr(rest, start, len)
 			sub(/^(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?/, "", m)
-			check_host(m, file, orig)
-			rest = substr(rest, RSTART + RLENGTH)
+			vstart = start + len - length(m)
+			quoted = (substr(rest, vstart - 1, 1) == "\"")
+			if (quoted || !is_selector(substr(orig, off + vstart)))
+				check_host(m, file, orig)
+			off += start + len - 1
+			rest = substr(rest, start + len)
 		}
+	}
+	# T-9026 (DEC-141): true only when the value, as written in the original
+	# text, is exactly a bare two-part Go selector whose second part has an
+	# uppercase letter -- `srv.URL`, `pkg.FeedURL(`, `a.baseURL,`. The token
+	# ends at the first space, quote or `(),;+}]`; anything else (a second
+	# dot, ":", "@", "/", "_" or "-" in the wrong place, ...) keeps it from
+	# matching, so it is checked exactly as before.
+	function is_selector(tail,   tok, dot) {
+		tok = tail
+		sub(/[[:space:]"'"'"'`(),;+}\]].*$/, "", tok)
+		if (tok !~ /^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/) return 0
+		dot = index(tok, ".")
+		return (substr(tok, dot + 1) ~ /[A-Z]/)
 	}
 	function check_host(host, file, text,   colon) {
 		# Strip a trailing quote/space/paren/sentence-punctuation run picked

@@ -4570,3 +4570,37 @@ only if missing. AGENT.md section 11 and the DEC-107 row now list the three race
 advisory. Not run locally on the runners; first CI run is the evidence. Branch protection
 unchanged.
 
+### T-9026 · Hostname scanner ignores capitalised selector names
+
+```
+status: done
+depends: T-9025
+tier: H
+```
+Owner decision (2026-09-29), promoted from Backlog T-999. `depends: T-9025` is for ordering only;
+there is no technical dependency. Tier H because it changes an AGENT.md §2
+safeguard. The scanner reads Go selector expressions such as `ix.URL` as hostnames.
+
+**Acceptance:**
+- `scripts/check-indexer-hostnames.sh` skips a candidate whose final label contains an uppercase
+  letter in the ORIGINAL (un-lowercased) text. Selector expressions such as `ix.URL`, `srv.URL`,
+  `pkg.FeedURL` no longer flag, in both diffs and commit messages.
+- Every all-lowercase hostname is still flagged exactly as today, and so is a mixed-case one whose
+  final label is lowercase, such as `Evil.example.net`. An unexported selector such as
+  `a.baseURL` no longer flags either.
+- The scanner's existing test script gains cases for both lists, using only invented `example.*`
+  names and invented identifiers.
+- The residual gap is recorded in a DEC entry as accepted by the owner: a hostname whose final
+  label contains ANY uppercase letter, for example `example.Org` or `example.oRG`, now passes.
+  The entry notes that reviewers still check for named sites.
+- POSIX sh only (AGENT.md §14). CI behaviour is otherwise unchanged; the job name and required
+  status are untouched.
+
+**Notes:** Skip is limited to a key/value value that, as written, is an unquoted bare two-part
+selector with an uppercase letter after the dot (`is_selector()`); the scheme shape and
+`check_host()` are unchanged from main. Rounds 1–3 of PR #71 skipped any uppercase final label and
+each URL-parsing patch left a bypass, so that approach was dropped. awk runs under `LC_ALL=C` for
+byte-aligned offsets (also ends the macOS invalid-UTF-8 abort). Test cases 6–12: selectors pass;
+every URL, quoted, multi-label, port, `?`/`#`/`{{`/`&`/`${}`/`*.`/`(`/`..`/`_`, multibyte and
+commit-message form is flagged; the bare `name.Label` gap is pinned. Check output lives outside the
+scratch repo. Ten mutations each fail the test. CI job untouched. Backlog T-9029, T-9030.
