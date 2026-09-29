@@ -161,8 +161,9 @@ func TestResolveReadsARelativeTorrentLinkAgainstTheDetailsPage(t *testing.T) {
 		t.Fatalf("Resolve: %v", err)
 	}
 
+	link := src.server.URL + "/item/download/2002.torrent"
 	want := listed
-	want.TorrentURL = src.server.URL + "/item/download/2002.torrent"
+	want.TorrentURL = link
 	assertResult(t, got, want)
 
 	if got.Magnet != "" {
@@ -238,7 +239,9 @@ func TestANonMagnetMagnetDoesNotShadowAnInfohash(t *testing.T) {
 	})
 	a := detailsAdapter(t, src, testClient(httpx.Config{}))
 
-	got, err := a.Resolve(testContext(t), indexer.Result{Title: "One", SourceURL: src.server.URL + "/item/1"})
+	page := src.server.URL + "/item/1"
+
+	got, err := a.Resolve(testContext(t), indexer.Result{Title: "One", SourceURL: page})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -256,7 +259,9 @@ func TestAnInvalidInfohashOnTheDetailsPageIsNotUsed(t *testing.T) {
 	})
 	a := detailsAdapter(t, src, testClient(httpx.Config{}))
 
-	_, err := a.Resolve(testContext(t), indexer.Result{Title: "One", SourceURL: src.server.URL + "/item/1"})
+	page := src.server.URL + "/item/1"
+
+	_, err := a.Resolve(testContext(t), indexer.Result{Title: "One", SourceURL: page})
 	if !errors.Is(err, ErrDetailsNoLink) {
 		t.Fatalf("Resolve error = %v, want ErrDetailsNoLink", err)
 	}
@@ -513,7 +518,8 @@ func TestTheDetailsRequestWaitsOutThePerHostInterval(t *testing.T) {
 func TestTheDetailsResponseIsSizeCapped(t *testing.T) {
 	src := detailsSource(t)
 	a := detailsAdapter(t, src, testClient(httpx.Config{MaxBodyBytes: 64}))
-	listed := indexer.Result{Title: "Big", SourceURL: src.server.URL + "/item/2001"}
+	page := src.server.URL + "/item/2001"
+	listed := indexer.Result{Title: "Big", SourceURL: page}
 
 	got, err := a.Resolve(testContext(t), listed)
 	if !errors.Is(err, httpx.ErrBodyTooLarge) {
@@ -532,7 +538,9 @@ func TestTheDetailsRequestHonoursTheContext(t *testing.T) {
 	ctx, cancel := contextCancelled(t)
 	cancel()
 
-	_, err := a.Resolve(ctx, indexer.Result{Title: "Late", SourceURL: src.server.URL + "/item/2001"})
+	page := src.server.URL + "/item/2001"
+
+	_, err := a.Resolve(ctx, indexer.Result{Title: "Late", SourceURL: page})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Resolve error = %v, want context.Canceled", err)
 	}
@@ -562,7 +570,9 @@ details:
 		t.Fatalf("New: %v", err)
 	}
 
-	got, err := a.Resolve(testContext(t), indexer.Result{Title: "J", SourceURL: src.server.URL + "/item/1"})
+	page := src.server.URL + "/item/1"
+
+	got, err := a.Resolve(testContext(t), indexer.Result{Title: "J", SourceURL: page})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
