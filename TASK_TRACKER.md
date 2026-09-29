@@ -91,30 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter.
-
-### T-9025 · Race-detector CI job
-
-```
-status: todo
-depends: T-9021
-tier: M
-```
-Owner decision (2026-09-29). `go test -race ./...` is a v1.0 criterion but no CI job runs it.
-
-**Acceptance:**
-- A new job in `.github/workflows/ci.yml`, named `go test -race`, runs over `./...` on a matrix of
-  `macos-latest`, `ubuntu-latest` and `windows-latest`, giving the jobs `go test -race
-  (macos-latest)`, `go test -race (ubuntu-latest)` and `go test -race (windows-latest)`. It runs
-  through a make target (`make race PKG=./...` or a new target), per AGENT.md §8. No raw
-  `go test` in the workflow.
-- `-race` needs cgo and a C toolchain: the job confirms one is present on the ubuntu and windows
-  runners (and installs or pins it if not), rather than assuming it.
-- Existing job names are unchanged.
-- The new jobs are advisory per PR under the macOS-first gate (DEC-107) but must be green on all
-  three OSes before a release tag. AGENT.md §11 and the DEC-107 description list them as
-  advisory, updated in T-9025's own PR.
-- Branch protection is not changed (owner-only, AGENT.md §12).
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job.
 
 ### T-9026 · Hostname scanner ignores capitalised selector names
 
