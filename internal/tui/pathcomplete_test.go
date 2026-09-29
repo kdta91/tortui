@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/kdta91/tortui/internal/platform"
 )
 
 func touch(t *testing.T, elems ...string) {
@@ -182,11 +184,11 @@ func TestCompletionExpandsHome(t *testing.T) {
 	}
 }
 
-func TestCompletionEmptyStartsInDefinitionsDir(t *testing.T) {
+func TestCompletionBarePrefixStartsInDefinitionsDir(t *testing.T) {
 	defs := t.TempDir()
 	touch(t, defs, "only.yml")
 
-	m := importFormModel(t, "", defs)
+	m := importFormModel(t, "on", defs)
 	m = pressKey(t, m, tabKey)
 
 	if got, want := m.settings.form.importText, filepath.Join(defs, "only.yml"); got != want {
@@ -194,12 +196,107 @@ func TestCompletionEmptyStartsInDefinitionsDir(t *testing.T) {
 	}
 }
 
-func TestCompletionEmptyWithoutDefinitionsDirMovesOn(t *testing.T) {
-	m := importFormModel(t, "", "")
-	m = pressKey(t, m, tabKey)
+func TestCompletionEmptyFieldTabMovesOn(t *testing.T) {
+	defs := t.TempDir()
+	touch(t, defs, "only.yml")
 
-	if m.settings.form.current() != fieldID {
-		t.Fatalf("current = %v, want next field", m.settings.form.current())
+	for _, d := range []string{"", defs} {
+		m := importFormModel(t, "", d)
+		m = pressKey(t, m, tabKey)
+
+		if m.settings.form.current() != fieldID {
+			t.Fatalf("defs %q: current = %v, want next field", d, m.settings.form.current())
+		}
+
+		if m.settings.form.importText != "" {
+			t.Fatalf("defs %q: empty field was filled: %q", d, m.settings.form.importText)
+		}
+	}
+}
+
+func TestTabbingThroughTheFormNeverStopsOnEmptyImport(t *testing.T) {
+	defs := t.TempDir()
+	touch(t, defs, "a.yml")
+	touch(t, defs, "b.yml")
+	touch(t, defs, "c.yaml")
+
+	m := importFormModel(t, "", defs)
+	n := len(m.settings.form.fields())
+
+	// The cursor passes over the import field, but a tab pressed while it is
+	// empty must always leave it and never fill it.
+	for i := 0; i < 2*n; i++ {
+		onEmptyImport := m.settings.form.current() == fieldImport
+
+		m = pressKey(t, m, tabKey)
+
+		if onEmptyImport && m.settings.form.current() == fieldImport {
+			t.Fatalf("tab %d stayed on the empty import field", i+1)
+		}
+
+		if m.settings.form.importText != "" {
+			t.Fatalf("tab %d filled the import field: %q", i+1, m.settings.form.importText)
+		}
+	}
+}
+
+func TestEnterImportsTheExpandedHomePath(t *testing.T) {
+	home := t.TempDir()
+
+	old := userHomeDir
+	userHomeDir = func() (string, error) { return home, nil }
+
+	t.Cleanup(func() { userHomeDir = old })
+
+	sm := &fakeSourceManager{importID: "x"}
+	m := importFormModel(t, "~/x.yml", "")
+	m.sources = sm
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on the import field returned no command")
+	}
+
+	cmd()
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if want := filepath.Join(home, "x.yml"); len(sm.importedSources) != 1 || sm.importedSources[0] != want {
+		t.Fatalf("imported %v, want [%q]", sm.importedSources, want)
+	}
+}
+
+func TestLongestCommonPrefixKeepsRuneBoundary(t *testing.T) {
+	// "é" is C3 A9, "è" is C3 A8: the names share the lead byte only.
+	if got := longestCommonPrefix([]string{"caf\u00e9.yml", "caf\u00e8.yml"}); got != "caf" {
+		t.Fatalf("lcp = %q, want %q", got, "caf")
+	}
+
+	if got := longestCommonPrefix([]string{"caf\u00e9.yml", "caf\u00e9.yaml"}); got != "caf\u00e9.y" {
+		t.Fatalf("lcp = %q", got)
+	}
+}
+
+func TestExpandHomeBackslashOnlyOnWindows(t *testing.T) {
+	home := t.TempDir()
+
+	old := userHomeDir
+	userHomeDir = func() (string, error) { return home, nil }
+
+	t.Cleanup(func() { userHomeDir = old })
+
+	got := expandHome(`~\foo`)
+	if platform.IsWindows() {
+		if want := filepath.Join(home, "foo"); got != want {
+			t.Fatalf("expandHome = %q, want %q", got, want)
+		}
+
+		return
+	}
+
+	if got != `~\foo` {
+		t.Fatalf("expandHome(~\\foo) = %q, want it left literal", got)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -41,10 +42,11 @@ func isURLSource(s string) bool {
 	return strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://")
 }
 
-// expandHome expands a leading "~" or "~/" (or "~\" on Windows) to the
-// user's home directory. Anything else is returned unchanged.
+// expandHome expands a leading "~" or "~/" (or "~\" on Windows only, as isSep
+// does) to the user's home directory. Anything else is returned unchanged.
 func expandHome(p string) string {
-	if p != "~" && !strings.HasPrefix(p, "~/") && !strings.HasPrefix(p, `~\`) {
+	tilde := p == "~" || strings.HasPrefix(p, "~/") || (platform.IsWindows() && strings.HasPrefix(p, `~\`))
+	if !tilde {
 		return p
 	}
 
@@ -77,18 +79,21 @@ func completionMatches(input, defsDir string) []string {
 
 	switch {
 	case input == "":
-		if defsDir == "" {
-			return nil
-		}
-
-		realDir = defsDir
-		dirText = withTrailingSep(defsDir, "")
+		// Completion only starts once the user has typed something.
+		return nil
 	case dirText == "":
 		if input == "~" {
 			return nil
 		}
 
-		realDir = "."
+		// A bare prefix completes against the definitions directory when
+		// there is one, else the working directory.
+		if defsDir == "" {
+			realDir = "."
+		} else {
+			realDir = defsDir
+			dirText = withTrailingSep(defsDir)
+		}
 	default:
 		realDir = expandHome(dirText)
 	}
@@ -132,7 +137,7 @@ func completionMatches(input, defsDir string) []string {
 	return out
 }
 
-func withTrailingSep(dir, _ string) string {
+func withTrailingSep(dir string) string {
 	if dir == "" || os.IsPathSeparator(dir[len(dir)-1]) {
 		return dir
 	}
@@ -168,6 +173,12 @@ func longestCommonPrefix(ss []string) string {
 		for !strings.HasPrefix(s, p) {
 			p = p[:len(p)-1]
 		}
+	}
+
+	// Trim back to a rune boundary: names that differ inside a multi-byte
+	// rune share its leading bytes but not the rune.
+	for len(p) > 0 && !utf8.ValidString(p) {
+		p = p[:len(p)-1]
 	}
 
 	return p

@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups.
 
 ---
 
@@ -100,7 +100,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012 and T-9019, are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019 and T-9024, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI.
 - [ ] Coverage thresholds from AGENT.md §9 met.
 - [ ] `govulncheck` clean; `NOTICE` current; no GPL/AGPL dependency.
@@ -847,6 +847,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-136 | 2026-09-29 | T-9010: the engine's credential-free .torrent client follows a redirect to a subdomain of the requested host (same port, never https to http) so a source's storage hand-off works; indexer clients keep DEC-062's same-host rule |
 | DEC-137 | 2026-09-29 | T-9011: supersedes DEC-129's startup Latest; the program opens on an empty Search screen and queries nothing until the user acts (owner decision) |
 | DEC-138 | 2026-09-29 | T-9012: an unreported swarm count travels as `Result.Extra` markers (`ExtraKeySeedersUnknown`/`ExtraKeyLeechersUnknown`), not a Result field; the TUI renders `–` |
+| DEC-139 | 2026-09-29 | T-9024: tab on an empty import field always advances; completion (incl. the definitions-dir start) needs typed text; supersedes T-9019's third criterion |
 
 ## Blocked
 

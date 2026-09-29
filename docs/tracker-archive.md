@@ -4490,3 +4490,28 @@ on a PR under review) or a replacement PR (§10: no second PR).
   tree today. Purging it fully needs history rewriting and editing/deleting a PR comment — an owner
   decision, not an agent's, and AGENT.md §10 forbids force-pushing a branch under review. Filed so the
   choice is recorded rather than forgotten.
+
+### T-9024 · Import-field tab follow-ups
+```
+status: done
+depends: T-9019
+tier: M
+```
+Owner decision (2026-09-29). Follow-ups to T-9019 from its review; changes its third criterion (DEC-139).
+
+**Acceptance:**
+- `tab` on an empty "Import from" field always moves to the next field. Completion (including
+  starting in the definitions directory for a typed prefix with no directory part) only happens
+  once the user has typed something. T-9019's empty-field test is updated, and a test tabs through
+  the whole form and never stops on an empty import field, even with several definitions present.
+- A test proves enter on a `~/x.yml` import path passes the expanded path to the import.
+- `longestCommonPrefix` trims to a rune boundary; a test uses names that differ inside a
+  multi-byte rune.
+- `expandHome` accepts `~\` only when `platform.IsWindows()`, as `isSep` does; a test covers it.
+- `withTrailingSep`'s unused second parameter is removed.
+
+**Notes:** Empty import field: tab advances, completion returns nothing. A bare typed prefix now
+completes against the definitions dir when set (else the working dir), emitting full paths. The
+enter-path `expandHome` stays, now pinned by a test that records what `ImportDefinition` receives
+(fake gained `importedSources`). LCP trims invalid UTF-8 tails. `~\` literal off Windows.
+`withTrailingSep(dir)` single parameter. DEC-139.
