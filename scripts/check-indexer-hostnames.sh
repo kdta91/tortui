@@ -62,7 +62,9 @@
 #     this check today when it appears after a scheme (`https://1.2.3.4/...`).
 #     Pre-existing, unrelated to the case-sensitivity fix above.
 #   - a candidate whose host (cut out of the candidate first: userinfo, port,
-#     and anything from the first non-hostname character on are dropped) has
+#     a leading non-hostname run, and anything from the first non-hostname
+#     character or empty label on are dropped; if a cut leaves nothing the
+#     candidate is never skipped) has
 #     a final label with any uppercase letter in the original text
 #     (`example.Org`, `example.oRG`) is skipped, in both the scheme and the
 #     key/value shape, so a Go selector such as `ix.URL` or `a.baseURL`
@@ -245,39 +247,46 @@ LC_ALL=C awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 			rest = substr(rest, start + len)
 		}
 	}
-	function check_host(host, file, text,   colon, label, cut) {
+	function check_host(host, file, text,   colon, label, cut, noskip) {
 		# Strip a trailing quote/space/paren/sentence-punctuation run picked
 		# up from surrounding prose or markdown.
 		gsub(/[",'"'"' 	.,;)\]]+$/, "", host)
 		# Cut at the first character that cannot appear in an authority
 		# ("?query", "#fragment", "{{template}}", a backslash), so an "@"
-		# after it is never read as userinfo (T-9026). Each cut here and below
-		# keeps the uncut value if it would leave nothing, so an odd shape
-		# ("[2001:db8::1]") is still checked as before rather than dropped.
+		# after it is never read as userinfo (T-9026). If this cut or the
+		# hostname cut below leaves nothing, the candidate is checked
+		# uncut, as before T-9026, and never skipped (noskip): text past the
+		# first non-hostname character never decides the skip.
+		noskip = 0
 		cut = host
 		sub(/[^-A-Za-z0-9._~%!$&()*+,;=:@\[\]].*$/, "", cut)
-		if (cut != "") host = cut
+		if (cut == "") noskip = 1
+		else host = cut
 		# Drop userinfo ("user:pass@host" -> "host"): a greedy match of
 		# everything up to the LAST "@" removes it even if the password
 		# itself contained "@".
 		sub(/^.*@/, "", host)
 		colon = index(host, ":")
 		if (colon > 0) host = substr(host, 1, colon - 1)
-		# Keep only the host itself: cut at the first character that cannot
-		# appear in a hostname (",Next", ")Then", "${Path}", "&X=1"), then
-		# drop any trailing dots, so the final label below is the last label of
-		# the host itself and never text that merely follows it (T-9026).
+		# Keep only the host itself: drop any leading non-hostname run ("*.",
+		# "("), cut at the first character that cannot appear in a hostname
+		# (",Next", ")Then", "${Path}", "&X=1") or at an empty label ("..X"),
+		# then drop trailing dots, so the final label below is the last label
+		# of the host itself and never text that merely follows it (T-9026).
 		cut = host
+		sub(/^[^-A-Za-z0-9]+/, "", cut)
 		sub(/[^-A-Za-z0-9.].*$/, "", cut)
+		sub(/\.\..*$/, "", cut)
 		sub(/\.+$/, "", cut)
-		if (cut != "") host = cut
+		if (cut == "") noskip = 1
+		else host = cut
 		# T-9026 (DEC-141): a final label with an uppercase letter is how a
 		# Go selector reads (`ix.URL`, `pkg.FeedURL`, `a.baseURL`), never how
 		# a hostname is written in practice, so skip it. A lowercase final
 		# label is checked as before, whatever case the other labels are.
 		label = host
 		sub(/^.*\./, "", label)
-		if (label ~ /[A-Z]/) return
+		if (!noskip && label ~ /[A-Z]/) return
 		host = tolower(host)
 		if (host == "") return
 		if (!is_allowed(host)) {

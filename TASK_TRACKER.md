@@ -709,6 +709,10 @@ when it reaches it and does not start backlog items on its own.
   checks it. Pre-existing, but main at least flagged `other`; since T-9026 the uppercase final
   label means the whole URL passes. Consider checking a hostname-shaped userinfo too. Found in
   review of T-9026 (PR #71).
+- `T-9030` Under `LC_ALL=C` (T-9026) the key/value shape no longer matches a value that starts with
+  a non-ASCII letter, such as `Host: "İİİİ.some-host.example.zzz"`; main matched it after
+  lowercasing. Minor, since such a label is not a valid registrable hostname. Found in review of
+  T-9026 (PR #71).
 
 ---
 

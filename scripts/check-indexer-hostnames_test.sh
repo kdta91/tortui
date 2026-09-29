@@ -291,6 +291,15 @@ var atq = "https://atq-invented.example.zzz?u=a@Other"
 var amp = "https://amp-invented.example.zzz&X=1"
 var dollar = "https://dollar-invented.example.zzz${Path}"
 
+// A leading non-hostname run ("*.", "(") or an empty label ("..") never
+// hands the final label to the text after the host.
+var wild = "https://*.wild-invented.example.zzz,Next"
+var paren = "https://(paren-invented.example.zzz)Then"
+var dotdot = "https://dotdot-invented.example.zzz..Next"
+
+// Fail closed: an authority that does not start like one is never skipped.
+var failclosed = "https://ÄÄ.failclosed-invented.example.ZZZ/"
+
 // İİİİİİİİ ẞẞ K URL: srv.URL, Host: "multibyte-invented.example.zzz"
 EOF
 	git add -A
@@ -306,7 +315,8 @@ for want in lower-invented.example.zzz mixed-invented.example.zzz shouted-invent
 	ix.feedurl second-invented.example.zzz third-invented.example.zzz \
 	query-invented.example.zzz frag-invented.example.zzz tmpl-invented.example.zzz \
 	atq-invented.example.zzz amp-invented.example.zzz dollar-invented.example.zzz \
-	multibyte-invented.example.zzz; do
+	wild-invented.example.zzz paren-invented.example.zzz dotdot-invented.example.zzz \
+	failclosed-invented.example.zzz multibyte-invented.example.zzz; do
 	grep -q "possible new indexer hostname: $want\$" "$out_dir/out8.txt" || {
 		cat "$out_dir/out8.txt" >&2
 		fail "violation output did not name $want"
@@ -316,9 +326,9 @@ grep -q "skip-invented\|srv.url" "$out_dir/out8.txt" && {
 	cat "$out_dir/out8.txt" >&2
 	fail "an uppercase-final-label candidate on a shared line was flagged"
 }
-[ "$(grep -c 'possible new indexer hostname:' "$out_dir/out8.txt")" -eq 13 ] || {
+[ "$(grep -c 'possible new indexer hostname:' "$out_dir/out8.txt")" -eq 17 ] || {
 	cat "$out_dir/out8.txt" >&2
-	fail "expected exactly 13 violations in case 8"
+	fail "expected exactly 17 violations in case 8"
 }
 
 # Case 9: a mixed-case reserved-TLD placeholder with a lowercase final label
@@ -365,7 +375,7 @@ if ! run_check "$head_case10" "$out_dir/out10.txt"; then
 	fail "a hostname with an uppercase final label was flagged (DEC-141 gap changed)"
 fi
 
-# Case 11: the query, fragment and template forms in a commit message are
+# Case 11: the query, fragment, template, "*." and "(" forms in a commit message are
 # still flagged by their host. Keyword and hosts are joined at run time, the
 # same convention as case 5.
 (
@@ -377,15 +387,18 @@ fi
 	msg_q="https://msg-query-invented.example.zzz?Feed=rss"
 	msg_f="https://msg-frag-invented.example.zzz#Top"
 	msg_t="https://msg-tmpl-invented.example.zzz{{.Keywords}}"
-	git commit -q -m "feat: the ${msg_keyword} reads ${msg_q}, ${msg_f} and ${msg_t}"
+	msg_w="https://*.msg-wild-invented.example.zzz,Next"
+	msg_p="https://(msg-paren-invented.example.zzz)Then"
+	git commit -q -m "feat: the ${msg_keyword} reads ${msg_q}, ${msg_f}, ${msg_t}, ${msg_w} and ${msg_p}"
 )
 head_case11=$(cd "$tmp_repo" && git rev-parse HEAD)
 
 if run_check "$head_case11" "$out_dir/out11.txt"; then
 	cat "$out_dir/out11.txt" >&2
-	fail "query/fragment/template URLs in a commit message were not flagged"
+	fail "query/fragment/template/leading-form URLs in a commit message were not flagged"
 fi
-for want in msg-query-invented.example.zzz msg-frag-invented.example.zzz msg-tmpl-invented.example.zzz; do
+for want in msg-query-invented.example.zzz msg-frag-invented.example.zzz msg-tmpl-invented.example.zzz \
+	msg-wild-invented.example.zzz msg-paren-invented.example.zzz; do
 	grep -q "possible new indexer hostname: $want\$" "$out_dir/out11.txt" || {
 		cat "$out_dir/out11.txt" >&2
 		fail "commit-message violation output did not name $want"

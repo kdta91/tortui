@@ -4596,11 +4596,11 @@ safeguard. The scanner reads Go selector expressions such as `ix.URL` as hostnam
 - POSIX sh only (AGENT.md §14). CI behaviour is otherwise unchanged; the job name and required
   status are untouched.
 
-**Notes:** `check_host()` cuts the host out of each candidate (userinfo, port, and everything from
-the first non-hostname character such as `?`, `#`, `{{`, `&`) and skips it if the host's final
-label has an uppercase letter in the original text; `scan()` matches on the lowercased line and
+**Notes:** `check_host()` cuts the host out of each candidate (userinfo, port, a leading `*.`/`(`
+run, everything from the first non-hostname character or `..`) and skips it only if the host's
+final label has an uppercase letter in the original text, failing closed if a cut leaves nothing; `scan()` matches on the lowercased line and
 cuts candidates from the original at the same offset, with awk under `LC_ALL=C` so multibyte text
 cannot shift it (this also ends the macOS "illegal byte sequence" abort on invalid UTF-8). Both
-shapes. Test cases 6–11 cover selectors, lowercase, query/fragment/template, multibyte and
-commit-message forms, run under a UTF-8 locale; check output now lives outside the scratch repo.
-Eight mutations each fail the test. CI job untouched. Backlog T-9029 (userinfo-shaped host).
+shapes. Test cases 6–11 cover selectors, lowercase, query/fragment/template, leading-form, multibyte
+and commit-message forms, run under a UTF-8 locale; check output now lives outside the scratch repo.
+Eleven mutations each fail the test. CI job untouched. Backlog T-9029, T-9030.
