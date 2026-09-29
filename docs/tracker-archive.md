@@ -4743,7 +4743,7 @@ keeps the userinfo, which ends up in `TorrentURL` and is stored in resume data.
 
 **Notes:** DEC-143. `detailsAddress` refuses any `parsed.User != nil` right after the scheme check
 ("it carries a user name or password"; no address or credential in the error). The listing path had
-the same issue: a page's `https://u:p@...` link and any relative link under a `base_url` carrying
+the same issue: a page's `u:p@` link and any relative link under a `base_url` carrying
 userinfo kept it in `TorrentURL`, `SourceURL` and the URL-derived `ID`. Fixed in the one shared
 place, `webAddress`, which now sets `User = nil` on every resolved link (both paths): the userinfo
 is dropped, the link kept. New `userinfo_test.go`: five refused shapes with a counting transport
