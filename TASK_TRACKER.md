@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field.
 
 ---
 
@@ -100,7 +100,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025 and T-9026, are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026 and T-9031, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI. The race jobs
       (T-9025) are advisory per PR under DEC-107 but must all be green before the release tag.
 - [ ] Coverage thresholds from AGENT.md §9 met.
@@ -713,6 +713,13 @@ when it reaches it and does not start backlog items on its own.
   a non-ASCII letter, such as `Host: "İİİİ.some-host.example.zzz"`; main matched it after
   lowercasing. Non-ASCII letters are also no longer lowercased in reported names. Minor, since
   such labels are not valid registrable hostnames. Found in review of T-9026 (PR #71).
+- `T-9032` The archived T-9026 acceptance text in `docs/tracker-archive.md` still describes the
+  broader rule; DEC-141 records the narrowing. Its Notes now carry a one-line pointer (done in
+  T-9031), so nothing further is needed unless the acceptance text itself should be rewritten.
+  Found in review of T-9026 (PR #71), non-blocking.
+- `T-9033` `Host: probe.org_X` and `Host: probe.org9X` fall inside the narrowed gap of the hostname
+  scanner (a bare two-part token with an uppercase letter after the dot); neither is a valid
+  hostname. Found in review of T-9026 (PR #71), non-blocking.
 
 ---
 

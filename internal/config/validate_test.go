@@ -182,6 +182,15 @@ func TestConfigValidate(t *testing.T) {
 			wantKey: "indexer[0].definition",
 		},
 		{
+			name: "scraper indexer without url is valid",
+			mutate: func(c *Config) {
+				c.Indexers[0].Type = "scraper"
+				c.Indexers[0].Definition = "example.yml"
+				c.Indexers[0].URL = ""
+			},
+			wantEmpty: true,
+		},
+		{
 			name: "indexer missing url",
 			mutate: func(c *Config) {
 				c.Indexers[0].URL = ""

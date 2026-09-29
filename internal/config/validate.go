@@ -124,7 +124,9 @@ func (c Config) Validate() []string {
 			problems = append(problems, fmt.Sprintf("%s.type: invalid value %q (want torznab or scraper)", prefix, idx.Type))
 		}
 
-		if idx.URL == "" {
+		// A scraper source is built from its definition, whose own
+		// base_url is what is fetched, so only a torznab feed needs a URL.
+		if idx.URL == "" && idx.Type != "scraper" {
 			problems = append(problems, prefix+".url: must not be empty")
 		}
 
