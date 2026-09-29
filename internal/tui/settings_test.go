@@ -32,6 +32,7 @@ type fakeSourceManager struct {
 	testErr         error
 	importErr       error
 	importID        string
+	importBaseURL   string
 	importedSources []string // every path/URL ImportDefinition received
 	reloadErr       error
 	saveCalls       int
@@ -150,17 +151,17 @@ func (f *fakeSourceManager) waitCtxCancelled(t *testing.T, timeout time.Duration
 	return f.sawCtxCancelled()
 }
 
-func (f *fakeSourceManager) ImportDefinition(_ context.Context, source string) (string, error) {
+func (f *fakeSourceManager) ImportDefinition(_ context.Context, source string) (string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	f.importedSources = append(f.importedSources, source)
 
 	if f.importErr != nil {
-		return "", f.importErr
+		return "", "", f.importErr
 	}
 
-	return f.importID, nil
+	return f.importID, f.importBaseURL, nil
 }
 
 func (f *fakeSourceManager) ListAggregatorIndexers(_ context.Context, baseURL, apiKey string) ([]AggregatorIndexer, error) {
@@ -906,10 +907,7 @@ func TestImportDefinitionPrefillsForm(t *testing.T) {
 	tm.Send(keyRune("https://example.org/def.yml"))
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
-	// The form's own URL field is still blank in this test, so live
-	// validation (T-080 review finding) takes priority over the import's
-	// "imported: ..." info line — the import's actual effect is checked
-	// below via FinalModel instead.
+	// The import's actual effect is checked below via FinalModel.
 	waitForOutput(t, tm, "imported-source.yml")
 
 	if err := tm.Quit(); err != nil {
@@ -1070,5 +1068,83 @@ func TestFormLiveValidationAppearsAndClearsAsYouType(t *testing.T) {
 	final := tm.FinalModel(t, teatest.WithFinalTimeout(3*time.Second)).(Model)
 	if len(final.settings.form.liveIssues(final.sourceRows())) == 0 {
 		t.Fatal("expected the duplicate-id issue to still be live")
+	}
+}
+
+// T-9031: a scraper source is built from its definition's own base_url, so
+// its URL field is optional; torznab still needs one.
+
+func TestScraperFormWithoutURLIsValid(t *testing.T) {
+	f := sourceForm{name: "n", typ: "scraper", definition: "d.yml"}
+
+	if got := f.validate(); got != "" {
+		t.Errorf("validate() = %q, want empty", got)
+	}
+
+	if got := f.liveIssues(nil); len(got) != 0 {
+		t.Errorf("liveIssues() = %v, want none", got)
+	}
+}
+
+func TestScraperFormWithInvalidTypedURLIsRejected(t *testing.T) {
+	f := sourceForm{name: "n", typ: "scraper", definition: "d.yml", sourceURL: "ftp://example.org"}
+
+	if got := f.validate(); !strings.Contains(got, "http") {
+		t.Errorf("validate() = %q, want an http(s) scheme complaint", got)
+	}
+
+	if len(f.liveIssues(nil)) == 0 {
+		t.Error("liveIssues() empty for an invalid typed URL")
+	}
+}
+
+func TestTorznabFormWithoutURLIsRejected(t *testing.T) {
+	f := sourceForm{name: "n", typ: "torznab"}
+
+	if got := f.validate(); got != "URL is required" {
+		t.Errorf("validate() = %q, want %q", got, "URL is required")
+	}
+}
+
+func TestImportPrefillsURLAndSavesWithoutTypingOne(t *testing.T) {
+	sm := &fakeSourceManager{}
+	m := New(newTestEngine(t), testTheme(), WithSourceManager(sm))
+
+	f := newAddForm()
+	f.typ = "scraper"
+	m.settings.form = &f
+
+	next, _ := m.handleFormImportResult(formImportResultMsg{id: "ex", baseURL: "https://example.org"})
+	m = next.(Model)
+
+	got := *m.settings.form
+	if got.sourceURL != "https://example.org" {
+		t.Fatalf("sourceURL = %q, want the definition's base_url", got.sourceURL)
+	}
+
+	// A URL the user already typed is left alone.
+	typed := newAddForm()
+	typed.typ = "scraper"
+	typed.sourceURL = "https://mine.example.org"
+	m.settings.form = &typed
+	next, _ = m.handleFormImportResult(formImportResultMsg{id: "ex", baseURL: "https://example.org"})
+	m = next.(Model)
+
+	if m.settings.form.sourceURL != "https://mine.example.org" {
+		t.Errorf("typed URL overwritten: %q", m.settings.form.sourceURL)
+	}
+
+	// Import with no typed URL then saves.
+	noURL := newAddForm()
+	noURL.typ = "scraper"
+	m.settings.form = &noURL
+	next, _ = m.handleFormImportResult(formImportResultMsg{id: "ex"}) // base_url unknown
+	m = next.(Model)
+
+	next, cmd := m.handleSourceFormSave(*m.settings.form)
+	m = next.(Model)
+
+	if cmd == nil || m.settings.form.err != "" {
+		t.Fatalf("save refused: err=%q cmd=%v", m.settings.form.err, cmd)
 	}
 }

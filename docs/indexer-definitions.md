@@ -474,6 +474,12 @@ definition" takes a local file path or an http or https address you give it
 3. only if it passes, writes it into your `definitions/` directory under a
    file name built from its own `id`, and reports where it landed.
 
+In the add-source form, a successful import fills in Name (the definition's `id`)
+and URL (its `base_url`) when those fields are empty. A scraper
+source is fetched from the definition's own `base_url`, so its URL field is
+optional and may be left blank; if you do type one it must still be a valid
+http or https address. A Torznab source always needs its URL.
+
 A definition that fails validation is rejected and **nothing is written** —
 half an import never lands. Importing an `id` that is already installed is
 also refused rather than silently overwritten; remove or rename the existing

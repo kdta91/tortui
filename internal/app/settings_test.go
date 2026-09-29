@@ -383,9 +383,13 @@ func TestSettingsImportedDefinitionBecomesASearchableSource(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := sm.ImportDefinition(context.Background(), file)
+	id, baseURL, err := sm.ImportDefinition(context.Background(), file)
 	if err != nil || id != "example-user" {
 		t.Fatalf("ImportDefinition = %q, %v; want example-user", id, err)
+	}
+
+	if baseURL != "https://example.org" {
+		t.Errorf("ImportDefinition base_url = %q, want the definition's base_url", baseURL)
 	}
 
 	if _, err := os.Stat(filepath.Join(a.Loaded().Paths.DefinitionsDir, id+".yml")); err != nil {

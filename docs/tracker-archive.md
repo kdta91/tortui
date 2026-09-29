@@ -4604,3 +4604,32 @@ byte-aligned offsets (also ends the macOS invalid-UTF-8 abort). Test cases 6–1
 every URL, quoted, multi-label, port, `?`/`#`/`{{`/`&`/`${}`/`*.`/`(`/`..`/`_`, multibyte and
 commit-message form is flagged; the bare `name.Label` gap is pinned. Check output lives outside the
 scratch repo. Ten mutations each fail the test. CI job untouched. Backlog T-9029, T-9030.
+See DEC-141: the acceptance text above describes the broader rule that was narrowed during review.
+
+### T-9031 · Scraper sources don't require the URL field
+
+```
+status: done
+depends: T-9026
+tier: M
+```
+Found by the owner (2026-09-29). After importing a definition in Settings → Add source the form
+still refused to save with "URL is required", though a scraper source is built from its
+definition's own `base_url` and never reads the config URL.
+
+**Acceptance:**
+1. For a scraper source an empty URL field is valid: `validate()` and `liveIssues()` no longer
+   report "URL is required". A non-empty URL is still checked with `invalidURLReason`.
+2. After a successful import (`handleFormImportResult`) an empty URL field is filled with the
+   imported definition's `base_url`, obtained through `SourceManager` without the TUI importing the
+   scraper adapter (AGENT.md §4); the frozen §5 contracts are untouched.
+3. Torznab still requires the URL.
+4. Tests: scraper plus import saves with no URL typed; scraper with an invalid typed URL is still
+   rejected; torznab with an empty URL is still rejected; import pre-fills the URL.
+5. `docs/indexer-definitions.md`'s import section says Name and URL are filled in from the
+   definition.
+
+**Notes:** `SourceManager.ImportDefinition` now returns `(id, baseURL, err)`; the app manager takes
+`def.BaseURL`. `config.Validate` also stopped requiring `url` for scraper indexers, otherwise the
+saved config would fail to load on restart (test added). Import fills Name with the definition id
+(existing behaviour), so the doc says so. Backlog T-9032, T-9033.

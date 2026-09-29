@@ -148,8 +148,8 @@ func (s *settingsManager) probe(ctx context.Context, src config.Indexer) error {
 
 // ImportDefinition implements tui.SourceManager: it installs the definition
 // at source (a local path or an http(s) URL) into the definitions directory
-// and returns its id.
-func (s *settingsManager) ImportDefinition(ctx context.Context, source string) (string, error) {
+// and returns its id and base_url.
+func (s *settingsManager) ImportDefinition(ctx context.Context, source string) (string, string, error) {
 	opts := scraper.ImporterOptions{Dir: s.defsDir}
 	if s.transport != nil {
 		opts.HTTPClient = newClient(httpx.Credentials{}, s.transport)
@@ -157,17 +157,17 @@ func (s *settingsManager) ImportDefinition(ctx context.Context, source string) (
 
 	im, err := scraper.NewImporter(opts)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	def, _, err := im.Import(ctx, source)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	s.logger.Info("settings: definition imported", "definition", def.ID)
 
-	return def.ID, nil
+	return def.ID, def.BaseURL, nil
 }
 
 // ReloadDefinitions implements tui.SourceManager: every source built from a

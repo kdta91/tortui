@@ -56,9 +56,9 @@ type SourceManager interface {
 	TestSource(ctx context.Context, src config.Indexer) error
 
 	// ImportDefinition installs a scraper definition file from a local
-	// path or an http(s) URL (T-025) and returns its id, so the add form
-	// can pre-fill Definition/ID from it.
-	ImportDefinition(ctx context.Context, source string) (id string, err error)
+	// path or an http(s) URL (T-025) and returns its id and its base_url,
+	// so the add form can pre-fill Definition/ID/URL from it.
+	ImportDefinition(ctx context.Context, source string) (id, baseURL string, err error)
 
 	// ReloadDefinitions re-reads every scraper definition file from disk
 	// (T-023's Loader.Reload) — the `r` key.
@@ -387,13 +387,18 @@ func (f sourceForm) validate() string {
 		return "name is required"
 	}
 
+	// A scraper source is built from its definition, whose own base_url is
+	// what is fetched, so its URL field is optional; a typed one is still
+	// checked so a typo is flagged. Torznab always needs its feed URL.
 	url := strings.TrimSpace(f.sourceURL)
-	if url == "" {
+	if url == "" && f.typ != "scraper" {
 		return "URL is required"
 	}
 
-	if reason := invalidURLReason(url); reason != "" {
-		return reason
+	if url != "" {
+		if reason := invalidURLReason(url); reason != "" {
+			return reason
+		}
 	}
 
 	if f.typ == "scraper" && strings.TrimSpace(f.definition) == "" {
@@ -971,8 +976,9 @@ func testFormCmd(sm SourceManager, src config.Indexer, gen int) tea.Cmd {
 
 // formImportResultMsg reports the form's import-a-definition attempt.
 type formImportResultMsg struct {
-	id  string
-	err error
+	id      string
+	baseURL string
+	err     error
 }
 
 func importDefinitionCmd(sm SourceManager, source string) tea.Cmd {
@@ -980,9 +986,9 @@ func importDefinitionCmd(sm SourceManager, source string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), sourceTestTimeout)
 		defer cancel()
 
-		id, err := sm.ImportDefinition(ctx, source)
+		id, baseURL, err := sm.ImportDefinition(ctx, source)
 
-		return formImportResultMsg{id: id, err: err}
+		return formImportResultMsg{id: id, baseURL: baseURL, err: err}
 	}
 }
 
@@ -1091,7 +1097,8 @@ func (m Model) handleFormTestResult(msg formTestResultMsg) (tea.Model, tea.Cmd) 
 }
 
 // handleFormImportResult applies the form's import attempt: pre-fills
-// Definition (and Name/ID when still blank) from the imported id.
+// Definition (and Name/ID/URL when still blank) from the imported id and
+// its base_url.
 func (m Model) handleFormImportResult(msg formImportResultMsg) (tea.Model, tea.Cmd) {
 	if m.settings.form == nil {
 		return m, nil
@@ -1112,6 +1119,10 @@ func (m Model) handleFormImportResult(msg formImportResultMsg) (tea.Model, tea.C
 	}
 	if strings.TrimSpace(f.idOverride) == "" {
 		f.idOverride = msg.id
+	}
+
+	if strings.TrimSpace(f.sourceURL) == "" {
+		f.sourceURL = msg.baseURL
 	}
 
 	f.importText = ""
