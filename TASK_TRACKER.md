@@ -91,29 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL.
-
-### T-9011 · Open on Search, no startup Latest
-```
-status: todo
-depends: T-9010
-tier: M
-```
-Owner decision (2026-09-29). Removes T-095's startup Latest (DEC-129); needs its own `DEC-` entry,
-written in this task.
-
-**Acceptance:**
-- Plain `tortui` opens on an empty Search screen and runs no Latest (or any) query at launch: a
-  test with a recording indexer sees zero `Search` calls after startup until the user acts.
-- Latest still runs on `L`, against every enabled source, exactly as before.
-- The bundled Internet Archive source stays enabled on first run; it is simply not queried until
-  the user searches or presses `L`.
-- The v1.0 criterion "Latest works on first launch with no keyword typed, against every bundled
-  source" is reworded to "a search works on first launch with zero config, against every bundled
-  source".
-- README / first-run text that promises a startup Latest is updated to match.
-
----
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest.
 
 ### T-9012 · Unknown seeders render as a dash
 ```
@@ -151,7 +129,7 @@ when it reaches it and does not start backlog items on its own.
 - [ ] A fresh install searches and downloads successfully with no configuration, no account,
       and no other software installed — verified on macOS for v1.0 (T-091; DEC-132 —
       Linux/Windows deferred to Backlog T-9004).
-- [ ] Latest works on first launch with no keyword typed, against every bundled source.
+- [ ] A search works on first launch with zero config, against every bundled source.
 - [ ] Malicious-path `.torrent` fixtures are refused on all three OSes (T-034).
 - [ ] A second instance refuses to start; a crash mid-config-write loses nothing (T-042).
 - [ ] Quit and `SIGINT` both restore the terminal cleanly with downloads active (T-042).
@@ -714,6 +692,16 @@ when it reaches it and does not start backlog items on its own.
   today: the engine's `.torrent` fetch passes no headers. Either strip or refuse sensitive
   per-request headers when the option is on, or document the limitation on the option. Found in
   review of T-9010 (PR #64).
+- `T-9016` Pressing enter on an empty "Import from (path or URL)" field does nothing, silently
+  (`internal/tui/settings.go`, the `fieldImport` enter branch returns `m, nil`). It should show a
+  hint such as "type a file path or URL first". The owner expected a file picker. Found in an
+  owner run of the add-source form.
+- `T-9017` While the import field is the only thing being used, the add-source form still shows
+  "! name is required", which suggests Name is needed for an import when it isn't. Found in an
+  owner run of the add-source form.
+- `T-9018` The import path is not `~`-expanded, so `~/x.yml` fails. Either expand a leading `~/`
+  or say in the field hint that an absolute path is needed. Found in an owner run of the
+  add-source form.
 
 ---
 
@@ -860,6 +848,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-134 | 2026-09-28 | T-994: lifecycle.Session owns the torrents bucket — the add flow's SetTorrent runs under Save's lock (a store-level atomic merge would still let a save prune a fresh record); Shutdown calls Session.Close, then seals it even on timeout |
 | DEC-135 | 2026-09-28 | T-9008: unexported Session.afterUnlock seam (runs after every lock release) makes the Close/seal no-gap window deterministic to test; the app wiring is pinned by a closed-session probe through the real add flow |
 | DEC-136 | 2026-09-29 | T-9010: the engine's credential-free .torrent client follows a redirect to a subdomain of the requested host (same port, never https to http) so a source's storage hand-off works; indexer clients keep DEC-062's same-host rule |
+| DEC-137 | 2026-09-29 | T-9011: supersedes DEC-129's startup Latest; the program opens on an empty Search screen and queries nothing until the user acts (owner decision) |
 
 ## Blocked
 

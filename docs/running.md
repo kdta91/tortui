@@ -32,8 +32,8 @@ the only way an agent can meaningfully self-verify rendering.
 load (defaults written on first run) → rotating file log → single-instance lock (a second
 instance against the same state directory refuses with a message and exit 1) → fd soft limit
 raised → store → anacrolix engine over every known destination root → registry of the bundled
-sources plus enabled `[[indexer]]` entries → session resume → TUI. It opens with one Latest
-fetch and, on first run, the welcome overlay. `q`, `SIGINT`, and `SIGTERM` all run the lifecycle
+sources plus enabled `[[indexer]]` entries → session resume → TUI. It opens on an empty Search
+screen (no query runs until the user searches or presses `L`) and, on first run, the welcome overlay. `q`, `SIGINT`, and `SIGTERM` all run the lifecycle
 shutdown (pause, save session, flush, close) and release the lock; `--ascii` or `ascii = true`
 selects the ASCII glyphs. **`make run`** is the same binary with `--config ./dev-config.toml`
 (written with defaults the first time); only the config file moves, so combine it with

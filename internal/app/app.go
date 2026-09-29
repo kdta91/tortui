@@ -211,7 +211,6 @@ func (a *App) buildModel(opts Options, storeRecovered string) tui.Model {
 		tui.WithSessionSaver(a.session),
 		tui.WithSourceManager(a.settings),
 		tui.WithPreferencesManager(a.settings),
-		tui.WithStartupLatest(true),
 		tui.WithStartupNotice(startupNotices(a.loaded, storeRecovered, a.report)...),
 	}
 

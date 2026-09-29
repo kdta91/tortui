@@ -4078,6 +4078,34 @@ seams `webseeds`, `torrentTransport` drive `TestTorrentURLDownloadCompletesFromI
 (~5 s: the library's first web seed request waits on its own timer). Review round 1 fixed in-PR.
 Backlog T-9013, T-9014, T-9015.
 
+### T-9011 · Open on Search, no startup Latest
+```
+status: done
+depends: T-9010
+tier: M
+```
+Owner decision (2026-09-29). Removes T-095's startup Latest (DEC-129); needs its own `DEC-` entry,
+written in this task.
+
+**Acceptance:**
+- Plain `tortui` opens on an empty Search screen and runs no Latest (or any) query at launch: a
+  test with a recording indexer sees zero `Search` calls after startup until the user acts.
+- Latest still runs on `L`, against every enabled source, exactly as before.
+- The bundled Internet Archive source stays enabled on first run; it is simply not queried until
+  the user searches or presses `L`.
+- The v1.0 criterion "Latest works on first launch with no keyword typed, against every bundled
+  source" is reworded to "a search works on first launch with zero config, against every bundled
+  source".
+- README / first-run text that promises a startup Latest is updated to match.
+
+**Notes:** Removed `tui.WithStartupLatest`, its message, handler and the `startupGen` "don't yank
+the user" special case (a finished dispatch always moves to Results again); the composition root no
+longer passes it. Plain `tortui` opens on an empty Search screen; zero `SearchAll` calls until the
+user acts (`TestStartupRunsNoQuery`, and at the app level `TestZeroConfigOpensOnSearchAndQueriesNothing`
+sees zero requests reach the bundled sources). `L` still runs Latest (`TestLatestKeyStillRunsLatest`).
+Internet Archive stays enabled. v1.0 criterion, README and `docs/running.md` reworded. DEC-137.
+Backlog T-9016..T-9018 from an owner run of the add-source form.
+
 ---
 
 ## Blocked — Resolved

@@ -139,21 +139,44 @@ func TestStartupNoticeShowsOnFirstRender(t *testing.T) {
 	waitForOutput(t, tm, notice)
 }
 
-// TestStartupLatestRunsOneLatestQuery: WithStartupLatest runs exactly one
-// Latest query as the program starts and lands on Results, with no key
-// pressed.
-func TestStartupLatestRunsOneLatestQuery(t *testing.T) {
+// TestStartupRunsNoQuery: the program opens on the Search screen and sends
+// no query of any kind to a source until the user acts (T-9011). The startup
+// notice proves Init has run and the first frames rendered.
+func TestStartupRunsNoQuery(t *testing.T) {
+	const notice = "startup settled"
+
 	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
 
-	m := New(newTestEngine(t), testTheme(), WithSearcher(searcher), WithStartupLatest(true))
+	m := New(newTestEngine(t), testTheme(), WithSearcher(searcher), WithStartupNotice(notice))
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
 	t.Cleanup(func() { _ = tm.Quit() })
 
+	waitForOutput(t, tm, notice)
+
+	if n := searcher.callCount(); n != 0 {
+		t.Fatalf("SearchAll calls after startup = %d, want 0", n)
+	}
+
+	if m.screen != ScreenSearch {
+		t.Fatalf("initial screen = %v, want Search", m.screen)
+	}
+}
+
+// TestLatestKeyStillRunsLatest: L after startup runs one Latest query, as
+// before T-9011.
+func TestLatestKeyStillRunsLatest(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+
+	m := New(newTestEngine(t), testTheme(), WithSearcher(searcher))
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	t.Cleanup(func() { _ = tm.Quit() })
+
+	tm.Send(keyRune("L"))
 	waitForOutput(t, tm, "Sources queried")
 
 	call, ok := searcher.lastCall()
 	if !ok || call.q.Mode != indexer.ModeLatest || call.q.Text != "" {
-		t.Fatalf("startup query = %+v (called=%v), want one empty Latest query", call, ok)
+		t.Fatalf("L query = %+v (called=%v), want one empty Latest query", call, ok)
 	}
 
 	if n := searcher.callCount(); n != 1 {
@@ -161,58 +184,15 @@ func TestStartupLatestRunsOneLatestQuery(t *testing.T) {
 	}
 }
 
-// TestNoStartupLatestByDefault: without the option, nothing is queried.
-func TestNoStartupLatestByDefault(t *testing.T) {
-	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
-	m := New(nil, testTheme(), WithSearcher(searcher))
-
-	if cmd := m.Init(); cmd != nil {
-		t.Fatalf("Init with no engine and no startup options returned %#v, want nil", cmd)
-	}
-}
-
-// TestStartupLatestSilentWithoutALatestSource: a source set that cannot
-// serve Latest runs nothing and pushes no "select at least one source".
-func TestStartupLatestSilentWithoutALatestSource(t *testing.T) {
-	searcher := newStubSearcher(indexerfake.New("bravo", "Bravo", testCaps(true, false), nil))
-	m := New(newTestEngine(t), testTheme(), WithSearcher(searcher), WithStartupLatest(true))
-
-	updated, cmd := m.Update(startupLatestMsg{})
-	if cmd != nil {
-		t.Fatalf("startup Latest with no Latest-capable source returned a command")
-	}
-
-	if got := updated.(Model).statusBar.View(200, "search", m.theme); strings.Contains(got, "select at least one source") {
-		t.Fatalf("status bar = %q, want no prompt", got)
-	}
-}
-
-// TestStartupLatestResultDoesNotYankTheUser: the startup query's result
-// moves the user to Results only if they are still on Search; a normal
-// dispatch's result always does.
-func TestStartupLatestResultDoesNotYankTheUser(t *testing.T) {
+// TestSearchResultAlwaysMovesToResults: a completed dispatch lands on
+// Results wherever the user is when it arrives.
+func TestSearchResultAlwaysMovesToResults(t *testing.T) {
 	m := New(newTestEngine(t), testTheme())
 	m.search.generation = 1
-	m.startupGen = 1
-	m.screen = ScreenDownloads
-
-	updated, _ := m.handleSearchResult(searchResultMsg{gen: 1, query: indexer.Query{Mode: indexer.ModeLatest}})
-	if got := updated.(Model).screen; got != ScreenDownloads {
-		t.Fatalf("screen = %v after the startup result, want Downloads", got)
-	}
-
 	m.screen = ScreenSearch
 
-	updated, _ = m.handleSearchResult(searchResultMsg{gen: 1, query: indexer.Query{Mode: indexer.ModeLatest}})
+	updated, _ := m.handleSearchResult(searchResultMsg{gen: 1, query: indexer.Query{Mode: indexer.ModeLatest}})
 	if got := updated.(Model).screen; got != ScreenResults {
-		t.Fatalf("screen = %v after the startup result on Search, want Results", got)
-	}
-
-	m.search.generation = 2
-	m.screen = ScreenDownloads
-
-	updated, _ = m.handleSearchResult(searchResultMsg{gen: 2, query: indexer.Query{Mode: indexer.ModeLatest}})
-	if got := updated.(Model).screen; got != ScreenResults {
-		t.Fatalf("screen = %v after a user dispatch, want Results", got)
+		t.Fatalf("screen = %v, want Results", got)
 	}
 }

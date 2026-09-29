@@ -200,8 +200,8 @@ fixture data, not anything real.
 
 Running `tortui` with no flags starts the real thing — your own config, your own sources, real
 downloads. On first run it writes a default config (the status bar says where) and shows a
-one-time welcome with the legal notice. Each start fetches your sources' latest additions once,
-so there is something to browse straight away — once per launch, never on a timer. Only one
+one-time welcome with the legal notice. It opens on an empty Search screen and queries nothing until you
+search or press `L`. Only one
 tortui runs per state directory; a second one says so and exits. Quitting (`q`), `SIGINT`, or
 `SIGTERM` pauses and saves your downloads before exiting, and the next start resumes them.
 
