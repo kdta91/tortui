@@ -113,7 +113,7 @@ func filterResults(in []indexer.Result, q indexer.Query) []indexer.Result {
 	out := make([]indexer.Result, 0, len(in))
 
 	for _, r := range in {
-		if q.MinSeeders > 0 && r.Seeders < q.MinSeeders {
+		if !indexer.MeetsMinSeeders(r, q.MinSeeders) {
 			continue
 		}
 

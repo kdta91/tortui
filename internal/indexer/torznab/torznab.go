@@ -358,7 +358,7 @@ func (a *Adapter) Search(ctx context.Context, q indexer.Query) ([]indexer.Result
 		// MinSeeders is applied here rather than pushed to the source:
 		// Torznab has no parameter for it (indexer.Query allows
 		// either).
-		if q.MinSeeders > 0 && res.Seeders < q.MinSeeders {
+		if !indexer.MeetsMinSeeders(res, q.MinSeeders) {
 			continue
 		}
 

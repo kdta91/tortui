@@ -350,7 +350,7 @@ func (a *Adapter) results(rows []row, block *blockPlan, q indexer.Query) []index
 			continue
 		}
 
-		if q.MinSeeders > 0 && res.Seeders < q.MinSeeders {
+		if !indexer.MeetsMinSeeders(res, q.MinSeeders) {
 			continue
 		}
 
