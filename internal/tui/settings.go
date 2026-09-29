@@ -1156,7 +1156,7 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "tab", "down":
-		if msg.String() == "tab" && f.current() == fieldImport && !isURLSource(f.importText) {
+		if msg.String() == "tab" && f.current() == fieldImport && f.importText != "" && !isURLSource(f.importText) {
 			return m.handleImportTab(f)
 		}
 

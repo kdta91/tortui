@@ -28,14 +28,15 @@ type fakeSourceManager struct {
 	mu      sync.Mutex
 	sources []config.Indexer
 
-	saveErr    error
-	testErr    error
-	importErr  error
-	importID   string
-	reloadErr  error
-	saveCalls  int
-	testCalls  int
-	reloadCall int
+	saveErr         error
+	testErr         error
+	importErr       error
+	importID        string
+	importedSources []string // every path/URL ImportDefinition received
+	reloadErr       error
+	saveCalls       int
+	testCalls       int
+	reloadCall      int
 
 	// testDelay, when set, makes TestSource block until either it elapses
 	// (returning testErr, the "reachable" case when testErr is nil) or ctx
@@ -149,9 +150,11 @@ func (f *fakeSourceManager) waitCtxCancelled(t *testing.T, timeout time.Duration
 	return f.sawCtxCancelled()
 }
 
-func (f *fakeSourceManager) ImportDefinition(_ context.Context, _ string) (string, error) {
+func (f *fakeSourceManager) ImportDefinition(_ context.Context, source string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	f.importedSources = append(f.importedSources, source)
 
 	if f.importErr != nil {
 		return "", f.importErr
