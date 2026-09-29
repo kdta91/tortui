@@ -4664,3 +4664,55 @@ durable without waiting on the debounce. The legend line under the form always s
 hint and adds `c clear recent` only while history exists. The overlay for Search hit the 24-row
 floor with the new binding, so `renderHelp` no longer emits a trailing newline. No golden files
 cover the Search screen. Backlog T-9035, T-9036 (PR #72 review notes).
+
+### T-9037 · Scraper details-page resolve
+
+```
+status: done
+depends: T-9034
+tier: H
+```
+Owner request (2026-09-29). Some sources list results with only a details link, and the magnet or
+torrent link sits on each item's own page. The frozen §5 `Indexer.Resolve` exists for exactly this
+("fills Magnet/InfoHash for indexers that only return a details page"); the scraper does not
+implement it for that case. Build it generically, with no source special-cased (AGENT.md §1).
+
+**Acceptance:**
+1. Definitions gain an optional `details:` block, with its own `mode` defaulting to the
+   definition's mode. Its `fields` may set only `magnet`, `torrent_url` and `infohash`, with the
+   same selector/attr/regex/transform/template rules and strict validation. A definition without a
+   `details:` block behaves exactly as today.
+2. scraper `Resolve`: when a result has no magnet, torrent URL or infohash AND the definition has a
+   `details:` block AND the result has a source_url, fetch that page once and fill the fields.
+   Otherwise keep today's behaviour, including the no-op when the result is already resolved (§5).
+3. Resolve runs only on user action (add or open details), never during Search or listing. A test
+   proves a search with N results makes exactly one request.
+4. Containment: the details URL must use http(s) and the same host as the definition's base_url;
+   anything else is refused with a clear error before any request. Redirects follow the existing
+   strict httpx policy (not the `FollowSubdomainRedirects` exception).
+5. Hostile input: a magnet must start with `magnet:`, a torrent_url must be http(s) and resolved
+   against the details page, and an infohash must pass the existing 40-hex/32-base32 check. The
+   response goes through the existing size cap, the context deadline, and the per-host minimum
+   interval. Nothing matched gives a readable "details page had no magnet, torrent link or
+   infohash" error, not a silent empty add.
+6. Credentials: the definition's user-supplied credentials apply to the details request exactly as
+   to search (same client).
+7. Search results that need resolving still show in the table; the missing magnet only matters at
+   add time. Check the TUI add flow calls Resolve (details.go already does when there's no magnet)
+   and that its error reaches the status bar.
+8. Tests (recorded fixtures via httptest, zero network): happy path for magnet, torrent_url and
+   infohash each; a relative torrent link resolved against the details page; a cross-host details
+   URL refused with no request made; a non-magnet `magnet` value dropped; a page with no match
+   giving the error; a result already resolved making no request; the one-request-per-search
+   assertion; validation errors for bad `details:` keys.
+9. Docs: add a `details:` section to docs/indexer-definitions.md with a short example on
+   example.org, and remove the "No details-page fetch" bullet.
+
+**Notes:** DEC-142. `scraper/details.go`: containment (http(s), exactly base_url's host and port,
+no https-to-http) is checked before the one `client.Get`; the whole page is one row; exactly one
+link is filled (page magnet, else torrent link, else a magnet built from the infohash; T-9010,
+T-9014), infohash kept alongside. A block with no link field now validates only with a `details:`
+block and a `source_url` (`ErrDetailsSourceMissing`). Opening details does not call Resolve (it
+never did; criterion 3 only bars Search/listing). TUI: new test drives a link-less result from
+`handleSearchResult` through enter to the status bar. Fixtures `testdata/scraper/fixture-details.yml`
+plus six pages. Backlog T-939 marked done here; T-9038, T-9039, T-9040 (PR #73 review notes).
