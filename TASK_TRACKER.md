@@ -91,7 +91,45 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL.
+
+### T-9011 · Open on Search, no startup Latest
+```
+status: todo
+depends: T-9010
+tier: M
+```
+Owner decision (2026-09-29). Removes T-095's startup Latest (DEC-129); needs its own `DEC-` entry,
+written in this task.
+
+**Acceptance:**
+- Plain `tortui` opens on an empty Search screen and runs no Latest (or any) query at launch: a
+  test with a recording indexer sees zero `Search` calls after startup until the user acts.
+- Latest still runs on `L`, against every enabled source, exactly as before.
+- The bundled Internet Archive source stays enabled on first run; it is simply not queried until
+  the user searches or presses `L`.
+- The v1.0 criterion "Latest works on first launch with no keyword typed, against every bundled
+  source" is reworded to "a search works on first launch with zero config, against every bundled
+  source".
+- README / first-run text that promises a startup Latest is updated to match.
+
+---
+
+### T-9012 · Unknown seeders render as a dash
+```
+status: todo
+depends: T-9011
+tier: L
+```
+Owner decision (2026-09-29).
+
+**Acceptance:**
+- When a source does not report seeders or leechers, the S/L column shows `–` instead of `0/0`
+  (golden renders at 80×24, 120×40 and 60×20 updated and inspected, not regenerated blindly).
+- A source that does report a real zero still shows `0`.
+- Sorting on S/L keeps unknown values last, in both directions.
+- The "unknown" signal does not change the frozen §5 `Result` contract. If it cannot be carried
+  without changing it, that is a stop condition (AGENT.md §12), not a contract change.
 
 ---
 
@@ -100,7 +138,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993, T-994 and T-9008, are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011 and T-9012, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI.
 - [ ] Coverage thresholds from AGENT.md §9 met.
 - [ ] `govulncheck` clean; `NOTICE` current; no GPL/AGPL dependency.
@@ -662,6 +700,20 @@ when it reaches it and does not start backlog items on its own.
   origin race. Same gap class as `T-997`; one teatest add-flow check on the root would cover both.
   Also, `Shutdown` calling `Session.Save` instead of `Session.Close` is caught only by chance by
   `TestSessionSavesRacingShutdownNeverOutliveIt`. Found in T-994.
+- `T-9013` The bundled Internet Archive definition maps no `source_url`, so `u` opens nothing for
+  its results. The T-9010 field `template` can now build `/details/{{value}}` from `identifier`;
+  verify that address against the Archive's docs and map it. Found in T-9010.
+- `T-9014` The add flow (`internal/tui/destination.go`) puts both `Result.Magnet` and
+  `Result.TorrentURL` into `engine.AddSource`, and the engine refuses two links with
+  `ErrAmbiguousSource`. A torznab item with a magnet and an enclosure, or a scraper definition
+  mapping both `magnet` and `torrent_url`, therefore cannot be added. Pick one (prefer the
+  `.torrent`, which carries trackers and web seeds) in the TUI, with a test. Found in T-9010.
+- `T-9015` On an httpx client built with `FollowSubdomainRedirects`, a per-request header set by
+  the caller (a `Cookie` or `Authorization` in the Request's own headers, as opposed to injected
+  credentials) would be forwarded by net/http to the subdomain a redirect lands on. Not reachable
+  today: the engine's `.torrent` fetch passes no headers. Either strip or refuse sensitive
+  per-request headers when the option is on, or document the limitation on the option. Found in
+  review of T-9010 (PR #64).
 
 ---
 
@@ -807,6 +859,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-133 | 2026-09-28 | T-993: Session.Resume re-admits recorded destinations, so a restart alone cannot pin app.go's st.Destinations() root source; test seam Options.beforeResume probes the freshly built engine before Resume; the duplicate admission is kept |
 | DEC-134 | 2026-09-28 | T-994: lifecycle.Session owns the torrents bucket — the add flow's SetTorrent runs under Save's lock (a store-level atomic merge would still let a save prune a fresh record); Shutdown calls Session.Close, then seals it even on timeout |
 | DEC-135 | 2026-09-28 | T-9008: unexported Session.afterUnlock seam (runs after every lock release) makes the Close/seal no-gap window deterministic to test; the app wiring is pinned by a closed-session probe through the real add flow |
+| DEC-136 | 2026-09-29 | T-9010: the engine's credential-free .torrent client follows a redirect to a subdomain of the requested host (same port, never https to http) so a source's storage hand-off works; indexer clients keep DEC-062's same-host rule |
 
 ## Blocked
 

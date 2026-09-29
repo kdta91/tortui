@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -138,8 +139,19 @@ type Options struct {
 	listenHost string
 
 	// HTTPClient fetches a .torrent named by AddSource.TorrentURL. A nil
-	// HTTPClient builds one with tortui's shared defaults.
+	// HTTPClient builds one with tortui's shared defaults, which also
+	// follows a redirect to a subdomain of the requested host.
 	HTTPClient *httpx.Client
+
+	// torrentTransport, when set, carries the default HTTPClient's
+	// requests, so a test can stage a redirect between named hosts
+	// without any network.
+	torrentTransport http.RoundTripper
+
+	// webseeds, when set together with Offline, leaves web seeding on, so
+	// a test can download from a loopback web seed while DHT, trackers
+	// and peer connections all stay off.
+	webseeds bool
 
 	// Offline disables every network subsystem of the underlying client:
 	// DHT, trackers, peer dialling, incoming connections, PEX, webseeds,
@@ -348,7 +360,15 @@ func New(opts Options) (*Engine, error) {
 
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
-		httpClient = httpx.New(httpx.Config{MaxBodyBytes: maxTorrentFileBytes})
+		// A source's download address may hand the .torrent off to a
+		// storage host under its own domain (T-9010, DEC-136). This
+		// client injects no credentials, so following that hop sends a
+		// subdomain nothing but the address the source itself chose.
+		httpClient = httpx.New(httpx.Config{
+			MaxBodyBytes:             maxTorrentFileBytes,
+			FollowSubdomainRedirects: true,
+			Transport:                opts.torrentTransport,
+		})
 	}
 
 	e := &Engine{
@@ -503,7 +523,7 @@ func clientConfig(opts Options, downloadDir string, logger *slog.Logger, port in
 		cfg.DisablePEX = true
 		cfg.DisableTCP = true
 		cfg.DisableUTP = true
-		cfg.DisableWebseeds = true
+		cfg.DisableWebseeds = !opts.webseeds
 		cfg.DisableWebtorrent = true
 		cfg.NoDefaultPortForwarding = true
 		cfg.DialForPeerConns = false

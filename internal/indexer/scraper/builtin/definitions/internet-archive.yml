@@ -13,6 +13,18 @@
 # one) returns the BitTorrent v1 infohash of the item's Archive-generated
 # torrent directly — no second, undocumented request to a per-item file
 # listing is needed to build a workable result.
+#
+# torrent_url is that same Archive-generated torrent's own address. The
+# Archive documents every file of an item at
+# https://archive.org/download/<identifier>/<filename>
+# (https://archive.org/developers/items.html), and the torrent it generates
+# for an item is the file <identifier>_archive.torrent (the Archive's own
+# Python library documents "nasa/nasa_archive.torrent" for item "nasa";
+# the Metadata API lists it under format "Archive BitTorrent"). Adding by
+# this URL rather than by a magnet built from btih matters: the .torrent
+# carries the Archive's trackers and web seeds, so a download starts from
+# the Archive's own servers even when no peer is online. See
+# docs/bundled-sources.md.
 id: internet-archive
 name: Internet Archive
 base_url: https://archive.org
@@ -29,6 +41,9 @@ fields:
     selector: title
   infohash:
     selector: btih
+  torrent_url:
+    selector: identifier
+    template: /download/{{value}}/{{value}}_archive.torrent
   size:
     selector: item_size
   published:

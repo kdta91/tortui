@@ -38,6 +38,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -259,6 +260,16 @@ type Config struct {
 	// nil, slog's default (the masking file sink installed by
 	// internal/logging) is resolved at call time.
 	Logger *slog.Logger
+
+	// FollowSubdomainRedirects also follows a redirect from the requested
+	// host to one of its own subdomains on the same port — a source whose
+	// download address hands the file off to a storage host under its own
+	// domain. Every other cross-host redirect, and every https-to-http
+	// hop, is still refused. It takes effect only on a client with no
+	// Credentials: an injected cookie would follow the hop (net/http
+	// forwards it to a subdomain), and the indexer clients that carry one
+	// keep the strict same-host rule (DEC-062, DEC-136).
+	FollowSubdomainRedirects bool
 }
 
 // Client is a shared HTTP client for indexer adapters. It is safe for
@@ -343,10 +354,15 @@ func New(cfg Config) *Client {
 		transport = newTransport(cfg.ConnectTimeout, cfg.ReadTimeout)
 	}
 
+	redirect := checkRedirect
+	if cfg.FollowSubdomainRedirects && cfg.Credentials == (Credentials{}) {
+		redirect = checkRedirectToSubdomain
+	}
+
 	return &Client{
 		http: &http.Client{
 			Transport:     transport,
-			CheckRedirect: checkRedirect,
+			CheckRedirect: redirect,
 		},
 		limiter:        newHostLimiter(cfg.MinHostInterval, cfg.Clock),
 		clock:          cfg.Clock,
@@ -409,12 +425,27 @@ func newDialer(connect time.Duration) *net.Dialer {
 // broken (an apex http URL upgraded by the server is an ordinary,
 // widespread redirect). See DEC-062.
 func checkRedirect(req *http.Request, via []*http.Request) error {
+	return checkRedirectHosts(req, via, false)
+}
+
+// checkRedirectToSubdomain is checkRedirect for a client built with
+// Config.FollowSubdomainRedirects: a hop to a subdomain of the host the
+// request was addressed to is followed too (DEC-136).
+func checkRedirectToSubdomain(req *http.Request, via []*http.Request) error {
+	return checkRedirectHosts(req, via, true)
+}
+
+// checkRedirectHosts is the redirect rule itself; subdomains admits a hop to
+// a subdomain of the original host on the same port.
+func checkRedirectHosts(req *http.Request, via []*http.Request, subdomains bool) error {
 	if len(via) >= maxRedirects {
 		return fmt.Errorf("httpx: %w (%d hops)", ErrTooManyRedirects, len(via))
 	}
 
 	origin := via[0].URL
-	if !strings.EqualFold(req.URL.Host, origin.Host) {
+	allowed := strings.EqualFold(req.URL.Host, origin.Host) || (subdomains && isSubdomainOf(req.URL, origin))
+
+	if !allowed {
 		return fmt.Errorf("httpx: %w (%s to %s)", ErrCrossHostRedirect, hostOf(origin), hostOf(req.URL))
 	}
 
@@ -423,6 +454,33 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 	}
 
 	return nil
+}
+
+// isSubdomainOf reports whether dest's host is a strict subdomain of
+// origin's — "store.files.example.org" under "files.example.org" — on the
+// same port. The comparison is by DNS label: "evilfiles.example.org" is not
+// under "files.example.org". Refused outright: an IP address on either side
+// (an address has no subdomains, and a label-shaped origin such as "0.1"
+// must not admit the address "10.0.0.1"), a parent with no dot (a bare
+// top-level name like "org" is not one operator's domain), and a target
+// with an empty label ("a..files.example.org").
+func isSubdomainOf(dest, origin *url.URL) bool {
+	if dest.Port() != origin.Port() {
+		return false
+	}
+
+	parent := strings.ToLower(strings.TrimSuffix(origin.Hostname(), "."))
+	child := strings.ToLower(strings.TrimSuffix(dest.Hostname(), "."))
+
+	if !strings.Contains(parent, ".") || net.ParseIP(parent) != nil || net.ParseIP(child) != nil {
+		return false
+	}
+
+	if slices.Contains(strings.Split(child, "."), "") {
+		return false
+	}
+
+	return strings.HasSuffix(child, "."+parent)
 }
 
 // isSchemeDowngrade reports whether moving from one scheme to the other

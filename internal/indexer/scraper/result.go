@@ -94,7 +94,8 @@ var sizeUnits = map[string]int64{
 // transform chain.
 //
 // The raw value is whitespace-trimmed first, then narrowed by the regex if
-// there is one, then passed through the transforms in order. A field the
+// there is one, then passed through the transforms in order, then placed
+// into the field's template if it has one. A field the
 // block does not map, a selector that matches nothing, and a regex that
 // does not match all produce the empty string.
 func value(b *blockPlan, r row, name string) string {
@@ -116,6 +117,10 @@ func (f *fieldPlan) read(r row) string {
 
 	for _, fn := range f.transforms {
 		out = fn(out)
+	}
+
+	if f.template != "" {
+		out = fillFieldTemplate(f.template, out)
 	}
 
 	return out

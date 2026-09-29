@@ -125,6 +125,11 @@ var (
 	// ErrPlaceholderUnterminated reports a "{{" with no closing "}}".
 	ErrPlaceholderUnterminated = errors.New("a {{placeholder}} is not closed")
 
+	// ErrTemplateValueMissing reports a field template with no {{value}}
+	// in it, which would give every row the same constant and ignore what
+	// the selector read.
+	ErrTemplateValueMissing = errors.New("a field template must contain {{value}}")
+
 	// ErrQueryTextEmpty reports a ModeSearch query with no keyword. An
 	// adapter must not quietly turn one into a browse request
 	// (indexer.Query's own contract), so it is refused instead.

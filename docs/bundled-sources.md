@@ -38,6 +38,31 @@ post:
   this task does not extend it to (see "What was deliberately not built" below).
 - `item_size` (bytes) and `publicdate` (RFC 3339) are ordinary metadata fields returned by the
   same request, also verified live.
+- **The `.torrent` address (T-9010).** Each result's `TorrentURL` is
+  `download/<identifier>/<identifier>_archive.torrent` under the base URL, built by a field
+  template from `identifier`. Both halves come from the Archive's own documentation (checked
+  2026-09-29):
+  - The Archive's developer documentation on items
+    (`https://archive.org/developers/items.html`) gives every file of an item at
+    `https://archive.org/download/<identifier>/<filename>`, and warns that such an address
+    "may redirect to an actual server that contains the content".
+  - The torrent the Archive generates for an item is the file `<identifier>_archive.torrent`:
+    the Archive's own Python library, `internetarchive`, documents downloading item `nasa` as
+    "downloaded nasa/nasa_archive.torrent" (the Downloading section of its Quickstart, published
+    on Read the Docs and linked from the Archive's developer portal), and the Metadata API
+    (`https://archive.org/metadata/{identifier}`) lists a file of that name under format
+    `Archive BitTorrent` (the T-024 verification above).
+  - The Archive's BitTorrent help page (`https://help.archive.org/help/archive-bittorrents/`)
+    says its torrents "rely heavily on webseeding (download directly from our servers, when no
+    peers have the files you are seeking)" and are tracked by `bt1.archive.org` and
+    `bt2.archive.org`. That is why the URL matters: a magnet built from `btih` alone carries
+    neither trackers nor web seeds, and in a real run every such download failed with
+    "no peer supplied the torrent's info dictionary". The `.torrent` carries both, and the
+    engine hands its web seeds to the client (`TestTorrentURLDownloadCompletesFromItsWebSeedWithNoPeers`),
+    so an item downloads from the Archive's own servers even with zero peers.
+  - The redirect the items page warns about goes to a storage host under `archive.org`. The
+    engine's `.torrent` fetch follows a redirect to a subdomain of the requested host (and no
+    other cross-host redirect, and never https to http) — DEC-136.
 
 **Field mapping** (`internet-archive.yml`):
 
@@ -45,26 +70,22 @@ post:
 |---|---|---|
 | `ID` | `identifier` | The Archive's own stable item id. |
 | `Title` | `title` | |
-| `InfoHash` | `btih` | 40 lowercase hex, matches `normaliseInfoHash` exactly; `Resolve` derives `Magnet` from it. |
+| `InfoHash` | `btih` | 40 lowercase hex, matches `normaliseInfoHash` exactly; used for duplicate detection and cross-source merging. |
+| `TorrentURL` | `identifier`, templated | `/download/{{value}}/{{value}}_archive.torrent`, resolved against `base_url`. `Resolve` leaves a result with a `TorrentURL` unchanged, so the engine adds it by this URL, never by a bare-infohash magnet. |
 | `SizeBytes` | `item_size` | Bytes, no unit suffix to parse. |
 | `Published` | `publicdate` | RFC 3339, matched by the adapter's built-in layout list. |
 
 **Fields deliberately left unmapped, and why:**
 
-- `Magnet` / `TorrentURL` — not mapped directly. `InfoHash` is sufficient: `Adapter.Resolve`
-  (T-022) derives a working magnet from any valid infohash, so the result is fully actionable
-  without either. Mapping `TorrentURL` to a guessed `{identifier}_archive.torrent` filename
-  would have required templating a URL out of two fields, which the scraper schema's field
-  selectors cannot do (a selector reads one value; there is no field-concatenation transform) —
-  building it would have meant hand-formatting a string the search response never actually
-  returns, which is exactly the inference AGENT.md §16 says not to do. See DEC- entry below.
-- `SourceURL` — not mapped, for the same reason: the human-viewable details page is
-  `https://archive.org/details/{identifier}`, and the search response returns the bare
-  `identifier`, not that path. Building it would again mean templating a URL from a field value,
-  which this schema does not support. The `u` keybind (open source page) has nothing to open for
-  this source; every other feature works normally. Revisiting this is backlog **T-945** (a
-  field-concatenation or URL-template capability for the scraper schema would help every future
-  source with the same shape, not just this one).
+- `Magnet` — not mapped. T-024 left both links unmapped and relied on `Resolve` deriving a
+  magnet from `btih`, because the schema then had no way to build a URL from a field value.
+  That magnet carried no trackers and no web seeds, and in practice no Internet Archive
+  download ever got its metadata. T-9010 added the general `template` field key and maps
+  `TorrentURL` (above) instead.
+- `SourceURL` — not mapped yet. The human-viewable details page is
+  `https://archive.org/details/{identifier}`; the `template` key can now build it, which is
+  backlog **T-9013**. Until then the `u` keybind (open source page) has nothing to open for
+  this source; every other feature works normally.
 - `Seeders` / `Leechers` — not mapped. The Archive does not publish live swarm counts through
   this API; its own infrastructure is a permanent web seed rather than a conventional tracker
   swarm. A definition that filters on `MinSeeders > 0` will therefore see every Internet Archive
