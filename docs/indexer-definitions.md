@@ -38,6 +38,7 @@ trust:         # default badge mapping
 
 search:        # required: the keyword search request
 latest:        # optional: the recent-additions request
+details:       # optional: read the link off each item's own page
 ```
 
 `rows`, `fields` and `trust` at the top level are **shared defaults**. A block
@@ -54,10 +55,11 @@ is merged key by key, so a block can replace one selector and keep the rest.
 | `mode` | no | `html` (default) reads CSS selectors with goquery; `json` reads path expressions. |
 | `requires_auth` | no | `true` if the site needs credentials you supplied from your own account. It is a display and capability flag only. |
 | `rows` | no* | Default row selector. Required somewhere — on the top level or on every block. |
-| `fields` | no* | Default field selectors. A `title` field and at least one of `magnet`, `torrent_url` or `infohash` must be in force for every block. |
+| `fields` | no* | Default field selectors. A `title` field and at least one of `magnet`, `torrent_url` or `infohash` must be in force for every block — or, with a `details` block, `source_url`. |
 | `trust` | no | Default badge mapping. |
 | `search` | yes | The keyword search request. |
 | `latest` | no | The recent-additions request. **Omit it and tortui reports that this source has no latest feed**, skips it for a Latest query, and says so — rather than sending a request that cannot work. |
+| `details` | no | How to read the magnet, torrent link or infohash off each item's own page, for a site whose listing links only to that page. See [Details pages](#details-pages). |
 
 ### A block (`search`, `latest`)
 
@@ -152,6 +154,67 @@ nothing", which is different information from `none` ("this site tracks badges
 and this uploader has none") and sorts differently.
 
 Trust is a badge in the results table. It never gates anything.
+
+---
+
+## Details pages
+
+Some sites list results with only a link to each item's own page, and put the
+magnet or torrent link on that page. A `details` block says how to read it:
+
+```yaml
+id: example-details
+base_url: https://details.example.org
+
+search:
+  path: /search
+  params:
+    q: "{{query}}"
+  rows: ul.listing li.item
+  fields:
+    title:
+      selector: a.name
+    source_url:          # required when the listing has no link of its own
+      selector: a.name
+      attr: href
+
+details:
+  # mode: json          # optional; defaults to the definition's own mode
+  fields:
+    magnet:
+      selector: a.magnet
+      attr: href
+    torrent_url:
+      selector: a.torrent
+      attr: href
+    infohash:
+      selector: code.hash
+```
+
+| Key | Meaning |
+|---|---|
+| `mode` | `html` or `json` for the item page. Defaults to the definition's `mode`, so it is only needed when the two differ. |
+| `fields` | Only `magnet`, `torrent_url` and `infohash`, with the same `selector`, `attr`, `regex`, `transform` and `template` rules as a listing field. At least one is required, and nothing is inherited from the listing's `fields`: the whole page is read as one row. |
+
+How it behaves:
+
+* **Only when you add.** Search never fetches a details page: a search that
+  lists fifty results is one request. The page is fetched once, when you add a
+  result that has no magnet, torrent link or infohash of its own. Results that
+  need it still show in the table.
+* **Only on the source's own host.** The page address must be `http` or
+  `https` on exactly the host (and port) of `base_url`, and never `http` when
+  `base_url` is `https`. Anything else is refused before a request is made. A
+  redirect to another host is not followed.
+* **Same rules as the listing.** A `magnet` must start `magnet:`; a
+  `torrent_url` is resolved against the details page's own address and must be
+  `http`/`https`; an `infohash` must be 40 hex or 32 base32 characters. The
+  request uses the credentials you configured for this source, the same size
+  cap and timeouts, and the same minimum interval between requests to the host.
+* **One link.** If the page has a magnet it is used; otherwise the torrent link;
+  otherwise a magnet built from the infohash. A page with none of them says so
+  — `details page had no magnet, torrent link or infohash` — rather than adding
+  nothing.
 
 ---
 
@@ -500,9 +563,6 @@ its file or its address again, the same way as the first time.
   category values correspond to tortui's buckets, so a category filter is not
   sent to a scraped source and is not applied locally either. The `category`
   field still classifies each result for the table.
-* **No details-page fetch.** A result that carries only a details link cannot
-  have a magnet fetched out of that page yet; a definition needs to read the
-  magnet, the torrent link or the infohash off the listing itself.
 * **No repeated or scheduled fetching.** A definition cannot ask tortui to poll.
   Refreshing is something the user does, and there is a minimum interval between
   requests to the same host.

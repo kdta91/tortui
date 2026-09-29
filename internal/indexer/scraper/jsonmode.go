@@ -79,16 +79,9 @@ func compilePath(raw string) ([]string, error) {
 // array at all produces, when the definition asked for the document
 // itself.
 func jsonRows(body []byte, rows matcher) ([]row, error) {
-	dec := json.NewDecoder(bytes.NewReader(body))
-	// Numbers are kept as their source text. A seeder count that went
-	// through float64 and back would come out as "1.234e+03", and an id
-	// long enough to lose precision would come out wrong.
-	dec.UseNumber()
-
-	var doc any
-
-	if err := dec.Decode(&doc); err != nil {
-		return nil, jsonFailure(err)
+	doc, err := decodeJSON(body)
+	if err != nil {
+		return nil, err
 	}
 
 	value := doc
@@ -118,6 +111,23 @@ func jsonRows(body []byte, rows matcher) ([]row, error) {
 	}
 
 	return out, nil
+}
+
+// decodeJSON decodes a JSON response, keeping numbers as their source
+// text: a seeder count that went through float64 and back would come out
+// as "1.234e+03", and an id long enough to lose precision would come out
+// wrong.
+func decodeJSON(body []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+
+	var doc any
+
+	if err := dec.Decode(&doc); err != nil {
+		return nil, jsonFailure(err)
+	}
+
+	return doc, nil
 }
 
 // jsonRow is one element of the rows array.

@@ -85,20 +85,10 @@ var rawTextElements = map[string]bool{
 // a source is allowed to have none — and it is why the `t`est-a-source
 // command exists rather than an error here.
 func htmlRows(body []byte, rows matcher) ([]row, error) {
-	if err := guardHTMLDepth(body); err != nil {
+	selection, err := parseHTML(body)
+	if err != nil {
 		return nil, err
 	}
-
-	doc, err := html.Parse(bytes.NewReader(body))
-	if err != nil {
-		// x/net/html recovers from anything a byte slice can contain,
-		// so this is unreachable in practice. It is reported without
-		// the cause's text all the same: the cause is built from the
-		// document, and the document is the source's (DEC-073).
-		return nil, ErrDocumentMalformed
-	}
-
-	selection := goquery.NewDocumentFromNode(doc).Selection
 
 	if !rows.empty() {
 		selection = selection.FindMatcher(rows.css)
@@ -113,6 +103,25 @@ func htmlRows(body []byte, rows matcher) ([]row, error) {
 	})
 
 	return out, nil
+}
+
+// parseHTML guards and parses an HTML response, returning the whole
+// document as a selection.
+func parseHTML(body []byte) (*goquery.Selection, error) {
+	if err := guardHTMLDepth(body); err != nil {
+		return nil, err
+	}
+
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		// x/net/html recovers from anything a byte slice can contain,
+		// so this is unreachable in practice. It is reported without
+		// the cause's text all the same: the cause is built from the
+		// document, and the document is the source's (DEC-073).
+		return nil, ErrDocumentMalformed
+	}
+
+	return goquery.NewDocumentFromNode(doc).Selection, nil
 }
 
 // htmlRow is one matched element and everything under it.

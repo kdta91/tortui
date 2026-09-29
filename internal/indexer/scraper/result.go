@@ -303,6 +303,13 @@ func withoutQuery(raw string) string {
 // hands to the operating system's opener (AGENT.md §7). Refusing every
 // other scheme here is where that stops.
 func (p *plan) absolute(raw string) string {
+	return webAddress(p.base, raw)
+}
+
+// webAddress resolves raw against base and returns it only when the result
+// is an http or https address, and empty otherwise. A details page's
+// torrent link goes through it against that page's own address.
+func webAddress(base *url.URL, raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return ""
@@ -313,7 +320,7 @@ func (p *plan) absolute(raw string) string {
 		return ""
 	}
 
-	resolved := p.base.ResolveReference(ref)
+	resolved := base.ResolveReference(ref)
 
 	switch strings.ToLower(resolved.Scheme) {
 	case "http", "https":

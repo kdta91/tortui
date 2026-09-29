@@ -165,6 +165,31 @@ var (
 	// magnet, no usable infohash, and no torrent URL either, so there is
 	// nothing to hand the engine and nothing to derive one from.
 	ErrUnresolvable = errors.New("result has no magnet, no infohash, and no torrent URL")
+
+	// ErrDetailsFieldsMissing reports a details block with no fields,
+	// which could never find anything on the page it fetches.
+	ErrDetailsFieldsMissing = errors.New("the details block maps none of magnet, torrent_url or infohash")
+
+	// ErrDetailsFieldUnsupported reports a details field other than
+	// magnet, torrent_url and infohash. A details page is read to make a
+	// result addable, not to re-read what the listing already said.
+	ErrDetailsFieldUnsupported = errors.New("not a field a details block may set")
+
+	// ErrDetailsSourceMissing reports a block that maps no magnet,
+	// torrent_url or infohash — relying on the details block — but no
+	// source_url either, so there would be no page to fetch.
+	ErrDetailsSourceMissing = errors.New("a block that relies on the details page must map source_url")
+
+	// ErrDetailsAddressRefused reports a result whose source_url is not an
+	// http or https address on the definition's own base_url host (or
+	// would drop https for http). It is refused before any request, and
+	// the address is never repeated back: it is text off the page
+	// (DEC-073).
+	ErrDetailsAddressRefused = errors.New("the details page is not on this source's own http(s) host")
+
+	// ErrDetailsNoLink reports a details page that was fetched and read
+	// but carried no usable magnet, torrent link or infohash.
+	ErrDetailsNoLink = errors.New("details page had no magnet, torrent link or infohash")
 )
 
 // ValidationError is one problem with a definition, named precisely enough

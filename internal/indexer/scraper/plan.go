@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/andybalholm/cascadia"
@@ -20,6 +21,7 @@ type plan struct {
 	base         *url.URL
 	search       *blockPlan
 	latest       *blockPlan
+	details      *detailsPlan
 	id           string
 	name         string
 	mode         string
@@ -35,6 +37,13 @@ type blockPlan struct {
 	path       string
 	rows       matcher
 	pagination bool
+}
+
+// detailsPlan is a compiled details block: the mode its page is read in
+// and the fields read off it. The whole page is one row.
+type detailsPlan struct {
+	fields map[string]*fieldPlan
+	mode   string
 }
 
 // fieldPlan is one compiled field selector.
@@ -136,7 +145,7 @@ func (d *Definition) plan() (*plan, error) {
 	}
 
 	mode := d.mode()
-	if mode != ModeHTML && mode != ModeJSON {
+	if !knownMode(mode) {
 		return nil, invalid("mode", fmt.Errorf("%w (it is %s or %s)", ErrModeUnknown, ModeHTML, ModeJSON))
 	}
 
@@ -160,6 +169,58 @@ func (d *Definition) plan() (*plan, error) {
 		if out.latest, err = d.blockPlan("latest", d.Latest, mode); err != nil {
 			return nil, err
 		}
+	}
+
+	if d.Details != nil {
+		if out.details, err = d.Details.plan(mode); err != nil {
+			return nil, err
+		}
+	}
+
+	return out, nil
+}
+
+// knownMode reports whether mode is one this schema defines.
+func knownMode(mode string) bool {
+	return mode == ModeHTML || mode == ModeJSON
+}
+
+// plan compiles a details block. Its mode defaults to the definition's,
+// and its fields may be only the three that make a result addable
+// (detailsFieldNames); anything else is refused, naming the key, exactly as
+// an unknown listing field is.
+func (b *DetailsBlock) plan(defaultMode string) (*detailsPlan, error) {
+	mode := defaultMode
+	if m := strings.ToLower(strings.TrimSpace(b.Mode)); m != "" {
+		mode = m
+	}
+
+	if !knownMode(mode) {
+		return nil, invalid("details.mode", fmt.Errorf("%w (it is %s or %s)", ErrModeUnknown, ModeHTML, ModeJSON))
+	}
+
+	if len(b.Fields) == 0 {
+		return nil, invalid("details.fields", ErrDetailsFieldsMissing)
+	}
+
+	out := &detailsPlan{mode: mode, fields: make(map[string]*fieldPlan, len(b.Fields))}
+
+	for _, name := range sortedFieldNames(b.Fields) {
+		where := "details.fields." + name
+
+		if !slices.Contains(detailsFieldNames, name) {
+			return nil, invalid(
+				where,
+				fmt.Errorf("%w (they are %s)", ErrDetailsFieldUnsupported, strings.Join(detailsFieldNames, ", ")),
+			)
+		}
+
+		compiled, err := compileField(where, name, b.Fields[name], mode)
+		if err != nil {
+			return nil, err
+		}
+
+		out.fields[name] = compiled
 	}
 
 	return out, nil
@@ -215,7 +276,16 @@ func (d *Definition) blockPlan(where string, b *Block, mode string) (*blockPlan,
 	}
 
 	if !hasLink(fields) {
-		return nil, invalid(where+".fields", ErrLinkFieldMissing)
+		// A block with no link of its own is still usable when the
+		// definition says how to read one off each item's details page
+		// — as long as the block says where that page is.
+		if d.Details == nil {
+			return nil, invalid(where+".fields", ErrLinkFieldMissing)
+		}
+
+		if _, ok := fields[fieldSource]; !ok {
+			return nil, invalid(where+".fields."+fieldSource, ErrDetailsSourceMissing)
+		}
 	}
 
 	out := &blockPlan{

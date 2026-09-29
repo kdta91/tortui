@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve.
 
 ---
 
@@ -100,7 +100,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031 and T-9034, are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034 and T-9037, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI. The race jobs
       (T-9025) are advisory per PR under DEC-107 but must all be green before the release tag.
 - [ ] Coverage thresholds from AGENT.md §9 met.
@@ -372,7 +372,7 @@ when it reaches it and does not start backlog items on its own.
   value) would fix it, mirroring what `torznab` does with the ids from a caps document
   (DEC-070). Out of scope for T-022, whose criteria enumerate the schema. Found while building
   T-022.
-- `T-939` A `detail` block for the scraper schema, so `Resolve` can fetch a details page. Today
+- `T-939` (done in T-9037) A `detail` block for the scraper schema, so `Resolve` can fetch a details page. Today
   `scraper.Resolve` makes no network call: it is a no-op when a magnet is present, derives a
   magnet from an infohash, and otherwise returns `ErrUnresolvable`. That leaves the case AGENT.md
   §5 wrote `Resolve` for — "indexers that only return a details page" — unserved for exactly the
@@ -725,6 +725,14 @@ when it reaches it and does not start backlog items on its own.
 - `T-9036` `tortui doctor` skips a scraper saved without a URL ("no URL configured") and, for
   scraper entries, probes the config URL rather than the definition's `base_url`. Found in review
   of T-9031 (PR #72), non-blocking.
+- `T-9038` A periodic history flush that snapshots before `ClearHistory` but commits after it can
+  briefly write the old history back to disk. Only a crash inside one flush interval matters; the
+  next flush fixes it. `Flush()` has the same window. Found in review of T-9034 (PR #73),
+  non-blocking.
+- `T-9039` `ClearHistory` can report failure during shutdown even though `Close`'s final flush
+  already saved the clear. Found in review of T-9034 (PR #73), non-blocking.
+- `T-9040` No test checks `ClearHistory`'s immediate flush separately from `Close`'s flush. Found
+  in review of T-9034 (PR #73), non-blocking.
 
 ---
 
@@ -876,6 +884,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-139 | 2026-09-29 | T-9024: tab on an empty import field always advances; completion (incl. the definitions-dir start) needs typed text; supersedes T-9019's third criterion |
 | DEC-140 | 2026-09-29 | T-9021: a result with unknown seeders passes `MinSeeders`; a real count below the minimum is still dropped; one shared `indexer.MeetsMinSeeders` |
 | DEC-141 | 2026-09-29 | T-9026: the hostname scanner skips only an unquoted bare two-part Go selector value (`srv.URL`); URLs and multi-label values are never skipped |
+| DEC-142 | 2026-09-29 | T-9037: scraper `details:` block; Resolve fetches the item page once, at add time only, through the same client, refused unless on base_url's own host and port without https to http; one link filled (magnet, else torrent, else infohash) |
 
 ## Blocked
 

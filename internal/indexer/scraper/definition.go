@@ -56,6 +56,12 @@ var fieldNames = []string{
 	fieldSource,
 }
 
+// detailsFieldNames is every key allowed under details.fields: the three
+// that make a result addable. A details page is fetched to finish a result
+// the listing could not, not to re-read it, so a title or a size there is
+// refused rather than silently ignored.
+var detailsFieldNames = []string{fieldMagnet, fieldTorrent, fieldInfoHash}
+
 // maxTransforms bounds one field's transform chain.
 //
 // The chain is a list applied once, in order, by a for loop over a slice of
@@ -118,6 +124,34 @@ type Definition struct {
 	// that omits it reports Caps.Latest = false and is never sent a
 	// ModeLatest query.
 	Latest *Block `yaml:"latest"`
+
+	// Details is how the magnet, torrent link or infohash is read off one
+	// item's own page, for a site whose listing carries only a link to
+	// that page. Optional: a definition without it behaves exactly as one
+	// did before the block existed. See DetailsBlock.
+	Details *DetailsBlock `yaml:"details"`
+}
+
+// DetailsBlock reads one item's details page — the page at the result's
+// source_url — when the listing did not carry a magnet, a torrent link or
+// an infohash for it (T-9037, DEC-142).
+//
+// It is fetched only by Resolve, which runs only when the user adds a
+// result: never during Search, so a search with a hundred results is still
+// one request. The page must be on the definition's own base_url host.
+type DetailsBlock struct {
+	// Mode is the details page's response mode: ModeHTML or ModeJSON.
+	// Empty means the definition's own mode, which is the common case; it
+	// exists for a site whose search is a JSON api and whose item pages
+	// are HTML, or the other way round.
+	Mode string `yaml:"mode"`
+
+	// Fields read the whole page as one row. Only magnet, torrent_url and
+	// infohash may be set, with the same selector, attr, regex, transform
+	// and template rules as a listing field. Nothing is inherited from the
+	// definition's own fields: the listing's selectors address a row, and
+	// a details page is a different document.
+	Fields map[string]Field `yaml:"fields"`
 }
 
 // Block is one request this source can serve — a keyword search or a
