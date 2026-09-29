@@ -150,6 +150,58 @@ jobs:
         shell: bash
         run: make check
 
+  # T-9025: the race detector over ./... on all three OSes. Advisory per PR (DEC-107) but must be
+  # green everywhere before a release tag. Not in branch protection (owner-only).
+  race:
+    name: go test -race
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # -race needs cgo; set it explicitly rather than trusting the runner default.
+      CGO_ENABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install make (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install make -y --no-progress
+
+      # The C toolchain is confirmed, not assumed. ubuntu ships gcc and macOS ships clang; the
+      # Windows runner image ships a mingw gcc. If Windows ever loses it, install mingw and fail
+      # loudly if it is still absent.
+      - name: Install mingw gcc if missing (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
+            choco install mingw -y --no-progress
+            echo "C:\ProgramData\mingw64\mingw64\bin" >> $env:GITHUB_PATH
+          }
+
+      - name: Confirm C toolchain
+        shell: bash
+        run: |
+          set -eu
+          if command -v gcc >/dev/null 2>&1; then gcc --version | head -n1
+          elif command -v cc >/dev/null 2>&1; then cc --version | head -n1
+          else echo "no C compiler on PATH: go test -race cannot run"; exit 1; fi
+          go env CGO_ENABLED
+
+      - name: make race
+        shell: bash
+        run: make race PKG=./...
+
   build-all:
     name: make build-all
     runs-on: ubuntu-latest

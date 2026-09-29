@@ -513,7 +513,7 @@ Each gate is run by exactly one party. Re-running someone else's gate is waste, 
 | Party | Runs | Enough to stop when |
 |---|---|---|
 | Implementer | `make check`; `make race PKG=<touched pkgs>`; `make cover` if it touched `internal/{indexer,engine,tui}`; `make lint-cross` **only** if it touched a build-tagged file; `make licenses` + `make vuln` **only** if `go.mod`/`go.sum` changed | every acceptance criterion has a test or quoted evidence, and those commands are green |
-| CI | **Required:** `make check (macos-latest)`, `make build-all`, `make licenses`, the indexer hostname allowlist check. **Advisory:** `make check (ubuntu-latest)` and `make check (windows-latest)` — run on every PR, never block it | every required check is `pass` (pending or skipped ≠ pass); a red advisory check does not block — see the macOS-first gate below |
+| CI | **Required:** `make check (macos-latest)`, `make build-all`, `make licenses`, the indexer hostname allowlist check. **Advisory:** `make check (ubuntu-latest)`, `make check (windows-latest)` and the three `go test -race (<os>)` jobs (T-9025) — run on every PR, never block it | every required check is `pass` (pending or skipped ≠ pass); a red advisory check does not block — see the macOS-first gate below |
 | Reviewer | reads the diff against each acceptance criterion and §2/§6; **mutation-tests the load-bearing assertion** and quotes the failing output (required for H and M, optional for L) | a verdict per criterion and the quoted mutation result, at the checked-out head SHA — the reviewer does **not** wait on or check CI; that is the orchestrator's job alone |
 | Orchestrator | `gh pr view` / `gh pr checks` — the only party that reads CI | reviewer PASS at the current head SHA + every required check `pass`; a red advisory check gets a Backlog `T-9NN` entry naming the failing test and job, not a hold |
 
@@ -522,8 +522,8 @@ per-object goroutines, and path containment on every create/open/delete.
 
 **Merge gate is macOS-first (DEC-107).** `make check (macos-latest)`, `make build-all`,
 `make licenses`, and the indexer hostname allowlist check are **required** for merge.
-`make check (ubuntu-latest)` and `make check (windows-latest)` run on every PR as **advisory**
-only: if one is red, the orchestrator still merges once the required checks and review pass, and
+`make check (ubuntu-latest)`, `make check (windows-latest)` and the `go test -race (<os>)` jobs
+(T-9025) run on every PR as **advisory** only: if one is red, the orchestrator still merges once the required checks and review pass, and
 adds a `T-9NN` Backlog entry naming the failing test and job instead of sending the task back. This
 does not relax the §14 portability contract — code stays cross-platform, OS-specific code stays
 behind build tags in `internal/platform`, the Windows path is still written in the same task, and
@@ -548,7 +548,7 @@ three OSes must be green before any release tag regardless of this gate (§12).
    or check CI — the orchestrator does that next.
 6. **PASS** → orchestrator checks CI itself: confirms the SHA is still the PR head and every
    **required** check (`make check (macos-latest)`, `build-all`, `licenses`, indexer hostname
-   allowlist) is `pass`. A red **advisory** check (`make check` on `ubuntu-latest`/`windows-latest`)
+   allowlist) is `pass`. A red **advisory** check (`make check` on `ubuntu-latest`/`windows-latest`, any `go test -race`)
    does not block — add a `T-9NN` Backlog entry naming the failing test and job, then proceed.
    `gh pr edit <N> --add-label qa::passed --remove-label qa::pending`,
    `gh pr merge <N> --squash --delete-branch`, `git switch main && git pull --ff-only`. Next task.

@@ -4539,3 +4539,34 @@ and the prowlarr adapter does not filter. Sort order untouched (`SortMissingLast
 `TestMeetsMinSeeders` table (unknown, below, at, above, zero minimum), torznab feed with an item
 lacking seeders, scraper fixture "n/a" row. Also fixed the stale `WithDefinitionsDir` comment in
 `pathcomplete.go` (DEC-139). DEC-140.
+
+### T-9025 · Race-detector CI job
+
+```
+status: done
+depends: T-9021
+tier: M
+```
+Owner decision (2026-09-29). `go test -race ./...` is a v1.0 criterion but no CI job runs it.
+
+**Acceptance:**
+- A new job in `.github/workflows/ci.yml`, named `go test -race`, runs over `./...` on a matrix of
+  `macos-latest`, `ubuntu-latest` and `windows-latest`, giving the jobs `go test -race
+  (macos-latest)`, `go test -race (ubuntu-latest)` and `go test -race (windows-latest)`. It runs
+  through a make target (`make race PKG=./...` or a new target), per AGENT.md §8. No raw
+  `go test` in the workflow.
+- `-race` needs cgo and a C toolchain: the job confirms one is present on the ubuntu and windows
+  runners (and installs or pins it if not), rather than assuming it.
+- Existing job names are unchanged.
+- The new jobs are advisory per PR under the macOS-first gate (DEC-107) but must be green on all
+  three OSes before a release tag. AGENT.md §11 and the DEC-107 description list them as
+  advisory, updated in T-9025's own PR.
+- Branch protection is not changed (owner-only, AGENT.md §12).
+
+**Notes:** New `race` job in `ci.yml`, display name `go test -race`, matrix ubuntu/macos/windows,
+runs `make race PKG=./...` (existing target, no raw `go test`). `CGO_ENABLED=1` set explicitly;
+a "Confirm C toolchain" step fails loudly if no gcc/cc; on Windows gcc is installed via mingw
+only if missing. AGENT.md section 11 and the DEC-107 row now list the three race jobs as
+advisory. Not run locally on the runners; first CI run is the evidence. Branch protection
+unchanged.
+
