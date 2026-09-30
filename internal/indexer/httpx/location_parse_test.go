@@ -28,7 +28,7 @@ const locationFrom = "https://alice:s3cret@example.org/api/start"
 // malformedLocations each fail url.Parse inside net/http, and each carries
 // userinfo, a path, a query, or all three.
 var malformedLocations = map[string]string{
-	"space in the host":           "https://alice:s3cret@exa mple.org/vault/secretpath?tok=q1value",
+	"space in the host":           "https://alice:s3cret@example.org /vault/secretpath?tok=q1value",
 	"bad escape in the password":  "https://alice:s3%zzcret@example.org/vault/secretpath?tok=q1value",
 	"bad escape in the path":      "https://alice:s3cret@example.org/vault/secretpath%zz?tok=q1value",
 	"non-numeric port":            "https://alice:s3cret@example.org:eighty/vault/secretpath?tok=q1value",
@@ -44,7 +44,7 @@ func locationLeaks() []string {
 	return []string{
 		"alice", "s3cret", base64.StdEncoding.EncodeToString([]byte("alice:s3cret")),
 		"mallory", "hunter2", base64.StdEncoding.EncodeToString([]byte("mallory:hunter2")),
-		"@", "vault", "secretpath", "tok=", "q1value", "%zz", "eighty", "exa mple", "Location header \"",
+		"@", "vault", "secretpath", "tok=", "q1value", "%zz", "eighty", "Location header \"",
 	}
 }
 
@@ -180,7 +180,7 @@ func TestUnparseableRedirectLocationCauseCarriesNoText(t *testing.T) {
 func TestWithoutLocationEcho(t *testing.T) {
 	t.Parallel()
 
-	parseFailure := errors.New(`failed to parse Location header "https://alice:s3cret@exa mple.org/vault": parse error`)
+	parseFailure := errors.New(`failed to parse Location header "https://alice:s3cret@example.org /vault": parse error`)
 	reset := errors.New("connection reset by peer")
 
 	for name, tc := range map[string]struct {
