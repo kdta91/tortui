@@ -188,6 +188,9 @@ type sourceForm struct {
 	// import's result.
 	importing       bool
 	saveAfterImport bool
+	// importGen is the generation of the import whose result this form is
+	// waiting for; formImportResultMsg.gen must match it (T-9052).
+	importGen int
 
 	// completion and completeGen drive tab-completion on the import field
 	// (pathcomplete.go, T-9019).
@@ -503,6 +506,12 @@ type settingsModel struct {
 	testingID   string
 	probeCancel context.CancelFunc
 	probeGen    int
+
+	// importSeq numbers every import dispatched from any form. It lives
+	// here, not on the form, so a form opened later never reuses the
+	// generation of an import that was in flight when an earlier form
+	// closed.
+	importSeq int
 	// detailOpen is true while the `d` connection-test detail panel
 	// (ContextSourceTestDetail) is open.
 	detailOpen bool
@@ -1003,19 +1012,20 @@ func testFormCmd(sm SourceManager, src config.Indexer, gen int) tea.Cmd {
 
 // formImportResultMsg reports the form's import-a-definition attempt.
 type formImportResultMsg struct {
+	gen     int
 	id      string
 	baseURL string
 	err     error
 }
 
-func importDefinitionCmd(sm SourceManager, source string) tea.Cmd {
+func importDefinitionCmd(sm SourceManager, source string, gen int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), sourceTestTimeout)
 		defer cancel()
 
 		id, baseURL, err := sm.ImportDefinition(ctx, source)
 
-		return formImportResultMsg{id: id, baseURL: baseURL, err: err}
+		return formImportResultMsg{gen: gen, id: id, baseURL: baseURL, err: err}
 	}
 }
 
@@ -1127,13 +1137,17 @@ func (m Model) handleFormTestResult(msg formTestResultMsg) (tea.Model, tea.Cmd) 
 // Definition (and Name/ID/URL when still blank) from the imported id and
 // its base_url.
 func (m Model) handleFormImportResult(msg formImportResultMsg) (tea.Model, tea.Cmd) {
-	if m.settings.form == nil {
+	// A result from an import this form did not start (an earlier form, or
+	// one superseded by a newer import) is dropped.
+	if m.settings.form == nil || msg.gen != m.settings.form.importGen {
 		return m, nil
 	}
 
 	f := m.settings.form
 
-	saveAfter := f.saveAfterImport
+	// A save that started this import must not finish while the user is
+	// answering the discard prompt.
+	saveAfter := f.saveAfterImport && !f.confirmDiscard
 	f.importing = false
 	f.saveAfterImport = false
 
@@ -1242,9 +1256,11 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			f.err = ""
 			f.info = ""
 			f.importing = true
+			m.settings.importSeq++
+			f.importGen = m.settings.importSeq
 			m.settings.form = &f
 
-			return m, importDefinitionCmd(m.sources, expandHome(strings.TrimSpace(f.importText)))
+			return m, importDefinitionCmd(m.sources, expandHome(strings.TrimSpace(f.importText)), f.importGen)
 		}
 
 		// On the aggregator-import field, enter replaces the add form with
@@ -1340,9 +1356,11 @@ func (m Model) handleSourceFormSave(f sourceForm) (tea.Model, tea.Cmd) {
 		f.info = ""
 		f.importing = true
 		f.saveAfterImport = true
+		m.settings.importSeq++
+		f.importGen = m.settings.importSeq
 		m.settings.form = &f
 
-		return m, importDefinitionCmd(m.sources, expandHome(strings.TrimSpace(f.importText)))
+		return m, importDefinitionCmd(m.sources, expandHome(strings.TrimSpace(f.importText)), f.importGen)
 	}
 
 	if reason := f.validate(); reason != "" {

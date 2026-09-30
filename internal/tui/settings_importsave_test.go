@@ -21,6 +21,7 @@ func saveImportModel(t *testing.T, sm *fakeSourceManager, typ, importText string
 	f.typ = typ
 	f.importText = importText
 	f.name = ""
+	f.dirty = true
 	f.sourceURL = "https://example.org"
 
 	if typ == "torznab" {
@@ -49,7 +50,7 @@ func step(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
 }
 
 // drain runs cmd and feeds every message it yields back in, following the
-// commands those produce, until none is left.
+// commands those produce, until none is left or a save result was applied.
 func drain(t *testing.T, m Model, cmd tea.Cmd) Model {
 	t.Helper()
 
@@ -60,6 +61,12 @@ func drain(t *testing.T, m Model, cmd tea.Cmd) Model {
 		}
 
 		m, cmd = step(t, m, msg)
+
+		// The save result is the last step that matters; the command it
+		// returns is the status bar's real 4-second expiry timer.
+		if _, saved := msg.(formSaveResultMsg); saved {
+			break
+		}
 	}
 
 	return m
@@ -222,12 +229,86 @@ func TestPendingImportResultAfterEscDoesNotSave(t *testing.T) {
 	m := saveImportModel(t, sm, "scraper", "/ex.yml")
 
 	m, cmd := step(t, m, enterKey)
-	m.settings.form = nil // esc (and confirmed discard) while the import runs
+
+	// esc on the now-dirty form only opens the discard prompt.
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.settings.form == nil || !m.settings.form.confirmDiscard {
+		t.Fatal("esc did not open the discard prompt")
+	}
+
+	m = drain(t, m, cmd)
+
+	if sm.saveCallCount() != 0 {
+		t.Fatal("the import result saved while the discard prompt was open")
+	}
+
+	f := m.settings.form
+	if f == nil || !f.confirmDiscard || f.saveAfterImport || f.importing {
+		t.Fatalf("form = %#v, want still open at the prompt with the save cancelled", f)
+	}
+}
+
+func TestPendingImportResultAfterFormClosedDoesNotSave(t *testing.T) {
+	sm := &fakeSourceManager{importID: "ex-def"}
+	m := saveImportModel(t, sm, "scraper", "/ex.yml")
+
+	m, cmd := step(t, m, enterKey)
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = step(t, m, enterKey) // confirm the discard
+
+	if m.settings.form != nil {
+		t.Fatal("form still open after a confirmed discard")
+	}
 
 	m = drain(t, m, cmd)
 
 	if sm.saveCallCount() != 0 || m.settings.form != nil {
 		t.Fatal("a closed form was saved or reopened by a late import result")
+	}
+}
+
+// TestStaleImportResultDoesNotTouchNewForm: save with import A in flight,
+// close the form, open a new one, import B on it; A's late result must not
+// prefill or save the new form.
+func TestStaleImportResultDoesNotTouchNewForm(t *testing.T) {
+	sm := &fakeSourceManager{importID: "from-a"}
+	m := saveImportModel(t, sm, "scraper", "/a.yml")
+
+	m, cmdA := step(t, m, enterKey)
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = step(t, m, enterKey) // discard
+
+	nf := newAddForm()
+	nf.typ = "scraper"
+	nf.importText = "/b.yml"
+	m.settings.form = &nf
+
+	// Import B, started by save, is in flight when A's result lands.
+	m, cmdB := step(t, m, enterKey)
+	if cmdB == nil || !m.settings.form.importing {
+		t.Fatal("save on the new form did not start its import")
+	}
+
+	staleMsg := cmdA()
+	m, cmd := step(t, m, staleMsg)
+	if cmd != nil || sm.saveCallCount() != 0 {
+		t.Fatal("A's stale result saved the new form")
+	}
+
+	f := m.settings.form
+	if f == nil || f.definition != "" || f.name != "" || !f.importing || !f.saveAfterImport {
+		t.Fatalf("new form was changed by the stale result: %#v", f)
+	}
+
+	sm.mu.Lock()
+	sm.importID = "from-b"
+	sm.mu.Unlock()
+
+	m = drain(t, m, cmdB)
+
+	saved := sm.savedSources()
+	if len(saved) != 1 || saved[0].Definition != "from-b.yml" {
+		t.Fatalf("saved = %#v, want exactly B's definition", saved)
 	}
 }
 
