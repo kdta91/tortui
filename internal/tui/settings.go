@@ -182,6 +182,13 @@ type sourceForm struct {
 	idOverride string
 	importText string
 
+	// importing is true while an import started from this form is in
+	// flight; saveAfterImport is true when that import was started by a
+	// save (T-9052) and so finishes with the save. Both are cleared by the
+	// import's result.
+	importing       bool
+	saveAfterImport bool
+
 	// completion and completeGen drive tab-completion on the import field
 	// (pathcomplete.go, T-9019).
 	completion  *pathCompletion
@@ -402,10 +409,27 @@ func (f sourceForm) validate() string {
 	}
 
 	if f.typ == "scraper" && strings.TrimSpace(f.definition) == "" {
-		return "a scraper source needs a definition file (or import one)"
+		return errNeedsDefinition
 	}
 
 	return ""
+}
+
+// importFailedPrefix starts the form error shown for a failed import.
+const importFailedPrefix = "import failed: "
+
+// errNeedsDefinition is validate's reason for a scraper form with no
+// definition file.
+const errNeedsDefinition = "a scraper source needs a definition file (or import one)"
+
+// hasUnrunImport reports whether f is a scraper form with no definition
+// yet but text waiting in the import field: the user typed a path or URL and
+// moved on without pressing enter there. A save runs that import first
+// (T-9052).
+func (f sourceForm) hasUnrunImport() bool {
+	return f.typ == "scraper" &&
+		strings.TrimSpace(f.definition) == "" &&
+		strings.TrimSpace(f.importText) != ""
 }
 
 // invalidURLReason reports why raw is not a usable source URL, or "" when
@@ -440,7 +464,10 @@ func invalidURLReason(raw string) string {
 func (f sourceForm) liveIssues(existing []config.Indexer) []string {
 	var issues []string
 
-	if reason := f.validate(); reason != "" {
+	// Import text waiting in the field is not a missing definition: a save
+	// runs it (T-9052), and a failed import's own message must stay visible
+	// rather than sit under this hint.
+	if reason := f.validate(); reason != "" && (reason != errNeedsDefinition || !f.hasUnrunImport()) {
 		issues = append(issues, reason)
 	}
 
@@ -1106,8 +1133,12 @@ func (m Model) handleFormImportResult(msg formImportResultMsg) (tea.Model, tea.C
 
 	f := m.settings.form
 
+	saveAfter := f.saveAfterImport
+	f.importing = false
+	f.saveAfterImport = false
+
 	if msg.err != nil {
-		f.err = "import failed: " + msg.err.Error()
+		f.err = importFailedPrefix + msg.err.Error()
 		f.info = ""
 
 		return m, nil
@@ -1129,6 +1160,10 @@ func (m Model) handleFormImportResult(msg formImportResultMsg) (tea.Model, tea.C
 	f.err = ""
 	f.info = "imported: " + msg.id
 	f.dirty = true
+
+	if saveAfter {
+		return m.handleSourceFormSave(*f)
+	}
 
 	return m, nil
 }
@@ -1206,6 +1241,7 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			f.err = ""
 			f.info = ""
+			f.importing = true
 			m.settings.form = &f
 
 			return m, importDefinitionCmd(m.sources, expandHome(strings.TrimSpace(f.importText)))
@@ -1291,6 +1327,24 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // with every other configured source, and — only once both pass — persists
 // it via SaveSources.
 func (m Model) handleSourceFormSave(f sourceForm) (tea.Model, tea.Cmd) {
+	// An import is in flight (started by enter on the import field or by an
+	// earlier save): a second save would import, and then save, twice.
+	if f.importing {
+		return m, nil
+	}
+
+	// A scraper form with import text but no definition: run that import
+	// first, then finish this save from its result (T-9052).
+	if f.hasUnrunImport() && m.sources != nil {
+		f.err = ""
+		f.info = ""
+		f.importing = true
+		f.saveAfterImport = true
+		m.settings.form = &f
+
+		return m, importDefinitionCmd(m.sources, expandHome(strings.TrimSpace(f.importText)))
+	}
+
 	if reason := f.validate(); reason != "" {
 		f.err = reason
 		m.settings.form = &f
@@ -1507,6 +1561,14 @@ func (m Model) renderSourceForm() string {
 
 		for _, issue := range live {
 			b.WriteString(th.Error.Render("! " + issue))
+			b.WriteString("\n")
+		}
+
+		// A failed import is the answer to the user's last action (a save
+		// now runs a pending import, T-9052), so it is shown even while
+		// other hints are; a blank Name, say, must not hide it.
+		if strings.HasPrefix(f.err, importFailedPrefix) {
+			b.WriteString(th.Error.Render(f.err))
 			b.WriteString("\n")
 		}
 	} else if f.err != "" {

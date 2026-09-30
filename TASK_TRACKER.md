@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import.
 
 ---
 
@@ -100,7 +100,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041, T-9045, T-9046 and T-9049, are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041, T-9045, T-9046, T-9049 and T-9052, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI. The race jobs
       (T-9025) are advisory per PR under DEC-107 but must all be green before the release tag.
 - [ ] Coverage thresholds from AGENT.md §9 met.
@@ -758,6 +758,14 @@ when it reaches it and does not start backlog items on its own.
   and explicit port passes it (from an http endpoint; from https the scheme rule refuses it) and
   is refused only later by the transport. Add an explicit http/https check there. Note from
   review of T-9046 (PR #77).
+- `T-9053` The comment in `internal/indexer/httpx/client.go` near the Location-parse prefix
+  constant, and the T-9049 notes, cite Go 1.27. The repo pins 1.25, where the wording is identical;
+  cite 1.25+. Non-blocking note from review of T-9049 (PR #78).
+- `T-9054` On a multi-hop subdomain chain the Location-parse error names the original host, not the
+  hop that sent the bad Location. The hop host could be captured in CheckRedirect. Non-blocking note
+  from review of T-9049 (PR #78).
+- `T-9055` Redirect refusal errors carry a doubled "httpx:" prefix. If fixed, fix every one in a
+  single follow-up. Non-blocking note from review of T-9049 (PR #78).
 
 ---
 
