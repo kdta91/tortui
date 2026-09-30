@@ -4870,3 +4870,39 @@ HTTP/2 `:path` error needs an opaque URL no redirect check lets through; *url.Er
 already stripped. New `location_parse_test.go`: 8 malformed Locations on both client shapes,
 error and debug log checked, cause chain, guard table, other errors unchanged. 9 mutations
 killed. Backlog T-9050, T-9051 (PR #77 notes).
+
+### T-9052 · Scraper form: save runs a pending import
+
+```
+status: done
+depends: T-9019
+tier: M
+```
+Owner request (2026-09-30). In the add/edit source form a user types a path into "Import from",
+moves to another field without pressing Enter there, and saves. The save ignores the text and
+reports "a scraper source needs a definition file (or import one)".
+
+**Acceptance:**
+1. On save (Enter on a non-import field, or ctrl+s), when the type is scraper, the Definition
+   field is empty and the import field has non-blank text, the same import runs that Enter on the
+   import field runs (same command, same home expansion).
+2. On success its result is applied as before (definition; name, ID, URL only when empty; info
+   line) and the save then proceeds with no second keypress.
+3. On failure "import failed: ..." is shown and nothing is saved.
+4. Every other save is unchanged: a definition already set (no import runs), a torznab form,
+   blank import text. Enter on the import field is unchanged.
+5. A second save while the import is in flight neither imports nor saves again; closing the form
+   while it runs means the late result saves nothing.
+6. Tests (harness in pathcomplete_test.go/settings_test.go) for each case above; the guard is
+   mutation-tested.
+7. Backlog entries for the three PR #78 review notes.
+
+**Notes:** `hasUnrunImport` guards `handleSourceFormSave`, which dispatches `importDefinitionCmd`
+with `importing`/`saveAfterImport` set; `handleFormImportResult` clears both and, on success,
+re-enters the save. Enter on the import field sets `importing` too, so a save cannot start a second
+import. Each import carries a generation from a counter on `settingsModel` (not the form, so a new
+form cannot inherit the number of an earlier form's import); a result with another generation is
+dropped. A result arriving at the discard prompt applies the import but does not save. The
+missing-definition hint is hidden while import text is pending; "import failed" shows beside
+other live hints (a blank Name hid it). 9 mutations killed (7 on the first version, 2 on the
+generation and discard guards). Backlog T-9053 to T-9055.

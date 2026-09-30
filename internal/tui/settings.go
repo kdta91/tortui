@@ -182,6 +182,16 @@ type sourceForm struct {
 	idOverride string
 	importText string
 
+	// importing is true while an import started from this form is in
+	// flight; saveAfterImport is true when that import was started by a
+	// save (T-9052) and so finishes with the save. Both are cleared by the
+	// import's result.
+	importing       bool
+	saveAfterImport bool
+	// importGen is the generation of the import whose result this form is
+	// waiting for; formImportResultMsg.gen must match it (T-9052).
+	importGen int
+
 	// completion and completeGen drive tab-completion on the import field
 	// (pathcomplete.go, T-9019).
 	completion  *pathCompletion
@@ -402,10 +412,27 @@ func (f sourceForm) validate() string {
 	}
 
 	if f.typ == "scraper" && strings.TrimSpace(f.definition) == "" {
-		return "a scraper source needs a definition file (or import one)"
+		return errNeedsDefinition
 	}
 
 	return ""
+}
+
+// importFailedPrefix starts the form error shown for a failed import.
+const importFailedPrefix = "import failed: "
+
+// errNeedsDefinition is validate's reason for a scraper form with no
+// definition file.
+const errNeedsDefinition = "a scraper source needs a definition file (or import one)"
+
+// hasUnrunImport reports whether f is a scraper form with no definition
+// yet but text waiting in the import field: the user typed a path or URL and
+// moved on without pressing enter there. A save runs that import first
+// (T-9052).
+func (f sourceForm) hasUnrunImport() bool {
+	return f.typ == "scraper" &&
+		strings.TrimSpace(f.definition) == "" &&
+		strings.TrimSpace(f.importText) != ""
 }
 
 // invalidURLReason reports why raw is not a usable source URL, or "" when
@@ -440,7 +467,10 @@ func invalidURLReason(raw string) string {
 func (f sourceForm) liveIssues(existing []config.Indexer) []string {
 	var issues []string
 
-	if reason := f.validate(); reason != "" {
+	// Import text waiting in the field is not a missing definition: a save
+	// runs it (T-9052), and a failed import's own message must stay visible
+	// rather than sit under this hint.
+	if reason := f.validate(); reason != "" && (reason != errNeedsDefinition || !f.hasUnrunImport()) {
 		issues = append(issues, reason)
 	}
 
@@ -476,6 +506,12 @@ type settingsModel struct {
 	testingID   string
 	probeCancel context.CancelFunc
 	probeGen    int
+
+	// importSeq numbers every import dispatched from any form. It lives
+	// here, not on the form, so a form opened later never reuses the
+	// generation of an import that was in flight when an earlier form
+	// closed.
+	importSeq int
 	// detailOpen is true while the `d` connection-test detail panel
 	// (ContextSourceTestDetail) is open.
 	detailOpen bool
@@ -976,19 +1012,20 @@ func testFormCmd(sm SourceManager, src config.Indexer, gen int) tea.Cmd {
 
 // formImportResultMsg reports the form's import-a-definition attempt.
 type formImportResultMsg struct {
+	gen     int
 	id      string
 	baseURL string
 	err     error
 }
 
-func importDefinitionCmd(sm SourceManager, source string) tea.Cmd {
+func importDefinitionCmd(sm SourceManager, source string, gen int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), sourceTestTimeout)
 		defer cancel()
 
 		id, baseURL, err := sm.ImportDefinition(ctx, source)
 
-		return formImportResultMsg{id: id, baseURL: baseURL, err: err}
+		return formImportResultMsg{gen: gen, id: id, baseURL: baseURL, err: err}
 	}
 }
 
@@ -1100,14 +1137,22 @@ func (m Model) handleFormTestResult(msg formTestResultMsg) (tea.Model, tea.Cmd) 
 // Definition (and Name/ID/URL when still blank) from the imported id and
 // its base_url.
 func (m Model) handleFormImportResult(msg formImportResultMsg) (tea.Model, tea.Cmd) {
-	if m.settings.form == nil {
+	// A result from an import this form did not start (an earlier form, or
+	// one superseded by a newer import) is dropped.
+	if m.settings.form == nil || msg.gen != m.settings.form.importGen {
 		return m, nil
 	}
 
 	f := m.settings.form
 
+	// A save that started this import must not finish while the user is
+	// answering the discard prompt.
+	saveAfter := f.saveAfterImport && !f.confirmDiscard
+	f.importing = false
+	f.saveAfterImport = false
+
 	if msg.err != nil {
-		f.err = "import failed: " + msg.err.Error()
+		f.err = importFailedPrefix + msg.err.Error()
 		f.info = ""
 
 		return m, nil
@@ -1129,6 +1174,10 @@ func (m Model) handleFormImportResult(msg formImportResultMsg) (tea.Model, tea.C
 	f.err = ""
 	f.info = "imported: " + msg.id
 	f.dirty = true
+
+	if saveAfter {
+		return m.handleSourceFormSave(*f)
+	}
 
 	return m, nil
 }
@@ -1206,9 +1255,12 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			f.err = ""
 			f.info = ""
+			f.importing = true
+			m.settings.importSeq++
+			f.importGen = m.settings.importSeq
 			m.settings.form = &f
 
-			return m, importDefinitionCmd(m.sources, expandHome(strings.TrimSpace(f.importText)))
+			return m, importDefinitionCmd(m.sources, expandHome(strings.TrimSpace(f.importText)), f.importGen)
 		}
 
 		// On the aggregator-import field, enter replaces the add form with
@@ -1291,6 +1343,26 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // with every other configured source, and — only once both pass — persists
 // it via SaveSources.
 func (m Model) handleSourceFormSave(f sourceForm) (tea.Model, tea.Cmd) {
+	// An import is in flight (started by enter on the import field or by an
+	// earlier save): a second save would import, and then save, twice.
+	if f.importing {
+		return m, nil
+	}
+
+	// A scraper form with import text but no definition: run that import
+	// first, then finish this save from its result (T-9052).
+	if f.hasUnrunImport() && m.sources != nil {
+		f.err = ""
+		f.info = ""
+		f.importing = true
+		f.saveAfterImport = true
+		m.settings.importSeq++
+		f.importGen = m.settings.importSeq
+		m.settings.form = &f
+
+		return m, importDefinitionCmd(m.sources, expandHome(strings.TrimSpace(f.importText)), f.importGen)
+	}
+
 	if reason := f.validate(); reason != "" {
 		f.err = reason
 		m.settings.form = &f
@@ -1507,6 +1579,14 @@ func (m Model) renderSourceForm() string {
 
 		for _, issue := range live {
 			b.WriteString(th.Error.Render("! " + issue))
+			b.WriteString("\n")
+		}
+
+		// A failed import is the answer to the user's last action (a save
+		// now runs a pending import, T-9052), so it is shown even while
+		// other hints are; a blank Name, say, must not hide it.
+		if strings.HasPrefix(f.err, importFailedPrefix) {
+			b.WriteString(th.Error.Render(f.err))
 			b.WriteString("\n")
 		}
 	} else if f.err != "" {
