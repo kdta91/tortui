@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -80,6 +81,12 @@ var (
 func TestSaveRunsPendingImportThenSaves(t *testing.T) {
 	for name, key := range map[string]tea.KeyMsg{"enter": enterKey, "ctrl+s": ctrlSKey} {
 		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			old := userHomeDir
+			userHomeDir = func() (string, error) { return home, nil }
+
+			t.Cleanup(func() { userHomeDir = old })
+
 			sm := &fakeSourceManager{importID: "ex-def", importBaseURL: "https://example.org/base"}
 			m := saveImportModel(t, sm, "scraper", " ~/defs/ex.yml ")
 			m.settings.form.sourceURL = ""
@@ -95,8 +102,8 @@ func TestSaveRunsPendingImportThenSaves(t *testing.T) {
 
 			m = drain(t, m, cmd)
 
-			if len(sm.importedSources) != 1 || strings.HasPrefix(sm.importedSources[0], "~") || !strings.HasSuffix(sm.importedSources[0], "defs/ex.yml") {
-				t.Fatalf("imported = %q, want one expanded, trimmed path", sm.importedSources)
+			if want := filepath.Join(home, "defs", "ex.yml"); len(sm.importedSources) != 1 || sm.importedSources[0] != want {
+				t.Fatalf("imported = %q, want [%q] (expanded, trimmed)", sm.importedSources, want)
 			}
 
 			saved := sm.savedSources()
