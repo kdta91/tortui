@@ -91,37 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects.
-
-### T-9049 · Unparseable redirect Location never echoed
-
-```
-status: todo
-depends: T-9046
-tier: H
-```
-Scheduled by the owner for v1.0 (2026-09-30), from Backlog. When a redirect's Location header
-will not parse, net/http fails the request before any CheckRedirect call with an error that
-quotes the whole header ("failed to parse Location header ..."), and httpx passes that text on
-(the redactor scrubs only the configured api_key and cookie), so a Location's userinfo, path or
-query — even the user's own Basic credentials echoed back — can reach an error string and the
-status bar. Pre-existing on main; found during T-9046.
-
-**Acceptance:**
-1. httpx detects net/http's Location parse failure and replaces that cause with a fixed message
-   naming only the request host; no part of the Location text survives in the message or the
-   cause chain.
-2. The replacement is classifiable like the other redirect failures: a sentinel matched with
-   `errors.Is`.
-3. Any other net/http error path that echoes a URL the same way is covered too, or the PR shows
-   why none is reachable.
-4. Every other error is unchanged, text and `errors.Is` identity.
-5. Tests, table-driven, zero network, on both redirect client shapes (plain and
-   `FollowSubdomainRedirects`): malformed Locations carrying userinfo, a path and a query; neither
-   the error nor the client's debug log contains the user name, the password, their base64 form,
-   `@`, the path or the query. The guard is mutation-tested.
-6. Backlog entries for the two PR #77 review notes (userinfo endpoint redirect docs; an explicit
-   http/https allowlist in `sameOriginUserinfo`).
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed.
 
 ---
 
@@ -780,6 +750,14 @@ when it reaches it and does not start backlog items on its own.
   `TestListedLinksNeverCarryUserinfo` had to move to a clean base_url once a base_url with
   userinfo no longer reaches `New`. The change was justified. Future criteria: "existing tests
   pass; a test changes only where another criterion requires it". Note from review of T-9045 (PR #76).
+- `T-9050` No user-facing doc says that a torznab endpoint written with `user:pw@` follows a
+  redirect only to itself, on the same host and port (DEC-145), so an http address the server
+  upgrades to https is refused; users should configure the https address directly. Note from
+  review of T-9046 (PR #77).
+- `T-9051` `sameOriginUserinfo` has no scheme allowlist of its own: an ftp target on the same host
+  and explicit port passes it (from an http endpoint; from https the scheme rule refuses it) and
+  is refused only later by the transport. Add an explicit http/https check there. Note from
+  review of T-9046 (PR #77).
 
 ---
 
@@ -935,6 +913,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-143 | 2026-09-29 | T-9041: a scraper details address with any userinfo is refused before a request; every link the scraper resolves (listing and details) has its userinfo dropped, the link kept |
 | DEC-144 | 2026-09-29 | T-9045: a scraper base_url with any userinfo fails validation; httpx refuses any redirect whose target carries userinfo; torznab links have their userinfo dropped, the link kept; magnets untouched |
 | DEC-145 | 2026-09-30 | T-9046: refines DEC-144; httpx follows a redirect whose userinfo is byte-identical to the original request's (as written in the Location, or inherited by a relative one), only on the original host and effective port; scheme rule unchanged; every other userinfo redirect refused |
+| DEC-146 | 2026-09-30 | T-9049: httpx recognises net/http's unparseable-Location error by its leading text and replaces it with `ErrRedirectLocationInvalid` at the request host; no Location text kept; every other cause unchanged |
 
 ## Blocked
 
