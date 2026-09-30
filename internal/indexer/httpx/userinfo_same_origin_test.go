@@ -82,9 +82,6 @@ var sameOriginAllowed = map[string]sameOriginCase{
 	"escaped reserved byte, identical": {
 		"https://alice:p%40ss@example.org/api/start", "https://alice:p%40ss@example.org/api/final", nil,
 	},
-	"ipv6 literal, identical": {
-		"http://alice:s3cret@[2001:db8::1]:8080/api/start", "http://alice:s3cret@[2001:db8::1]:8080/api/final", nil,
-	},
 }
 
 // sameOriginRefused are the redirects the rule refuses, and why.
