@@ -93,6 +93,36 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 **Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links.
 
+### T-9046 · Same-origin userinfo redirects
+
+```
+status: in-progress
+depends: T-9045
+tier: H
+```
+Owner decision (2026-09-30), refining DEC-144: a torznab URL written with `user:pw@` (a reverse
+proxy in front of the user's own indexer manager) could no longer follow any redirect, because
+a relative Location inherits the request's userinfo.
+
+**Acceptance:**
+1. httpx's redirect check (`checkRedirectHosts`, strict and `FollowSubdomainRedirects` paths)
+   follows a redirect whose userinfo is byte-identical to the original request's, and only when
+   the target has the original's host and effective port (an explicit default port equals an
+   implicit one). The existing scheme rule still applies, not loosened.
+2. Every other redirect with userinfo stays refused with `ErrUserinfoRedirect`, as DEC-144 has
+   it: different credentials, credentials added where the original had none, a different host,
+   or a different port. Percent-encoding variants are not byte-identical and are refused.
+3. A redirect without userinfo is decided exactly as on main.
+4. Userinfo never appears in a log line, an error string, or the UI; the existing redaction
+   holds on the new path.
+5. Nothing else in DEC-143/DEC-144 changes: scraper base_url refusal, scraper details refusal,
+   torznab link stripping.
+6. Tests, table-driven, zero network: each allow and refuse case above, percent-encoding
+   variants included, on both redirect checks and end to end; every guard condition
+   mutation-tested.
+7. DEC-145 in docs/decisions.md with its index row; Backlog T-9047 and T-9048 (PR #76 review
+   notes).
+
 ---
 
 ## v1.0 release criteria
