@@ -4898,9 +4898,11 @@ reports "a scraper source needs a definition file (or import one)".
 7. Backlog entries for the three PR #78 review notes.
 
 **Notes:** `hasUnrunImport` guards `handleSourceFormSave`, which dispatches `importDefinitionCmd`
-with `importing`/`saveAfterImport` set on the form; `handleFormImportResult` clears both and, on
-success, re-enters the save. Enter on the import field also sets `importing`, so a save cannot
-start a second import. The live-issue hint for a missing definition is hidden while import text
-is pending, and an "import failed" error is now shown beside other live hints (a blank Name hid
-it). Legend unchanged (already truncated at narrow widths). 7 mutations killed. Backlog
-T-9053 to T-9055.
+with `importing`/`saveAfterImport` set; `handleFormImportResult` clears both and, on success,
+re-enters the save. Enter on the import field sets `importing` too, so a save cannot start a second
+import. Each import carries a generation from a counter on `settingsModel` (not the form, so a new
+form cannot inherit the number of an earlier form's import); a result with another generation is
+dropped. A result arriving at the discard prompt applies the import but does not save. The
+missing-definition hint is hidden while import text is pending; "import failed" shows beside
+other live hints (a blank Name hid it). 9 mutations killed (7 on the first version, 2 on the
+generation and discard guards). Backlog T-9053 to T-9055.
