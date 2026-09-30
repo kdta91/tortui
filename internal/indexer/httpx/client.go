@@ -161,11 +161,14 @@ var (
 	ErrTooManyRedirects = errors.New("too many redirects")
 
 	// ErrUserinfoRedirect reports a redirect whose target carries a user
-	// name or password (`user:pw@`, or even a bare `@`), on any host.
-	// net/http sends userinfo as a Basic Authorization header, so
-	// following it would send credentials the server chose rather than
-	// ones the user supplied (AGENT.md §2). Refused before the hop, on
-	// every client; the error names the host, never the target (T-9045).
+	// name or password (`user:pw@`, or even a bare `@`) that is not the
+	// original request's own. net/http sends userinfo as a Basic
+	// Authorization header, so following it would send credentials the
+	// server chose rather than ones the user supplied (AGENT.md §2).
+	// Refused before the hop, on every client; the error names the host,
+	// never the target (T-9045). The one exception is a target carrying
+	// the original request's userinfo byte for byte, on its host and
+	// effective port (T-9046, DEC-145; see sameOriginUserinfo).
 	ErrUserinfoRedirect = errors.New("refusing to follow a redirect to an address carrying a user name or password")
 )
 
@@ -446,21 +449,25 @@ func checkRedirectToSubdomain(req *http.Request, via []*http.Request) error {
 
 // checkRedirectHosts is the redirect rule itself; subdomains admits a hop to
 // a subdomain of the original host on the same port. A target carrying
-// userinfo is refused first, whatever its host (ErrUserinfoRedirect).
+// userinfo takes the userinfo rule instead of the host rule: it is refused
+// (ErrUserinfoRedirect) unless sameOriginUserinfo holds, which is stricter
+// than either host rule. The scheme rule applies to both.
 func checkRedirectHosts(req *http.Request, via []*http.Request, subdomains bool) error {
 	if len(via) >= maxRedirects {
 		return fmt.Errorf("httpx: %w (%d hops)", ErrTooManyRedirects, len(via))
 	}
 
-	if req.URL.User != nil {
-		return fmt.Errorf("httpx: %w (at %s)", ErrUserinfoRedirect, hostOf(req.URL))
-	}
-
 	origin := via[0].URL
-	allowed := strings.EqualFold(req.URL.Host, origin.Host) || (subdomains && isSubdomainOf(req.URL, origin))
 
-	if !allowed {
-		return fmt.Errorf("httpx: %w (%s to %s)", ErrCrossHostRedirect, hostOf(origin), hostOf(req.URL))
+	if req.URL.User != nil {
+		if !sameOriginUserinfo(req, via) {
+			return fmt.Errorf("httpx: %w (at %s)", ErrUserinfoRedirect, hostOf(req.URL))
+		}
+	} else {
+		allowed := strings.EqualFold(req.URL.Host, origin.Host) || (subdomains && isSubdomainOf(req.URL, origin))
+		if !allowed {
+			return fmt.Errorf("httpx: %w (%s to %s)", ErrCrossHostRedirect, hostOf(origin), hostOf(req.URL))
+		}
 	}
 
 	if isSchemeDowngrade(origin.Scheme, req.URL.Scheme) {
@@ -468,6 +475,123 @@ func checkRedirectHosts(req *http.Request, via []*http.Request, subdomains bool)
 	}
 
 	return nil
+}
+
+// sameOriginUserinfo reports whether a redirect target that carries
+// userinfo may be followed (T-9046, DEC-145): the original request — the
+// first of the chain, not the previous hop — had userinfo, the redirect
+// wrote exactly the same bytes (or a relative Location inherited them), and
+// the target is on the original host and effective port. That is the case
+// of an endpoint the user wrote with userinfo (a reverse proxy in front of
+// their own indexer manager) redirecting within itself; net/http would send
+// the same Basic credentials the first request did, to the same place.
+//
+// "Exactly the same bytes" is literal: a percent-encoding variant decodes to
+// the same credentials but is a server rewriting them, and is refused. The
+// original's bytes are its userinfo as httpx issued it, in Go's escaping.
+// Nothing here ever reaches an error or a log line.
+func sameOriginUserinfo(req *http.Request, via []*http.Request) bool {
+	origin := via[0].URL
+	if origin.User == nil {
+		return false
+	}
+
+	written, ok := redirectUserinfo(req, via[len(via)-1])
+	if !ok || written != origin.User.String() {
+		return false
+	}
+
+	port := effectivePort(origin)
+
+	return strings.EqualFold(req.URL.Hostname(), origin.Hostname()) && port != "" && port == effectivePort(req.URL)
+}
+
+// redirectUserinfo returns req's userinfo as the redirect wrote it, read
+// from the Location header of the response that caused req (net/http
+// always sets Response on a redirect's request); false when that cannot be
+// established. A Location with its own userinfo gives its bytes as written,
+// provided they are the userinfo req actually carries. A relative Location
+// carries none of its own: req then inherits the previous request's
+// userinfo unchanged (url.URL.ResolveReference copies the pointer), so its
+// bytes are that request's — the original's, or ones already checked equal
+// to them on the hop before.
+func redirectUserinfo(req, prev *http.Request) (string, bool) {
+	if req.Response == nil {
+		return "", false
+	}
+
+	location := req.Response.Header.Get("Location")
+
+	ref, err := url.Parse(location)
+	if err != nil {
+		return "", false
+	}
+
+	if ref.User == nil {
+		inherited := ref.Scheme == "" && ref.Host == "" && req.URL.User == prev.URL.User
+		if !inherited {
+			return "", false
+		}
+
+		return req.URL.User.String(), true
+	}
+
+	if ref.User.String() != req.URL.User.String() {
+		return "", false
+	}
+
+	return rawUserinfo(location, ref.Scheme)
+}
+
+// rawUserinfo returns the userinfo of ref exactly as written, for a
+// reference url.Parse already accepted with the given (lowercased) scheme
+// and a non-nil User. It cuts ref the way url.Parse does: fragment, then
+// scheme, then query, then the authority after "//" up to the first "/",
+// whose userinfo ends at its last "@".
+func rawUserinfo(ref, scheme string) (string, bool) {
+	rest, _, _ := strings.Cut(ref, "#")
+
+	if scheme != "" {
+		if len(rest) <= len(scheme) || rest[len(scheme)] != ':' {
+			return "", false
+		}
+
+		rest = rest[len(scheme)+1:]
+	}
+
+	rest, _, _ = strings.Cut(rest, "?")
+
+	authority, ok := strings.CutPrefix(rest, "//")
+	if !ok {
+		return "", false
+	}
+
+	authority, _, _ = strings.Cut(authority, "/")
+
+	at := strings.LastIndex(authority, "@")
+	if at < 0 {
+		return "", false
+	}
+
+	return authority[:at], true
+}
+
+// effectivePort is u's port as written, or its scheme's default when none
+// is written — so example.org and example.org:443 are the same https
+// endpoint. Empty for a scheme with no known default, which never matches.
+func effectivePort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }
 
 // isSubdomainOf reports whether dest's host is a strict subdomain of

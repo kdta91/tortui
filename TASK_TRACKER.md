@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects.
 
 ---
 
@@ -100,7 +100,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041 and T-9045, are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041, T-9045 and T-9046, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI. The race jobs
       (T-9025) are advisory per PR under DEC-107 but must all be green before the release tag.
 - [ ] Coverage thresholds from AGENT.md §9 met.
@@ -742,6 +742,19 @@ when it reaches it and does not start backlog items on its own.
 - `T-9044` Opening Details on a link-less scraper result does not call `Resolve`, so no magnet shows
   there until the user adds it. UX follow-up from review of T-9037 (PR #74); a fetch on open must
   stay user-initiated and cached per AGENT.md §6.13.
+- `T-9047` Torznab `torrentAddress`/`sourceAddress` return the first http(s) candidate (enclosure
+  then link; comments then permalink guid) through `linkWithoutUserinfo`, which gives "" when it
+  does not parse, so the result has no link even if a later candidate is usable. Fall back to the
+  next candidate instead. Non-blocking note from review of T-9045 (PR #76).
+- `T-9048` T-9045's "existing tests unchanged" criterion conflicted with its criterion 1:
+  `TestListedLinksNeverCarryUserinfo` had to move to a clean base_url once a base_url with
+  userinfo no longer reaches `New`. The change was justified. Future criteria: "existing tests
+  pass; a test changes only where another criterion requires it". Note from review of T-9045 (PR #76).
+- `T-9049` An unparseable redirect Location is echoed whole in the error net/http returns
+  ("failed to parse Location header ..."), and httpx passes that text on (the redactor scrubs only
+  the configured api_key and cookie), so a Location's userinfo, path or query can reach an error
+  string and the status bar. Pre-existing on main; found during T-9046. Replace that cause with a
+  fixed message naming only the host.
 
 ---
 
@@ -896,6 +909,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-142 | 2026-09-29 | T-9037: scraper `details:` block; Resolve fetches the item page once, at add time only, through the same client, refused unless on base_url's own host and port without https to http; one link filled (magnet, else torrent, else infohash) |
 | DEC-143 | 2026-09-29 | T-9041: a scraper details address with any userinfo is refused before a request; every link the scraper resolves (listing and details) has its userinfo dropped, the link kept |
 | DEC-144 | 2026-09-29 | T-9045: a scraper base_url with any userinfo fails validation; httpx refuses any redirect whose target carries userinfo; torznab links have their userinfo dropped, the link kept; magnets untouched |
+| DEC-145 | 2026-09-30 | T-9046: refines DEC-144; httpx follows a redirect whose userinfo is byte-identical to the original request's (as written in the Location, or inherited by a relative one), only on the original host and effective port; scheme rule unchanged; every other userinfo redirect refused |
 
 ## Blocked
 

@@ -4790,3 +4790,43 @@ scraper `userinfo_test.go` (six shapes: validation, New, import, reload), httpx
 `userinfo_redirect_test.go` (rule table, end to end with one request only, both clients), torznab
 `userinfo_test.go` + `testdata/torznab/search-userinfo.xml`. `TestListedLinksNeverCarryUserinfo` now
 uses a clean base_url, since one with userinfo no longer reaches New. Three mutations killed.
+
+### T-9046 · Same-origin userinfo redirects
+
+```
+status: done
+depends: T-9045
+tier: H
+```
+Owner decision (2026-09-30), refining DEC-144: a torznab URL written with `user:pw@` (a reverse
+proxy in front of the user's own indexer manager) could no longer follow any redirect, because
+a relative Location inherits the request's userinfo.
+
+**Acceptance:**
+1. httpx's redirect check (`checkRedirectHosts`, strict and `FollowSubdomainRedirects` paths)
+   follows a redirect whose userinfo is byte-identical to the original request's, and only when
+   the target has the original's host and effective port (an explicit default port equals an
+   implicit one). The existing scheme rule still applies, not loosened.
+2. Every other redirect with userinfo stays refused with `ErrUserinfoRedirect`, as DEC-144 has
+   it: different credentials, credentials added where the original had none, a different host,
+   or a different port. Percent-encoding variants are not byte-identical and are refused.
+3. A redirect without userinfo is decided exactly as on main.
+4. Userinfo never appears in a log line, an error string, or the UI; the existing redaction
+   holds on the new path.
+5. Nothing else in DEC-143/DEC-144 changes: scraper base_url refusal, scraper details refusal,
+   torznab link stripping.
+6. Tests, table-driven, zero network: each allow and refuse case above, percent-encoding
+   variants included, on both redirect checks and end to end; every guard condition
+   mutation-tested.
+7. DEC-145 in docs/decisions.md with its index row; Backlog T-9047 and T-9048 (PR #76 review
+   notes).
+
+**Notes:** DEC-145. A target with userinfo takes `sameOriginUserinfo` instead of the host rule:
+the original request (`via[0]`) had userinfo; the target's userinfo as the Location wrote it
+(`rawUserinfo`, cut the way url.Parse cuts) or, for a relative Location, inherited by pointer from
+the previous hop, equals the original's bytes as httpx issued them; hostname equal ignoring case;
+effective port equal. No Response, an unparseable Location, or a target that disagrees with its
+Location: refused. So http to https on default ports is a port change, refused with userinfo.
+New `userinfo_same_origin_test.go`: rule table on both checks, later hops, fail-closed cases,
+end to end (followed with the same Basic header; refused after one request), error and log
+redaction on a followed hop, `rawUserinfo`. 21 mutations killed. Backlog T-9047, T-9048, T-9049.
