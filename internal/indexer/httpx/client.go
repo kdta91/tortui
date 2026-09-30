@@ -170,7 +170,22 @@ var (
 	// the original request's userinfo byte for byte, on its host and
 	// effective port (T-9046, DEC-145; see sameOriginUserinfo).
 	ErrUserinfoRedirect = errors.New("refusing to follow a redirect to an address carrying a user name or password")
+
+	// ErrRedirectLocationInvalid reports a redirect whose Location header
+	// will not parse. net/http fails the request itself, before any redirect
+	// check, with an error that quotes the whole header; httpx replaces that
+	// cause with this one, naming the request host only, because the header
+	// is server-chosen text that can carry userinfo (even the user's own
+	// credentials echoed back), a path and a query (T-9049, DEC-146).
+	ErrRedirectLocationInvalid = errors.New("redirect Location header will not parse")
 )
+
+// locationParseFailure is how net/http begins the error it returns for a
+// redirect whose Location header will not parse (net/http/client.go, Go
+// 1.27: "failed to parse Location header %q: %v"). It is matched as text
+// because net/http builds that error with %v, not %w, so nothing
+// structured survives to match on.
+const locationParseFailure = "failed to parse Location header "
 
 // Credentials are the values the user supplied from their own account for
 // one source (AGENT.md §2). Nothing in tortui obtains them any other way.
@@ -628,6 +643,20 @@ func isSchemeDowngrade(from, to string) bool {
 	return strings.EqualFold(from, "https") && !strings.EqualFold(to, "https")
 }
 
+// withoutLocationEcho replaces net/http's own error for a redirect whose
+// Location header will not parse — text that quotes the whole header, and
+// again inside its url.Parse reason — with ErrRedirectLocationInvalid at
+// host, so no part of the Location survives in the message or the cause
+// chain. Every other cause is returned unchanged. cause is never nil:
+// attempt calls it only for a failed request.
+func withoutLocationEcho(cause error, host string) error {
+	if !strings.HasPrefix(cause.Error(), locationParseFailure) {
+		return cause
+	}
+
+	return fmt.Errorf("httpx: %w (at %s)", ErrRedirectLocationInvalid, host)
+}
+
 // Request is one outbound HTTP request.
 type Request struct {
 	// Method defaults to GET when empty.
@@ -836,7 +865,7 @@ func (c *Client) attempt(ctx context.Context, method string, target *url.URL, he
 	}
 
 	if err != nil {
-		cause := unwrapURLError(err)
+		cause := withoutLocationEcho(unwrapURLError(err), host)
 
 		return nil, nil, c.redactor.safef(cause, "httpx: %s %s: %v", method, host, cause)
 	}

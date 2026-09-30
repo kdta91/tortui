@@ -4830,3 +4830,43 @@ Location: refused. So http to https on default ports is a port change, refused w
 New `userinfo_same_origin_test.go`: rule table on both checks, later hops, fail-closed cases,
 end to end (followed with the same Basic header; refused after one request), error and log
 redaction on a followed hop, `rawUserinfo`. 21 mutations killed. Backlog T-9047, T-9048, T-9049.
+
+### T-9049 · Unparseable redirect Location never echoed
+
+```
+status: done
+depends: T-9046
+tier: H
+```
+Scheduled by the owner for v1.0 (2026-09-30), from Backlog. When a redirect's Location header
+will not parse, net/http fails the request before any CheckRedirect call with an error that
+quotes the whole header ("failed to parse Location header ..."), and httpx passes that text on
+(the redactor scrubs only the configured api_key and cookie), so a Location's userinfo, path or
+query — even the user's own Basic credentials echoed back — can reach an error string and the
+status bar. Pre-existing on main; found during T-9046.
+
+**Acceptance:**
+1. httpx detects net/http's Location parse failure and replaces that cause with a fixed message
+   naming only the request host; no part of the Location text survives in the message or the
+   cause chain.
+2. The replacement is classifiable like the other redirect failures: a sentinel matched with
+   `errors.Is`.
+3. Any other net/http error path that echoes a URL the same way is covered too, or the PR shows
+   why none is reachable.
+4. Every other error is unchanged, text and `errors.Is` identity.
+5. Tests, table-driven, zero network, on both redirect client shapes (plain and
+   `FollowSubdomainRedirects`): malformed Locations carrying userinfo, a path and a query; neither
+   the error nor the client's debug log contains the user name, the password, their base64 form,
+   `@`, the path or the query. The guard is mutation-tested.
+6. Backlog entries for the two PR #77 review notes (userinfo endpoint redirect docs; an explicit
+   http/https allowlist in `sameOriginUserinfo`).
+
+**Notes:** DEC-146. `withoutLocationEcho` in `attempt` replaces a cause beginning with net/http's
+"failed to parse Location header " (built with %v, so only text survives) with
+`ErrRedirectLocationInvalid` at the original request's host, wrapped like the other redirect
+refusals; every other cause is returned as is. Other paths checked in go1.27.1: the proxy parse
+error that quotes HTTP_PROXY is dropped inside ProxyFromEnvironment and never returned; the
+HTTP/2 `:path` error needs an opaque URL no redirect check lets through; *url.Error's URL was
+already stripped. New `location_parse_test.go`: 8 malformed Locations on both client shapes,
+error and debug log checked, cause chain, guard table, other errors unchanged. 9 mutations
+killed. Backlog T-9050, T-9051 (PR #77 notes).
