@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address.
 
 ---
 
@@ -100,7 +100,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041, T-9045, T-9046, T-9049, T-9052 and T-9056, are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041, T-9045, T-9046, T-9049, T-9052, T-9056 and T-9057, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI. The race jobs
       (T-9025) are advisory per PR under DEC-107 but must all be green before the release tag.
 - [ ] Coverage thresholds from AGENT.md §9 met.
@@ -766,15 +766,14 @@ when it reaches it and does not start backlog items on its own.
   from review of T-9049 (PR #78).
 - `T-9055` Redirect refusal errors carry a doubled "httpx:" prefix. If fixed, fix every one in a
   single follow-up. Non-blocking note from review of T-9049 (PR #78).
-- `T-9057` A torrent added by TorrentURL is listed on the Downloads screen under its full download
-  address, query string included (an indexer's `apikey=` among it), until its metadata arrives:
-  until then the engine's Name for a URL add is that address, and the row's Origin is empty for a
-  torrent added this session. The credential is shown on screen. The row should show the result's
-  title (the add flow has it), never the address's query. Found during T-9056; the owner schedules
-  it next.
 - `T-9058` `truncateLines` (search.go) truncates already-styled screen bodies with `theme.Truncate`,
   which counts escape codes as columns, so with colour on a screen line is cut early and an escape
   sequence can be cut in two. T-9056 fixed only the status bar. Found during T-9056.
+- `T-9059` The doc comment on `addSourceFor` in `internal/tui/details.go` has a reflowed line of 119
+  columns (line 123); rewrap it. Non-blocking note from review of T-9056 (PR #80).
+- `T-9060` The "infohash attr" subtest of `TestAddingATwoLinkTorznabResult`
+  (`internal/app/addsource_test.go`) could also assert the engine's infohash, and that the
+  enclosure was fetched at least once. Non-blocking note from review of T-9056 (PR #80).
 
 ---
 
@@ -932,6 +931,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-145 | 2026-09-30 | T-9046: refines DEC-144; httpx follows a redirect whose userinfo is byte-identical to the original request's (as written in the Location, or inherited by a relative one), only on the original host and effective port; scheme rule unchanged; every other userinfo redirect refused |
 | DEC-146 | 2026-09-30 | T-9049: httpx recognises net/http's unparseable-Location error by its leading text and replaces it with `ErrRedirectLocationInvalid` at the request host; no Location text kept; every other cause unchanged |
 | DEC-147 | 2026-10-01 | T-9056: an add sends the engine one link: a published magnet, else the TorrentURL, chosen once at `confirmDestination`; torznab Resolve builds a magnet from a hash only when there is no TorrentURL |
+| DEC-148 | 2026-10-01 | T-9057: a download is named by the add flow's recorded title until metadata (TotalBytes 0), then by the engine's name; no name is ever a web address (host only, `engine.SafeName`); the record keeps the title until metainfo; the record's TorrentURL keeps the key |
 
 ## Blocked
 

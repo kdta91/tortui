@@ -4948,3 +4948,49 @@ Torznab adapter, registry, offline engine and TUI; magneturl item adds by magnet
 its loopback enclosure. `StatusBar.View` measures plain text, drops cache hint, rates, active count,
 failed hint, screen name, then cuts the message; styles after truncating. 12 mutations killed
 (4 helper, 1 fake, 5 status bar, 2 Resolve). Backlog T-9057, T-9058.
+
+### T-9057 · URL-added downloads never show their address
+
+```
+status: done
+depends: T-9056
+tier: H
+```
+Owner request (2026-10-01), scheduled from Backlog before v1.0. A torrent added by TorrentURL was
+listed on Downloads under its full download address until its metadata arrived: the engine named a
+URL add by that address, and Prowlarr/Jackett put the user's `apikey=` in its query. The session
+record saved that name too, and a restart restored it.
+
+**Acceptance:**
+1. Downloads names a torrent added by TorrentURL by the result's title the add flow recorded until
+   its metadata arrives (TotalBytes 0), then by the torrent's own name; never by the address, its
+   path or its query. With no recorded title (no store, a blank or pre-fix record), the address's
+   host only: "torrent file from <host>".
+2. One name serves every place that names a download: the row, the remove dialog, and the pause,
+   open, folder and source-page messages. Checked and never showing the address: the error detail,
+   the "added" toast (the title), the quit dialog (names no torrent), the Details screen (a Result's
+   title and source page; never its TorrentURL), and the log.
+3. The engine never names a torrent by its address: a URL add is named by host until the .torrent
+   arrives; a restore by URL uses the saved name, reduced to its host if it is a web address (a
+   session saved before this fix), or the host when there is none. A failed fetch (HTTP 500,
+   connection refused, a body that is no torrent) leaves an error naming the host, never the address.
+4. The session record keeps the title until the engine has the torrent's metainfo, then the
+   torrent's own name; a recorded web address is replaced. The record's TorrentURL keeps the
+   address, api key included: a restart needs it to fetch the .torrent again. No other persisted
+   field holds the key. Origin is unchanged: AddSource is frozen, and the Source column already
+   reads the record.
+5. Zero-network tests (loopback httptest): a sentinel api key in the enclosure never appears in any
+   rendered screen before metadata, after a failed fetch (error detail included), after a
+   successful fetch, or after a restart; nor in any record field but TorrentURL; nor in the debug
+   log. Every guard is mutation-tested.
+6. Backlog T-9059 and T-9060 from the review of PR #80.
+
+**Notes:** `engine.URLSourceName` (host only) and `engine.SafeName` (a web address becomes its host)
+in `internal/engine/displayname.go` (DEC-148). anacrolix names a URL add by host and a restore by
+its sanitised saved name; httpx errors already name only the host. `mergeRecord` keeps a recorded
+title until metainfo. `Model.downloadName` (downloads.go) picks the record title while TotalBytes is
+0, else the engine name, through SafeName; all nine action messages use it. Fake engine names a URL
+by its path's last segment, no query. App test: real Torznab adapter, offline engine, session and
+TUI, gated and failing enclosure, restart each; every rendered byte, record and debug log checked;
+reverting the fix fails it. 16 mutations killed (2 helper, 4 engine incl. logging the raw address,
+3 record, 6 TUI, 1 fake); the app's masking file log hides even that logged address.
