@@ -5061,4 +5061,31 @@ works, and such an id shows as that entry, not a built-in row (DEC-150). tui get
 `BuiltinManager` interface that `settingsManager` implements, so fakes and the demo are unchanged;
 `doctor.Options.Builtins` is supplied by `app.DoctorBuiltins` (doctor imports no adapter) and the cmd
 tests stub it so no test probes a real address. 8 of 9 mutations killed; the survivor (slice
-aliasing in `cloneConfig`) is not observable through the manager's copy-on-write.
+aliasing in `cloneConfig`) was first called not observable; review showed a failed save mutates
+in-memory state without the clone (Backlog T-9074).
+
+### T-9073 · README audit fixes
+
+```
+status: done
+depends: T-9069
+tier: L
+```
+Owner request (2026-10-01). A README audit drove the real app in a pty; several README claims no
+longer matched the app, and some passages named tracker ids or were wrong about keys and URLs.
+
+**Acceptance:**
+1. Every README claim about the bundled source, Settings keys, import fields, `doctor`, the
+   source-error panel, preferences and column dropping matches the app on current main.
+2. The Prowlarr per-indexer URL is `http://localhost:9696/<indexer-id>/api` in README and
+   `config.example.toml`.
+3. No tracker or decision id in README prose outside the License section.
+4. The keymap table is untouched and `TestReadmeKeysTableMatchesGlobalBindings` passes.
+5. Backlog entries for the PR #83 review notes and for `make run` and TORTUI_HOME.
+
+**Notes:** Docs only. Status line now says feature-complete, awaiting v1.0.0; exactly one bundled
+source (the Internet Archive) is named; `ctrl+t` in the form vs `t` in the list; import fields use
+their real labels; `doctor` lists configured plus built-in sources, disabled ones skipped; `e`
+opens the error list, `tab` collapses, `esc` closes. The 80x24 claim is limited to what
+layout_80x24_test.go covers (Downloads, Settings legend, forms, `?` overlay). `make run` is not
+changed; Backlog T-9078. No DEC.
