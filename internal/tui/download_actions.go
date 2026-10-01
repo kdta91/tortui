@@ -223,7 +223,7 @@ func (m Model) handlePauseResume() (tea.Model, tea.Cmd) {
 	}
 
 	if s.State == engine.StateErrored {
-		return m.pushStatus(fmt.Sprintf("%s has errored — nothing to pause or resume", s.Name))
+		return m.pushStatus(fmt.Sprintf("%s has errored — nothing to pause or resume", m.downloadName(s)))
 	}
 
 	// A second p before the first engine call returns is ignored rather
@@ -231,7 +231,7 @@ func (m Model) handlePauseResume() (tea.Model, tea.Cmd) {
 	// ordering guarantee, so a fast pause-then-resume could land at the
 	// engine as resume-then-pause.
 	if p, inFlight := m.downloads.pending[s.ID]; inFlight && !p.settled {
-		return m.pushStatus(fmt.Sprintf("%s: still applying the previous pause/resume", s.Name))
+		return m.pushStatus(fmt.Sprintf("%s: still applying the previous pause/resume", m.downloadName(s)))
 	}
 
 	resume := s.State == engine.StatePaused
@@ -250,7 +250,7 @@ func (m Model) handlePauseResume() (tea.Model, tea.Cmd) {
 	})
 	m.torrentStatuses = withTorrentState(m.torrentStatuses, s.ID, optimistic)
 
-	return m, pauseResumeCmd(m.eng, s.ID, s.Name, resume)
+	return m, pauseResumeCmd(m.eng, s.ID, m.downloadName(s), resume)
 }
 
 // handlePauseResumeResult settles or rolls back the optimistic update
@@ -288,8 +288,9 @@ func (m Model) handleRemove() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.removeTarget = removeTarget{id: s.ID, name: s.Name}
-	m.removeConfirm.Message = fmt.Sprintf("Remove %q from tortui?", s.Name)
+	name := m.downloadName(s)
+	m.removeTarget = removeTarget{id: s.ID, name: name}
+	m.removeConfirm.Message = fmt.Sprintf("Remove %q from tortui?", name)
 	m.removeConfirm = m.removeConfirm.Open()
 
 	return m, nil
@@ -383,7 +384,7 @@ func (m Model) handleOpenDownloadSource() (tea.Model, tea.Cmd) {
 
 	u := m.downloadSourceURL(s)
 	if u == "" {
-		return m.pushStatus(fmt.Sprintf("no source page for %s", s.Name))
+		return m.pushStatus(fmt.Sprintf("no source page for %s", m.downloadName(s)))
 	}
 
 	return m, openSourceCmd(m.openURL, u)
@@ -522,7 +523,7 @@ func (m Model) handleOpenDownloadFile(reveal bool) (tea.Model, tea.Cmd) {
 	}
 
 	if s.Progress < 1 {
-		return m.pushStatus(fmt.Sprintf("%s is still downloading (%d%%) — nothing to open yet", s.Name, int(s.Progress*100)))
+		return m.pushStatus(fmt.Sprintf("%s is still downloading (%d%%) — nothing to open yet", m.downloadName(s), int(s.Progress*100)))
 	}
 
 	savePath := s.SavePath
@@ -533,7 +534,7 @@ func (m Model) handleOpenDownloadFile(reveal bool) (tea.Model, tea.Cmd) {
 	}
 
 	if strings.TrimSpace(savePath) == "" {
-		return m.pushStatus(fmt.Sprintf("no known location for %s", s.Name))
+		return m.pushStatus(fmt.Sprintf("no known location for %s", m.downloadName(s)))
 	}
 
 	launch := m.openFile
@@ -541,5 +542,5 @@ func (m Model) handleOpenDownloadFile(reveal bool) (tea.Model, tea.Cmd) {
 		launch = m.revealFile
 	}
 
-	return m, openDownloadFileCmd(m.eng, launch, s.ID, s.Name, savePath, m.destinationRoots(), reveal)
+	return m, openDownloadFileCmd(m.eng, launch, s.ID, m.downloadName(s), savePath, m.destinationRoots(), reveal)
 }
