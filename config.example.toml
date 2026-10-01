@@ -16,6 +16,11 @@ download_dir = "~/Downloads/tortui"
 # (most recently used first).
 saved_destinations = []
 
+# Bundled sources you turned off. Bundled sources are searched by default; list
+# an id here to switch it off (Settings, space on a built-in row, does this for
+# you). Remove the id to switch it back on.
+disabled_builtin = []
+
 # Rate limits in bytes/sec. 0 means unlimited.
 max_download_rate = 0
 max_upload_rate   = 0

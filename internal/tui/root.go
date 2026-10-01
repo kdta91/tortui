@@ -247,6 +247,10 @@ type Model struct {
 	// this task's own first pass). sourceRows() (settings.go) is the only
 	// reader.
 	sourcesSnapshot []config.Indexer
+
+	// builtinSnapshot is the same cache for the bundled sources (T-9069),
+	// empty unless the source manager is also a BuiltinManager.
+	builtinSnapshot []BuiltinSource
 	// settings is the settings screen's own state: the list cursor, an
 	// open add/edit form, and the remove confirmation.
 	settings settingsModel
@@ -415,6 +419,9 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 	// messages (settings.go's sourcesSaveResultMsg/formSaveResultMsg).
 	if m.sources != nil {
 		m.sourcesSnapshot = m.sources.Sources()
+		if bm, ok := m.sources.(BuiltinManager); ok {
+			m.builtinSnapshot = bm.BuiltinSources()
+		}
 	}
 
 	if m.prefsManager != nil {
@@ -615,6 +622,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case formSaveResultMsg:
 		return m.handleFormSaveResult(msg)
+
+	case builtinToggleResultMsg:
+		return m.handleBuiltinToggleResult(msg)
 
 	case sourceProbeResultMsg:
 		return m.handleSourceProbeResult(msg)

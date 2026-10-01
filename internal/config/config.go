@@ -70,6 +70,13 @@ type Config struct {
 	// (T-024) are compiled into the binary separately and are never part
 	// of this array.
 	Indexers []Indexer `toml:"indexer"`
+
+	// DisabledBuiltins lists the ids of bundled sources the user turned off
+	// (Settings, space on a built-in row). A bundled source is enabled
+	// unless its id is listed here, so a fresh install searches it with no
+	// configuration (AGENT.md §1). An id that names no bundled source is
+	// ignored.
+	DisabledBuiltins []string `toml:"disabled_builtin"`
 }
 
 // Indexer is one user-configured search source.
@@ -112,6 +119,7 @@ func Default(downloadDir string) Config {
 	return Config{
 		DownloadDir:        downloadDir,
 		SavedDestinations:  []string{},
+		DisabledBuiltins:   []string{},
 		MaxDownloadRate:    0,
 		MaxUploadRate:      0,
 		MaxActiveDownloads: 3,

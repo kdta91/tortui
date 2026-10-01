@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/kdta91/tortui/internal/app"
 	"github.com/kdta91/tortui/internal/config"
 	"github.com/kdta91/tortui/internal/doctor"
 	"github.com/kdta91/tortui/internal/platform"
@@ -16,6 +17,10 @@ import (
 // a hung network never turns a diagnostic command into a hang itself
 // (AGENT.md §6.2).
 const doctorTimeout = 30 * time.Second
+
+// doctorBuiltins lists the bundled sources doctor probes. A variable so the
+// cmd tests, which run the real wiring, can keep every probe off the network.
+var doctorBuiltins = app.DoctorBuiltins
 
 // runDoctor implements `tortui doctor`: build and print an environment
 // report, then exit. It never starts the TUI (AGENT.md §15). All of the
@@ -59,6 +64,7 @@ func runDoctor(args []string, out *os.File) int {
 		Paths:      loadResult.Paths,
 		Config:     loadResult.Config,
 		FDLimits:   fdLimits,
+		Builtins:   doctorBuiltins(),
 	})
 
 	if _, err := fmt.Fprint(out, doctor.Format(report)); err != nil {

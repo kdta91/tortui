@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kdta91/tortui/internal/config"
+	"github.com/kdta91/tortui/internal/doctor"
 	"github.com/kdta91/tortui/internal/indexer"
 	"github.com/kdta91/tortui/internal/indexer/httpx"
 	"github.com/kdta91/tortui/internal/indexer/scraper"
@@ -30,7 +31,7 @@ var errDefinitionEscapes = errors.New("definition must be a file inside the defi
 // holding the sources liveSources.sync names for cfg.
 func buildSources(cfg config.Config, defsDir string, logger *slog.Logger, transport http.RoundTripper) *liveSources {
 	live := newLiveSources(cfg, defsDir, logger, transport)
-	if err := live.sync(cfg.Indexers, false); err != nil {
+	if err := live.sync(cfg, false); err != nil {
 		logger.Warn("app: build the source registry", "error", err)
 	}
 
@@ -76,7 +77,7 @@ func newLiveSources(cfg config.Config, defsDir string, logger *slog.Logger, tran
 // sync makes the registry hold exactly these sources:
 //
 //   - every bundled lawful source (T-024), enabled with no setup (AGENT.md
-//     §1), using the user's own definition of the same id from the
+//     §1) unless cfg.DisabledBuiltins lists its id (T-9069), using the user's own definition of the same id from the
 //     definitions directory when there is one (builtin.Merge's override);
 //   - every enabled entry. An entry whose id matches a bundled source
 //     replaces it, so `enabled = false` under that id turns a default off.
@@ -88,8 +89,14 @@ func newLiveSources(cfg config.Config, defsDir string, logger *slog.Logger, tran
 // rest from searching (AGENT.md §6.3). The error reports the definitions
 // directory being unreadable, or how many sources were skipped. Nothing
 // here touches the network, and nothing logged carries a URL or credential.
-func (l *liveSources) sync(entries []config.Indexer, reload bool) error {
+func (l *liveSources) sync(cfg config.Config, reload bool) error {
+	entries := cfg.Indexers
 	bundled, defsErr := bundledDefinitions(l.defsDir, l.logger)
+
+	off := make(map[string]bool, len(cfg.DisabledBuiltins))
+	for _, id := range cfg.DisabledBuiltins {
+		off[id] = true
+	}
 
 	configured := make(map[string]bool, len(entries))
 	for _, ix := range entries {
@@ -99,7 +106,7 @@ func (l *liveSources) sync(entries []config.Indexer, reload bool) error {
 	desired := make(map[string]sourceSpec, len(bundled)+len(entries))
 
 	for _, def := range bundled {
-		if !configured[def.ID] {
+		if !configured[def.ID] && !off[def.ID] {
 			desired[def.ID] = sourceSpec{bundled: true}
 		}
 	}
@@ -290,4 +297,21 @@ func searchTimeout(s string, logger *slog.Logger) time.Duration {
 	}
 
 	return d
+}
+
+// DoctorBuiltins lists the bundled sources for `tortui doctor` (T-9069): id,
+// name and the address its definition searches. A bundled set that cannot be
+// loaded is an empty list; doctor is a diagnostic, not a gate.
+func DoctorBuiltins() []doctor.Builtin {
+	defs, err := builtin.Definitions()
+	if err != nil {
+		return nil
+	}
+
+	out := make([]doctor.Builtin, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, doctor.Builtin{ID: d.ID, Name: d.Name, URL: d.BaseURL})
+	}
+
+	return out
 }

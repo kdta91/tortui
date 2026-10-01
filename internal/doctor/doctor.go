@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,9 @@ type IndexerVerdict struct {
 	// cookie — see Report's doc comment.
 	ID   string
 	Name string
+
+	// Builtin is true for a bundled source (T-9069), probed like any other.
+	Builtin bool
 
 	// Checked is false when the indexer was skipped (disabled, or has no
 	// URL configured) rather than actually probed.
@@ -115,6 +119,15 @@ type Report struct {
 // every real interface.
 var defaultProbeListenPort = engine.ProbeListenPort
 
+// Builtin is one bundled source for Options.Builtins: what doctor needs to
+// probe it. The caller (internal/app) supplies these, so this package never
+// imports an indexer adapter (AGENT.md §4).
+type Builtin struct {
+	ID   string
+	Name string
+	URL  string
+}
+
 // Options configures Build. Every field is required except Timeout and
 // NewClient, which default when zero/nil.
 type Options struct {
@@ -129,6 +142,11 @@ type Options struct {
 	// effects (AGENT.md §8: rendering/reporting should be easy to test in
 	// isolation).
 	FDLimits platform.FDLimits
+
+	// Builtins are the bundled sources. Each is probed like a configured one
+	// unless Config.DisabledBuiltins lists it or an [[indexer]] entry with
+	// its id replaces it.
+	Builtins []Builtin
 
 	// Timeout bounds one indexer's reachability probe. Zero uses
 	// DefaultIndexerTimeout.
@@ -239,7 +257,21 @@ func checkWritable(dir string) (writable bool, problem string) {
 // its own deadline, and returns verdicts in the same order the indexers
 // were configured in.
 func checkIndexers(ctx context.Context, opts Options) []IndexerVerdict {
-	indexers := opts.Config.Indexers
+	indexers := slices.Clone(opts.Config.Indexers)
+	builtin := make([]bool, len(indexers))
+
+	for _, b := range opts.Builtins {
+		if slices.ContainsFunc(opts.Config.Indexers, func(ix config.Indexer) bool { return ix.ID == b.ID }) {
+			continue
+		}
+
+		indexers = append(indexers, config.Indexer{
+			ID: b.ID, Name: b.Name, URL: b.URL,
+			Enabled: !slices.Contains(opts.Config.DisabledBuiltins, b.ID),
+		})
+		builtin = append(builtin, true)
+	}
+
 	verdicts := make([]IndexerVerdict, len(indexers))
 
 	timeout := opts.Timeout
@@ -254,7 +286,7 @@ func checkIndexers(ctx context.Context, opts Options) []IndexerVerdict {
 
 	var wg sync.WaitGroup
 	for i, ix := range indexers {
-		verdicts[i] = IndexerVerdict{ID: ix.ID, Name: ix.Name}
+		verdicts[i] = IndexerVerdict{ID: ix.ID, Name: ix.Name, Builtin: builtin[i]}
 
 		if !ix.Enabled {
 			verdicts[i].Detail = "skipped: disabled"
@@ -270,6 +302,7 @@ func checkIndexers(ctx context.Context, opts Options) []IndexerVerdict {
 		go func(i int, ix config.Indexer) {
 			defer wg.Done()
 			verdicts[i] = probeOne(ctx, newClient(ix, timeout), ix, timeout)
+			verdicts[i].Builtin = builtin[i]
 		}(i, ix)
 	}
 	wg.Wait()
@@ -375,9 +408,14 @@ func Format(r Report) string {
 
 		// Printed in configured order, not sorted — that order is the
 		// user's own config.toml and is the most useful one for matching
-		// a doctor report back to it.
+		// a doctor report back to it. Bundled sources follow.
 		for _, v := range r.Indexers {
-			fmt.Fprintf(&b, "  %s (%s): %s\n", displayOrUnset(v.Name), displayOrUnset(v.ID), v.Detail)
+			tag := ""
+			if v.Builtin {
+				tag = " [built-in]"
+			}
+
+			fmt.Fprintf(&b, "  %s (%s)%s: %s\n", displayOrUnset(v.Name), displayOrUnset(v.ID), tag, v.Detail)
 		}
 	}
 
