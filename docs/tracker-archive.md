@@ -4906,3 +4906,43 @@ dropped. A result arriving at the discard prompt applies the import but does not
 missing-definition hint is hidden while import text is pending; "import failed" shows beside
 other live hints (a blank Name hid it). 9 mutations killed (7 on the first version, 2 on the
 generation and discard guards). Backlog T-9053 to T-9055.
+
+### T-9056 · Add by one link; status-bar message stays visible
+
+```
+status: done
+depends: T-9052
+tier: H
+```
+Owner request (2026-10-01). A Torznab or Prowlarr result often carries a magnet and a `.torrent`
+enclosure, or Resolve derives a magnet from an infohash beside one. The add flow passed both to the
+engine, which takes exactly one and refused the add. The status bar, which cut its line far too
+early whenever colour was on, hid "couldn't add torrent", so the picker closed and nothing happened.
+
+**Acceptance:**
+1. A Result with a non-blank Magnet is added by Magnet alone, TorrentURL empty; otherwise by
+   TorrentURL. One helper serves the results and details paths; the engine's exactly-one contract
+   is unchanged.
+2. When the magnet is used, the TorrentURL (which may carry an api key) is in neither the store's
+   torrent record nor the engine's resume data. Infohash dedup is unchanged. Scraper results take
+   the same path.
+3. A TUI test against an engine that refuses more than one source: enter on Results (and Details)
+   with a two-link Result, accept the picker; no error, Downloads shown, one source added and
+   persisted. Cases: URL-only adds by URL; magnet-only unchanged; a magnet Resolve derives beside
+   a URL adds by magnet. Zero network.
+4. The status bar measures and truncates visible text, not escape codes, and when space is short
+   drops less important segments before the transient message. With a forced colour profile, a
+   message is whole at 80 and 100 columns beside a failed-sources and a cache hint; the line never
+   exceeds the terminal width. 80x24 stays readable.
+5. Both guards are mutation-tested.
+6. A Backlog entry for the URL-added download row that shows its full address, api key included,
+   until metadata arrives.
+
+**Notes:** `addSourceFor` (details.go) builds the AddSource in `confirmDestination`, the one point
+both screens reach after Resolve, dedup and the picker: magnet wins, else TorrentURL (DEC-147). The
+record and resume data copy the AddSource, so they hold only the chosen link. The fake engine now
+refuses two sources (`ErrAmbiguousSource`) as the real one does. An app test drives the real Torznab
+adapter, registry, offline engine and TUI for a magneturl item and an infohash-only item, each with
+an api-key enclosure. `StatusBar.View` measures each segment's plain text, drops cache hint, rates,
+active count, failed-sources hint, then screen name, truncates only the message, and styles after
+truncating. 9 mutations killed (3 helper, 1 fake, 5 status bar). Backlog T-9057, T-9058.
