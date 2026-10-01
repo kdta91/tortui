@@ -200,6 +200,26 @@ func (m Model) downloadOrigin(s engine.TorrentStatus) (indexerID string, addedAt
 	return indexerID, rec.AddedAt
 }
 
+// downloadName is the name the downloads screen and every message about a
+// download give a torrent (T-9057). Until the torrent's metadata arrives —
+// TotalBytes is 0 until then (engine.TorrentStatus) — that is the result's
+// title the add flow recorded, when there is one: before then the engine can
+// name a torrent added by address only by the address's host. Afterwards, or
+// with no recorded title, it is the engine's name. A name that is a web
+// address, as a session saved before T-9057 can hold, is shown by host only:
+// the address may carry the user's api key.
+func (m Model) downloadName(s engine.TorrentStatus) string {
+	name := s.Name
+
+	if s.TotalBytes == 0 && m.torrentStore != nil {
+		if rec, ok := m.torrentStore.GetTorrent(s.ID); ok && strings.TrimSpace(rec.Name) != "" {
+			name = rec.Name
+		}
+	}
+
+	return engine.SafeName(name)
+}
+
 // downloadQueueReason implements "queued torrents show their position and
 // why they are waiting" (T-034/T-071 acceptance): the real queue order via
 // the optional queueProvider assertion when the engine offers one, or a
@@ -440,7 +460,7 @@ func (m Model) renderDownloadRow(s engine.TorrentStatus, selected bool) string {
 
 	var b strings.Builder
 
-	b.WriteString(nameStyle.Render(s.Name))
+	b.WriteString(nameStyle.Render(m.downloadName(s)))
 	b.WriteString("\n")
 
 	if s.State == engine.StateQueued {

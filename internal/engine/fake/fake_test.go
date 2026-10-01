@@ -118,12 +118,21 @@ func TestAddNamesFromFilePathAndTorrentURL(t *testing.T) {
 		t.Fatalf("Add(TorrentURL) error = %v", err)
 	}
 
+	idKeyed, err := e.Add(context.Background(), engine.AddSource{TorrentURL: "https://example.org/files/example3.torrent?apikey=SENTINEL-9057"})
+	if err != nil {
+		t.Fatalf("Add(keyed TorrentURL) error = %v", err)
+	}
+
 	statuses := e.List()
 	if got := findStatus(t, statuses, idFile).Name; got != "example.torrent" {
 		t.Errorf("Name from FilePath = %q, want %q", got, "example.torrent")
 	}
 	if got := findStatus(t, statuses, idURL).Name; got != "example2.torrent" {
 		t.Errorf("Name from TorrentURL = %q, want %q", got, "example2.torrent")
+	}
+	// T-9057: the query, where an api key lives, is never part of the name.
+	if got := findStatus(t, statuses, idKeyed).Name; got != "example3.torrent" {
+		t.Errorf("Name from a TorrentURL with a query = %q, want %q", got, "example3.torrent")
 	}
 }
 

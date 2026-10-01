@@ -154,28 +154,38 @@ func (e *Engine) Restore(ctx context.Context, d engine.ResumeData) (string, erro
 		metainfo:   bytes.Clone(d.Metainfo),
 	}
 
+	// A session saved before T-9057 may name a torrent added by address
+	// with that address, api key and all; it is shown by host only.
+	name := engine.SafeName(d.Name)
+
 	dest, err := resolveDestination(d.SavePath, e.downloadDir, e.knownRoots())
 	if err != nil {
-		return e.trackFailed(prov, d.SavePath, d.Name, err)
+		return e.trackFailed(prov, d.SavePath, name, err)
 	}
 
 	switch {
 	case len(d.Metainfo) > 0:
-		return e.restoreMetainfo(prov, dest, d.Name)
+		return e.restoreMetainfo(prov, dest, name)
 
 	case trimmed(d.Magnet) != "":
 		spec, err := specFromMagnet(d.Magnet)
 		if err != nil {
-			return e.trackFailed(prov, dest, d.Name, err)
+			return e.trackFailed(prov, dest, name, err)
 		}
 
-		return e.addOrFail(spec, dest, d.Name, prov)
+		return e.addOrFail(spec, dest, name, prov)
 
 	case trimmed(d.TorrentURL) != "":
-		return e.addFromURL(ctx, d.TorrentURL, dest, prov)
+		// The saved name — the result's title the add flow recorded —
+		// until the .torrent is fetched again; the host when there is none.
+		if trimmed(name) == "" {
+			name = engine.URLSourceName(d.TorrentURL)
+		}
+
+		return e.addFromURL(ctx, d.TorrentURL, name, dest, prov)
 
 	default:
-		return e.trackFailed(prov, dest, d.Name, ErrNoSource)
+		return e.trackFailed(prov, dest, name, ErrNoSource)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -333,6 +334,12 @@ func resumeDataFrom(rec store.TorrentRecord) engine.ResumeData {
 // torrent. AddedAt is kept once set. Origin is kept when the engine reports
 // none, so an origin the add flow recorded directly in the store survives
 // (T-070); otherwise the engine's wins.
+//
+// Name is likewise kept — the result's title the add flow recorded — until
+// the engine knows the torrent's own name, which is when it has the
+// torrent's metainfo: before then the engine names a torrent added by
+// address only by the address's host (T-9057). A recorded name that is a web
+// address, as a session saved before T-9057 holds, is never kept.
 func mergeRecord(rec store.TorrentRecord, d engine.ResumeData, now time.Time) store.TorrentRecord {
 	if rec.AddedAt.IsZero() {
 		rec.AddedAt = now
@@ -343,8 +350,12 @@ func mergeRecord(rec store.TorrentRecord, d engine.ResumeData, now time.Time) st
 		rec.SourceURL = d.Origin.SourceURL
 	}
 
+	recordedTitle := strings.TrimSpace(rec.Name) != "" && engine.SafeName(rec.Name) == rec.Name
+	if !recordedTitle || len(d.Metainfo) > 0 {
+		rec.Name = engine.SafeName(d.Name)
+	}
+
 	rec.ID = d.ID
-	rec.Name = d.Name
 	rec.SavePath = d.SavePath
 	rec.Magnet = d.Magnet
 	rec.TorrentURL = d.TorrentURL
