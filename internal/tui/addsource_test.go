@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,7 @@ func TestAddSourceForChoosesExactlyOneLink(t *testing.T) {
 		{"magnet only", indexer.Result{Magnet: twoLinkMagnet}, twoLinkMagnet, ""},
 		{"url only", indexer.Result{TorrentURL: twoLinkURL}, "", twoLinkURL},
 		{"blank magnet beside a url", indexer.Result{Magnet: "  ", TorrentURL: twoLinkURL}, "", twoLinkURL},
+		{"magnet sent trimmed", indexer.Result{Magnet: " " + twoLinkMagnet + "\n", TorrentURL: twoLinkURL}, twoLinkMagnet, ""},
 	}
 
 	for _, tc := range cases {
@@ -78,10 +80,20 @@ func TestAddFlowSendsTheEngineExactlyOneSource(t *testing.T) {
 			wantURL: twoLinkURL,
 		},
 		{
-			// Torznab's Resolve derives a magnet from the infohash and
-			// leaves the enclosure in place.
-			name: "magnet derived by resolve beside a url",
-			r:    indexer.Result{TorrentURL: twoLinkURL, InfoHash: twoLinkHash},
+			// Torznab's Resolve builds no magnet from an infohash beside
+			// a torrent URL (DEC-147); it only normalises the hash.
+			name: "infohash beside a url",
+			r:    indexer.Result{TorrentURL: twoLinkURL, InfoHash: strings.ToUpper(twoLinkHash)},
+			resolve: func(r indexer.Result) (indexer.Result, error) {
+				r.InfoHash = strings.ToLower(r.InfoHash)
+				return r, nil
+			},
+			wantURL: twoLinkURL,
+		},
+		{
+			// A source with nothing but a hash: Resolve builds the magnet.
+			name: "magnet derived by resolve from a bare infohash",
+			r:    indexer.Result{InfoHash: twoLinkHash},
 			resolve: func(r indexer.Result) (indexer.Result, error) {
 				r.Magnet = twoLinkMagnet
 				return r, nil

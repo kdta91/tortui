@@ -543,6 +543,53 @@ func TestResolveLeavesATorrentURLAlone(t *testing.T) {
 	}
 }
 
+// TestResolvePrefersATorrentURLToAMagnetBuiltFromTheHash pins T-9056's
+// ordering (DEC-147): a result with an infohash and a torrent URL gets no
+// magnet built, since a hash-only magnet names no tracker and would beat the
+// URL at add time; only the hash is normalised. With no URL the magnet is
+// still built.
+func TestResolvePrefersATorrentURLToAMagnetBuiltFromTheHash(t *testing.T) {
+	t.Parallel()
+
+	src := newSource(t, searchable(t))
+	a := mustNew(t, src)
+
+	const (
+		hash = "0123456789ABCDEF0123456789ABCDEF01234567"
+		link = "https://feed.example.org/api?t=get&id=9056&apikey=placeholder"
+	)
+
+	after, err := a.Resolve(testContext(t), indexer.Result{ID: "item-9056", Title: "Invented Release", InfoHash: hash, TorrentURL: link})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	if after.Magnet != "" {
+		t.Fatalf("Magnet = %q, want none beside a torrent URL", after.Magnet)
+	}
+
+	if after.TorrentURL != link {
+		t.Errorf("TorrentURL = %q, want %q unchanged", after.TorrentURL, link)
+	}
+
+	if after.InfoHash != strings.ToLower(hash) {
+		t.Errorf("InfoHash = %q, want it normalised", after.InfoHash)
+	}
+
+	noURL, err := a.Resolve(testContext(t), indexer.Result{ID: "item-9056", Title: "Invented Release", InfoHash: hash, TorrentURL: "  "})
+	if err != nil {
+		t.Fatalf("Resolve without a URL: %v", err)
+	}
+
+	if !strings.HasPrefix(noURL.Magnet, "magnet:?xt=urn:btih:"+strings.ToLower(hash)) {
+		t.Fatalf("Magnet = %q, want one built from the hash when there is no URL", noURL.Magnet)
+	}
+
+	if len(src.requests()) != 0 {
+		t.Fatal("Resolve made a network request")
+	}
+}
+
 func TestResolveRefusesAResultWithNothingToWorkFrom(t *testing.T) {
 	t.Parallel()
 

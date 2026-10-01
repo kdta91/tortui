@@ -379,12 +379,14 @@ func (a *Adapter) Search(ctx context.Context, q indexer.Query) ([]indexer.Result
 //   - A result that already carries a magnet is returned unchanged. This is
 //     the no-op the frozen contract in AGENT.md §5 requires, and it is
 //     checked first so it holds regardless of anything else on the result.
-//   - A result with an infohash but no magnet gets one built from the hash
-//     and its title. That is the standard magnet form, it is what the
-//     engine needs, and it is derived entirely from data the source already
-//     published.
-//   - A result with only a torrent URL is already usable — the engine
-//     fetches the file — so it too is returned unchanged.
+//   - A result with a torrent URL is already usable — the engine fetches
+//     the file — so it is returned with no magnet added, only its infohash
+//     normalised. A magnet built from a hash names no tracker and would
+//     win over the URL at add time, stalling on a private tracker.
+//   - A result with an infohash and nothing else gets a magnet built from
+//     the hash and its title. That is the standard magnet form, it is what
+//     the engine needs, and it is derived entirely from data the source
+//     already published.
 //   - A result with none of the three cannot be resolved by anything this
 //     adapter knows, and returns ErrUnresolvable rather than a result that
 //     will fail later somewhere less obvious.
@@ -393,16 +395,25 @@ func (a *Adapter) Resolve(_ context.Context, r indexer.Result) (indexer.Result, 
 		return r, nil
 	}
 
+	// A torrent URL is checked before an infohash: a magnet built from a
+	// bare hash names no tracker, so on a private tracker (no DHT, no PEX)
+	// it never finds a peer, while the .torrent lists the tracker (T-9056,
+	// DEC-147). The hash is still normalised for duplicate detection.
+	if strings.TrimSpace(r.TorrentURL) != "" {
+		resolved := r
+		if hash := normaliseInfoHash(r.InfoHash); hash != "" {
+			resolved.InfoHash = hash
+		}
+
+		return resolved, nil
+	}
+
 	if hash := normaliseInfoHash(r.InfoHash); hash != "" {
 		resolved := r
 		resolved.InfoHash = hash
 		resolved.Magnet = magnetFor(hash, r.Title)
 
 		return resolved, nil
-	}
-
-	if strings.TrimSpace(r.TorrentURL) != "" {
-		return r, nil
 	}
 
 	// The failing result is not named. Every field that could name it —
