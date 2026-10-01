@@ -29,6 +29,27 @@ import (
 // FilePath set — there is nothing for even a fake engine to track.
 var ErrNoSource = errors.New("fake: no magnet, torrent URL, or file path given")
 
+// ErrAmbiguousSource reports an AddSource with more than one of Magnet,
+// TorrentURL, and FilePath set. The engine contract asks for exactly one,
+// and the real engine refuses the rest; the fake refuses them too, so a
+// caller that sets two fails its tests here rather than only in a real
+// run (T-9056).
+var ErrAmbiguousSource = errors.New("fake: set exactly one of Magnet, TorrentURL, and FilePath")
+
+// countSources reports how many of src's Magnet, TorrentURL, and FilePath
+// are set. A blank or whitespace-only field does not count.
+func countSources(src engine.AddSource) int {
+	n := 0
+
+	for _, s := range []string{src.Magnet, src.TorrentURL, src.FilePath} {
+		if strings.TrimSpace(s) != "" {
+			n++
+		}
+	}
+
+	return n
+}
+
 // ErrClosed reports a call made after Close.
 var ErrClosed = errors.New("fake: engine is closed")
 
@@ -75,15 +96,18 @@ func New() *Engine {
 
 // Add records a new torrent and assigns it a Script — from ScriptFor if set,
 // otherwise Downloading(30 * time.Second) — then applies that Script's event
-// at run time zero, if any, before returning.
+// at run time zero, if any, before returning. Like the real engine it
+// takes exactly one of Magnet, TorrentURL, and FilePath: none is
+// ErrNoSource, more than one ErrAmbiguousSource.
 func (e *Engine) Add(ctx context.Context, src engine.AddSource) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(src.Magnet) == "" &&
-		strings.TrimSpace(src.TorrentURL) == "" &&
-		strings.TrimSpace(src.FilePath) == "" {
+	switch n := countSources(src); {
+	case n == 0:
 		return "", ErrNoSource
+	case n > 1:
+		return "", ErrAmbiguousSource
 	}
 
 	e.mu.Lock()

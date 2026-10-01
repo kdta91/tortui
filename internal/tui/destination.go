@@ -553,9 +553,7 @@ func (m Model) confirmDestination(create bool) (tea.Model, tea.Cmd) {
 	r := m.dest.result
 	m.dest = destPicker{}
 
-	src := engine.AddSource{Magnet: r.Magnet, TorrentURL: r.TorrentURL, SavePath: path}
-
-	return m, addTorrentCmd(m.eng, src, !c.exists, r.Title, r.IndexerID, r.SourceURL)
+	return m, addTorrentCmd(m.eng, addSourceFor(r, path), !c.exists, r.Title, r.IndexerID, r.SourceURL)
 }
 
 // prepareDestination runs inside the add's tea.Cmd, before engine.Add: it
