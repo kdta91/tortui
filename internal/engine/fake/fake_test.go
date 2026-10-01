@@ -22,6 +22,45 @@ func TestAddRejectsEmptySource(t *testing.T) {
 	}
 }
 
+// TestAddRejectsMoreThanOneSource holds the fake to the engine contract's
+// "exactly one of Magnet, TorrentURL, or FilePath", as the real engine
+// does, so a TUI test against the fake catches a caller that sets two
+// (T-9056). Nothing is tracked for a refused add.
+func TestAddRejectsMoreThanOneSource(t *testing.T) {
+	const (
+		magnet = "magnet:?xt=urn:btih:9056905690569056905690569056905690569056"
+		link   = "https://feed.example.org/dl/9056.torrent"
+		file   = "example.torrent"
+	)
+
+	for name, src := range map[string]engine.AddSource{
+		"magnet and url":  {Magnet: magnet, TorrentURL: link},
+		"magnet and file": {Magnet: magnet, FilePath: file},
+		"url and file":    {TorrentURL: link, FilePath: file},
+		"all three":       {Magnet: magnet, TorrentURL: link, FilePath: file},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := New()
+			t.Cleanup(func() { _ = e.Close() })
+
+			if _, err := e.Add(context.Background(), src); !errors.Is(err, ErrAmbiguousSource) {
+				t.Fatalf("Add(%+v) error = %v, want %v", src, err, ErrAmbiguousSource)
+			}
+
+			if n := len(e.List()); n != 0 {
+				t.Fatalf("a refused add left %d torrent(s) tracked, want 0", n)
+			}
+		})
+	}
+
+	e := New()
+	t.Cleanup(func() { _ = e.Close() })
+
+	if _, err := e.Add(context.Background(), engine.AddSource{Magnet: magnet, TorrentURL: "  "}); err != nil {
+		t.Fatalf("Add(magnet, blank url) error = %v, want nil: a blank field is not a source", err)
+	}
+}
+
 func TestAddRejectsCancelledContext(t *testing.T) {
 	e := New()
 	t.Cleanup(func() { _ = e.Close() })

@@ -116,6 +116,22 @@ func addTorrentCmd(eng engine.Engine, src engine.AddSource, create bool, name, i
 	}
 }
 
+// addSourceFor builds the engine.AddSource for r, saved under savePath. The
+// engine takes exactly one of Magnet, TorrentURL, and FilePath, and refuses
+// more, but a Result often carries two links: a Torznab feed publishes a
+// magnet and an enclosure, or a scraper maps both. A non-blank Magnet
+// (sent trimmed) wins and TorrentURL is left empty — it may carry the user's api key, and the engine and the session
+// keep whatever source they are given. Otherwise TorrentURL is used.
+// confirmDestination is the one place the add flow builds an AddSource, so
+// the results and details screens both go through here (DEC-147).
+func addSourceFor(r indexer.Result, savePath string) engine.AddSource {
+	if magnet := strings.TrimSpace(r.Magnet); magnet != "" {
+		return engine.AddSource{Magnet: magnet, SavePath: savePath}
+	}
+
+	return engine.AddSource{TorrentURL: r.TorrentURL, SavePath: savePath}
+}
+
 // resolveResultMsg carries resolveCmd's indexer.Indexer.Resolve outcome back
 // into Update (root.go, handleResolveResult). result is r unchanged on
 // failure, so a caller that only inspects it on the success path never sees

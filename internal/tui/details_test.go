@@ -693,6 +693,9 @@ func TestStartAddResolvesWhenMagnetIsEmpty(t *testing.T) {
 	if addMsg.magnet != resolvedMagnet {
 		t.Errorf("addResultMsg.magnet = %q, want the resolved magnet %q", addMsg.magnet, resolvedMagnet)
 	}
+	if addMsg.torrentURL != "" {
+		t.Errorf("addResultMsg.torrentURL = %q, want empty: the resolved magnet is the one source (T-9056)", addMsg.torrentURL)
+	}
 
 	updated, _ = m.Update(addMsg)
 	m = updated.(Model)
