@@ -16,6 +16,7 @@ import (
 	"github.com/kdta91/tortui/internal/indexer/httpx"
 	"github.com/kdta91/tortui/internal/indexer/prowlarr"
 	"github.com/kdta91/tortui/internal/indexer/scraper"
+	"github.com/kdta91/tortui/internal/indexer/scraper/builtin"
 	"github.com/kdta91/tortui/internal/indexer/torznab"
 	"github.com/kdta91/tortui/internal/tui"
 )
@@ -57,6 +58,7 @@ type settingsManager struct {
 var (
 	_ tui.SourceManager      = (*settingsManager)(nil)
 	_ tui.PreferencesManager = (*settingsManager)(nil)
+	_ tui.BuiltinManager     = (*settingsManager)(nil)
 )
 
 // newSettingsManager builds the manager over cfg as loaded from path.
@@ -98,7 +100,7 @@ func (s *settingsManager) SaveSources(sources []config.Indexer) error {
 
 	s.cfg = next
 
-	if err := s.live.sync(next.Indexers, false); err != nil {
+	if err := s.live.sync(next, false); err != nil {
 		s.logger.Warn("settings: re-sync sources", "error", err)
 	}
 
@@ -136,14 +138,137 @@ func (s *settingsManager) probe(ctx context.Context, src config.Indexer) error {
 		return err
 	}
 
+	return probeSearch(ctx, a)
+}
+
+// probeSearch runs one small search against a, the scraper connection test.
+func probeSearch(ctx context.Context, a indexer.Indexer) error {
 	q := indexer.Query{Mode: indexer.ModeSearch, Text: scraperProbeText, Limit: 1}
 	if caps := a.Caps(); !caps.Search && caps.Latest {
 		q = indexer.Query{Mode: indexer.ModeLatest, Limit: 1}
 	}
 
-	_, err = a.Search(ctx, q)
+	_, err := a.Search(ctx, q)
 
 	return err
+}
+
+// BuiltinSources implements tui.BuiltinManager: every bundled source, in
+// definition order, with whether it is on (T-9069). A bundled id that an
+// [[indexer]] entry replaces is left out: that entry is the source the user
+// sees and edits.
+func (s *settingsManager) BuiltinSources() []tui.BuiltinSource {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	defs, err := builtin.Definitions()
+	if err != nil {
+		s.logger.Error("settings: load bundled definitions", "error", err)
+		return nil
+	}
+
+	replaced := make(map[string]bool, len(s.cfg.Indexers))
+	for _, ix := range s.cfg.Indexers {
+		replaced[ix.ID] = true
+	}
+
+	off := s.cfg.DisabledBuiltins
+
+	out := make([]tui.BuiltinSource, 0, len(defs))
+
+	for _, d := range defs {
+		if !replaced[d.ID] {
+			out = append(out, tui.BuiltinSource{ID: d.ID, Name: d.Name, Enabled: !slices.Contains(off, d.ID)})
+		}
+	}
+
+	return out
+}
+
+// SetBuiltinEnabled implements tui.BuiltinManager: it writes the new
+// disabled list to config.toml, then re-syncs the registry so Search offers
+// the source or not at once. An id that is not a bundled source is refused.
+func (s *settingsManager) SetBuiltinEnabled(id string, enabled bool) error {
+	known, err := builtinIDs()
+	if err != nil {
+		return err
+	}
+
+	if !slices.Contains(known, id) {
+		return fmt.Errorf("%q is not a built-in source", id)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	next := cloneConfig(s.cfg)
+	next.DisabledBuiltins = slices.DeleteFunc(next.DisabledBuiltins, func(x string) bool { return x == id })
+
+	if !enabled {
+		next.DisabledBuiltins = append(next.DisabledBuiltins, id)
+	}
+
+	if err := config.Save(s.path, next); err != nil {
+		return fmt.Errorf("save built-in source: %w", err)
+	}
+
+	s.cfg = next
+
+	if err := s.live.sync(next, false); err != nil {
+		s.logger.Warn("settings: re-sync sources", "error", err)
+	}
+
+	s.logger.Info("settings: built-in source toggled", "source", id, "enabled", enabled)
+
+	return nil
+}
+
+// TestBuiltin implements tui.BuiltinManager: one bounded probe of a bundled
+// source, the same small search a configured scraper source gets.
+func (s *settingsManager) TestBuiltin(ctx context.Context, id string) error {
+	defs, err := bundledDefinitions(s.defsDir, s.logger)
+	if err != nil && len(defs) == 0 {
+		return err
+	}
+
+	for _, def := range defs {
+		if def.ID != id {
+			continue
+		}
+
+		a, err := scraper.New(scraper.Options{Definition: def, Client: newClient(httpx.Credentials{}, s.transport)})
+		if err != nil {
+			return fmt.Errorf("build built-in source: %w", err)
+		}
+
+		err = probeSearch(ctx, a)
+
+		outcome := "reachable"
+		if err != nil {
+			outcome = "failed"
+		}
+
+		s.logger.Info("settings: built-in source tested", "source", id, "outcome", outcome)
+
+		return err
+	}
+
+	return fmt.Errorf("%q is not a built-in source", id)
+}
+
+// builtinIDs lists the bundled source ids.
+func builtinIDs() ([]string, error) {
+	defs, err := builtin.Definitions()
+	if err != nil {
+		return nil, fmt.Errorf("load bundled definitions: %w", err)
+	}
+
+	ids := make([]string, 0, len(defs))
+	for _, d := range defs {
+		ids = append(ids, d.ID)
+	}
+
+	return ids, nil
 }
 
 // ImportDefinition implements tui.SourceManager: it installs the definition
@@ -176,7 +301,7 @@ func (s *settingsManager) ReloadDefinitions() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.live.sync(s.cfg.Indexers, true); err != nil {
+	if err := s.live.sync(s.cfg, true); err != nil {
 		return fmt.Errorf("reload definitions: %w", err)
 	}
 
@@ -230,6 +355,7 @@ func (s *settingsManager) SaveConfig(cfg config.Config) error {
 
 	next := cloneConfig(cfg)
 	next.Indexers = slices.Clone(s.cfg.Indexers)
+	next.DisabledBuiltins = slices.Clone(s.cfg.DisabledBuiltins)
 
 	dirs := make([]string, 0, len(next.SavedDestinations)+1)
 
@@ -280,6 +406,7 @@ func cloneConfig(cfg config.Config) config.Config {
 	out := cfg
 	out.SavedDestinations = slices.Clone(cfg.SavedDestinations)
 	out.Indexers = slices.Clone(cfg.Indexers)
+	out.DisabledBuiltins = slices.Clone(cfg.DisabledBuiltins)
 
 	return out
 }

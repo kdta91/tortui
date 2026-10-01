@@ -92,6 +92,29 @@ type AggregatorIndexer struct {
 	FeedURL string
 }
 
+// BuiltinSource is one bundled source (T-9069): compiled into the binary,
+// on until the user turns it off, never editable or removable.
+type BuiltinSource struct {
+	ID      string
+	Name    string
+	Enabled bool
+}
+
+// BuiltinManager is what the settings screen needs to list, switch and test
+// the bundled sources. A SourceManager that also implements it gets built-in
+// rows; one that does not (a fake, the demo) shows none.
+type BuiltinManager interface {
+	// BuiltinSources lists the bundled sources and whether each is on.
+	BuiltinSources() []BuiltinSource
+
+	// SetBuiltinEnabled persists the on/off state and re-syncs the live
+	// registry, so the Search screen offers or drops the source at once.
+	SetBuiltinEnabled(id string, enabled bool) error
+
+	// TestBuiltin runs one bounded probe of the bundled source id.
+	TestBuiltin(ctx context.Context, id string) error
+}
+
 // Option wiring for the settings screen.
 
 // WithSourceManager wires sm as the settings screen's source of truth.
@@ -591,7 +614,7 @@ func (m Model) lastOutcome(indexerID string) string {
 
 // handleSettingsMoveCursor moves the list cursor by delta, clamped.
 func (m Model) handleSettingsMoveCursor(delta int) (tea.Model, tea.Cmd) {
-	n := len(m.sourceRows())
+	n := len(m.sourceRows()) + len(m.builtinSnapshot)
 	if n == 0 {
 		m.settings.cursor = 0
 		return m, nil
@@ -608,7 +631,42 @@ func (m Model) handleSettingsMoveCursor(delta int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// selectedSource returns the row the settings cursor points at.
+// builtinManager returns the source manager's built-in support, or nil.
+func (m Model) builtinManager() BuiltinManager {
+	if m.sources == nil {
+		return nil
+	}
+
+	bm, _ := m.sources.(BuiltinManager)
+
+	return bm
+}
+
+// selectedBuiltin returns the built-in row the settings cursor points at.
+// Built-in rows follow the configured ones.
+func (m Model) selectedBuiltin() (BuiltinSource, bool) {
+	i := m.settings.cursor - len(m.sourceRows())
+	if i < 0 || i >= len(m.builtinSnapshot) {
+		return BuiltinSource{}, false
+	}
+
+	return m.builtinSnapshot[i], true
+}
+
+// selectedRow names the row under the cursor, configured or built-in.
+func (m Model) selectedRow() (id, name string, ok bool) {
+	if src, found := m.selectedSource(); found {
+		return src.ID, src.Name, true
+	}
+
+	if b, found := m.selectedBuiltin(); found {
+		return b.ID, b.Name, true
+	}
+
+	return "", "", false
+}
+
+// selectedSource returns the configured row the settings cursor points at.
 func (m Model) selectedSource() (config.Indexer, bool) {
 	rows := m.sourceRows()
 	if m.settings.cursor < 0 || m.settings.cursor >= len(rows) {
@@ -633,6 +691,10 @@ func (m Model) handleSourceAdd() (tea.Model, tea.Cmd) {
 // handleSourceEdit opens an edit form pre-filled from the selected row
 // ("e").
 func (m Model) handleSourceEdit() (tea.Model, tea.Cmd) {
+	if _, ok := m.selectedBuiltin(); ok {
+		return m.pushStatus(builtinLockedMsg("edited"))
+	}
+
 	src, ok := m.selectedSource()
 	if !ok {
 		return m.pushStatus("no source selected")
@@ -652,6 +714,10 @@ func (m Model) handleSourceEdit() (tea.Model, tea.Cmd) {
 // the two toggles cancel each other out into a lost update (found in
 // review). A failed save reverts the snapshot in handleSourcesSaveResult.
 func (m Model) handleSourceToggleEnabled() (tea.Model, tea.Cmd) {
+	if b, ok := m.selectedBuiltin(); ok {
+		return m.toggleBuiltin(b)
+	}
+
 	src, ok := m.selectedSource()
 	if !ok || m.sources == nil {
 		return m, nil
@@ -673,6 +739,10 @@ func (m Model) handleSourceToggleEnabled() (tea.Model, tea.Cmd) {
 
 // handleSourceRemove opens the remove confirmation ("x").
 func (m Model) handleSourceRemove() (tea.Model, tea.Cmd) {
+	if _, ok := m.selectedBuiltin(); ok {
+		return m.pushStatus(builtinLockedMsg("removed"))
+	}
+
 	src, ok := m.selectedSource()
 	if !ok {
 		return m.pushStatus("no source selected")
@@ -683,6 +753,60 @@ func (m Model) handleSourceRemove() (tea.Model, tea.Cmd) {
 	m.settings.removeConfirm = m.settings.removeConfirm.Open()
 
 	return m, nil
+}
+
+// builtinLockedMsg is the status line for an edit or remove on a built-in
+// row: its definition is compiled in, so the only off switch is disabling it.
+func builtinLockedMsg(verb string) string {
+	return "built-in sources are compiled in and can't be " + verb + " - space turns one off"
+}
+
+// builtinToggleResultMsg reports SetBuiltinEnabled's outcome; previous is
+// the built-in snapshot before the optimistic flip, restored on failure.
+type builtinToggleResultMsg struct {
+	err      error
+	previous []BuiltinSource
+}
+
+func setBuiltinCmd(bm BuiltinManager, id string, enabled bool, previous []BuiltinSource) tea.Cmd {
+	return func() tea.Msg {
+		return builtinToggleResultMsg{err: bm.SetBuiltinEnabled(id, enabled), previous: previous}
+	}
+}
+
+// toggleBuiltin flips a built-in row and saves at once, optimistically for
+// the same reason handleSourceToggleEnabled is.
+func (m Model) toggleBuiltin(b BuiltinSource) (tea.Model, tea.Cmd) {
+	bm := m.builtinManager()
+	if bm == nil {
+		return m, nil
+	}
+
+	previous := append([]BuiltinSource(nil), m.builtinSnapshot...)
+	next := append([]BuiltinSource(nil), previous...)
+
+	for i := range next {
+		if next[i].ID == b.ID {
+			next[i].Enabled = !next[i].Enabled
+		}
+	}
+
+	m.builtinSnapshot = next
+
+	return m, setBuiltinCmd(bm, b.ID, !b.Enabled, previous)
+}
+
+// handleBuiltinToggleResult applies a built-in toggle's outcome: a failed
+// save puts the row back; a saved one refreshes the Search screen's source
+// list from the registry, so both screens show the same state.
+func (m Model) handleBuiltinToggleResult(msg builtinToggleResultMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.builtinSnapshot = msg.previous
+
+		return m.pushStatus(fmt.Sprintf("couldn't save built-in source: %v", msg.err))
+	}
+
+	return m.refreshSearchSources(), nil
 }
 
 // handleSourceRemoveConfirmAction routes a key while ContextSourceRemoveConfirm
@@ -862,6 +986,10 @@ func classifyProbeError(err error) probeOutcome {
 // same in-flight state would have no ordering guarantee (the same
 // discipline download_actions.go's pause/resume already applies, DEC-115).
 func (m Model) handleSourceTest() (tea.Model, tea.Cmd) {
+	if b, ok := m.selectedBuiltin(); ok {
+		return m.testBuiltin(b)
+	}
+
 	src, ok := m.selectedSource()
 	if !ok || m.sources == nil {
 		return m.pushStatus("no source selected")
@@ -881,6 +1009,36 @@ func (m Model) handleSourceTest() (tea.Model, tea.Cmd) {
 	updated, cmd := m.pushStatus("testing " + src.Name + "…")
 
 	return updated, tea.Batch(cmd, testSourceCmd(m.sources, src, ctx, cancel, gen))
+}
+
+// testBuiltin starts the `t` probe for a built-in row, with the same
+// one-at-a-time rule and bookkeeping as a configured source's.
+func (m Model) testBuiltin(b BuiltinSource) (tea.Model, tea.Cmd) {
+	bm := m.builtinManager()
+	if bm == nil {
+		return m.pushStatus("no source selected")
+	}
+
+	if m.settings.testingID != "" {
+		return m.pushStatus("a test is already running — esc cancels it")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), sourceTestTimeout)
+
+	m.settings.testingID = b.ID
+	m.settings.probeCancel = cancel
+	m.settings.probeGen++
+	gen := m.settings.probeGen
+
+	updated, cmd := m.pushStatus("testing " + b.Name + "…")
+
+	run := func() tea.Msg {
+		defer cancel()
+
+		return sourceProbeResultMsg{id: b.ID, name: b.Name, gen: gen, err: bm.TestBuiltin(ctx, b.ID)}
+	}
+
+	return updated, tea.Batch(cmd, run)
 }
 
 // handleSourceTestCancel implements esc while a probe is in flight on the
@@ -906,6 +1064,13 @@ func (m Model) handleSourceTestCancel() (tea.Model, tea.Cmd) {
 		}
 	}
 
+	for _, b := range m.builtinSnapshot {
+		if b.ID == m.settings.testingID {
+			name = b.Name
+			break
+		}
+	}
+
 	m.settings.testingID = ""
 	m.settings.probeCancel = nil
 
@@ -915,12 +1080,12 @@ func (m Model) handleSourceTestCancel() (tea.Model, tea.Cmd) {
 // handleSourceTestDetailOpen implements `d` on the settings list: opens the
 // connection-test detail panel for the selected source, if it has one.
 func (m Model) handleSourceTestDetailOpen() (tea.Model, tea.Cmd) {
-	src, ok := m.selectedSource()
+	id, _, ok := m.selectedRow()
 	if !ok {
 		return m.pushStatus("no source selected")
 	}
 
-	if _, ok := m.settings.lastProbe[src.ID]; !ok {
+	if _, ok := m.settings.lastProbe[id]; !ok {
 		return m.pushStatus("no test result for this source yet — press t first")
 	}
 
@@ -1470,6 +1635,9 @@ func maskSecret(v string, reveal bool) string {
 // settingsScreenLegend documents the list-view keys keymap.go deliberately
 // keeps out of the `?` overlay (the 80×24 budget) — shown here instead so
 // they stay discoverable without ever needing the config file.
+// builtinTag is the type column text of a built-in source's row.
+const builtinTag = "built-in"
+
 const settingsScreenLegend = "a add · e edit · t test (esc cancels) · d test detail · space enable/disable · x remove · r reload definitions · p preferences"
 
 // renderSettingsScreen draws ScreenSettings' real body: the source list, or
@@ -1481,9 +1649,14 @@ func (m Model) renderSettingsScreen() string {
 
 	rows := m.sourceRows()
 
-	if len(rows) == 0 {
+	if len(rows) == 0 && len(m.builtinSnapshot) == 0 {
 		b.WriteString(th.Muted.Render("No sources configured. Press 'a' to add one."))
 		return truncateLines(b.String(), m.width)
+	}
+
+	// Built-in sources follow the configured ones, tagged in the type column.
+	for _, bs := range m.builtinSnapshot {
+		rows = append(rows, config.Indexer{ID: bs.ID, Name: bs.Name, Type: builtinTag, Enabled: bs.Enabled})
 	}
 
 	for i, s := range rows {
@@ -1623,14 +1796,14 @@ func (m Model) renderSourceTestDetail() string {
 
 	var b strings.Builder
 
-	src, ok := m.selectedSource()
+	id, rowName, ok := m.selectedRow()
 
 	name := "source"
 	if ok {
-		name = src.Name
+		name = rowName
 	}
 
-	result, ok := m.settings.lastProbe[src.ID]
+	result, ok := m.settings.lastProbe[id]
 	if !ok {
 		b.WriteString(th.Muted.Render("no test result for this source"))
 		return truncateLines(b.String(), m.width)

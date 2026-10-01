@@ -5031,3 +5031,34 @@ when it fits and otherwise flows "key action" runs (`compactHelp`), clipped to t
 `wrapLegend` wraps " · " legends between hints. The preferences footer text was shortened to fit two
 lines. The unreachable screen placeholder (`placeholderTask`) was removed with its tracker ids.
 12 mutations killed (DEC-149).
+
+### T-9069 · Bundled sources are visible in Settings and `doctor`
+
+```
+status: done
+depends: T-9061
+tier: M
+```
+Owner request (2026-10-01). A README audit found the one bundled source invisible: Settings showed
+"No sources configured" and `tortui doctor` showed "Indexers: none configured" while Search queried
+it, so a new user could not see, test or turn off the only source they had.
+
+**Acceptance:**
+1. Settings lists every bundled source as a row tagged `built-in`, after the configured sources. `t`
+   and `d` work on it; `space` turns it on or off, saved to the config and kept across restarts.
+2. `e` and `x` on a built-in row are refused with a clear message; nothing is saved.
+3. The Search screen's source list matches Settings after a toggle; a fresh install still has the
+   bundled source on, and nothing is queried at launch (DEC-137).
+4. `tortui doctor` probes each bundled source like a configured one, labelled `[built-in]`, with no
+   address or credential in the output; a disabled one is listed, not probed.
+5. `--demo` (no source manager) still opens Settings without a crash.
+6. Config example documents the new key. No test probes a real address. Every guard is
+   mutation-tested. Backlog entries for the review notes from PR #82.
+
+**Notes:** New config key `disabled_builtin` (list of ids; default empty = all on); `liveSources.sync`
+now takes the whole config and skips a bundled id on it. The older [[indexer]]-entry override still
+works, and such an id shows as that entry, not a built-in row (DEC-150). tui gets an optional
+`BuiltinManager` interface that `settingsManager` implements, so fakes and the demo are unchanged;
+`doctor.Options.Builtins` is supplied by `app.DoctorBuiltins` (doctor imports no adapter) and the cmd
+tests stub it so no test probes a real address. 8 of 9 mutations killed; the survivor (slice
+aliasing in `cloneConfig`) is not observable through the manager's copy-on-write.

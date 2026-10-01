@@ -43,7 +43,9 @@ straight away. Runs on **macOS, Linux, and Windows**.
 tortui ships with a couple of **lawful default sources** — public archives and dataset
 repositories that officially distribute over BitTorrent — so it works the moment you install it.
 Beyond those, there are no built-in endpoints and no default source list. You add whatever else
-you want, and tortui talks to exactly that.
+you want, and tortui talks to exactly that. The defaults appear in Settings tagged `built-in`: `t`
+tests one, `space` turns it off (kept across restarts as `disabled_builtin` in the config), and
+`tortui doctor` checks them too. A built-in cannot be edited or removed.
 
 It also doesn't build an index of its own. No DHT crawling, no infohash database, no mirroring
 someone else's index. It queries the sources you point it at and shows you what they return.

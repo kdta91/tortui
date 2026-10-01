@@ -2,11 +2,19 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kdta91/tortui/internal/doctor"
 )
+
+// Every runDoctor test runs the real wiring, so the bundled sources are
+// replaced by none: no test may probe a real address (AGENT.md §6.7).
+func init() { doctorBuiltins = func() []doctor.Builtin { return nil } }
 
 // sandboxHome points TORTUI_HOME at a fresh temp directory so a doctor run
 // never touches the real user config/state/downloads (AGENT.md §15).
@@ -191,5 +199,34 @@ func TestRunDoctorOutputHasNoANSIEscapes(t *testing.T) {
 
 	if strings.Contains(out, "\x1b[") {
 		t.Fatalf("doctor output contains an ANSI escape sequence, want plain pipeable text:\n%q", out)
+	}
+}
+
+// TestRunDoctorListsAndProbesABuiltinSource: the built-in list reaches the
+// report, probed and labelled, against a local test server.
+func TestRunDoctorListsAndProbesABuiltinSource(t *testing.T) {
+	sandboxHome(t)
+	t.Setenv("TERM", "xterm-256color")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer srv.Close()
+
+	old := doctorBuiltins
+	doctorBuiltins = func() []doctor.Builtin {
+		return []doctor.Builtin{{ID: "archive-src", Name: "Archive Source", URL: srv.URL}}
+	}
+
+	defer func() { doctorBuiltins = old }()
+
+	out, code := captureOutput(t, func(w *os.File) int {
+		return run([]string{"doctor"}, w)
+	})
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, output:\n%s", code, out)
+	}
+
+	if !strings.Contains(out, "Archive Source (archive-src) [built-in]: reachable") || strings.Contains(out, "none configured") {
+		t.Fatalf("built-in line missing:\n%s", out)
 	}
 }
