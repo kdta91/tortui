@@ -1297,13 +1297,18 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.Type {
-	case tea.KeyRunes:
+	case tea.KeyRunes, tea.KeySpace:
 		field := f.current()
 		if field == fieldType {
 			return m, nil
 		}
 
+		// Bubble Tea reports the space bar as tea.KeySpace, not KeyRunes.
 		text := string(msg.Runes)
+		if msg.Type == tea.KeySpace {
+			text = " "
+		}
+
 		f = f.setFieldValue(field, f.fieldValue(field)+text)
 		f.dirty = true
 
@@ -1510,7 +1515,7 @@ func (m Model) renderSettingsScreen() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(th.Muted.Render(settingsScreenLegend))
+	b.WriteString(th.Muted.Render(wrapLegend(settingsScreenLegend, m.width)))
 
 	return truncateLines(strings.TrimRight(b.String(), "\n"), m.width)
 }
@@ -1602,7 +1607,7 @@ func (m Model) renderSourceForm() string {
 	body := th.Border.Width(inner).Render(strings.TrimRight(b.String(), "\n"))
 	help := "tab/shift+tab/↑/↓ move · left/right toggle type · ctrl+s/enter save · tab completes import path · enter on import field imports · ctrl+t test · ctrl+r reveal · esc cancel"
 
-	return body + "\n" + th.Muted.Render(theme.Truncate(help, m.width))
+	return body + "\n" + th.Muted.Render(wrapLegend(help, m.width))
 }
 
 // renderSourceRemoveConfirm draws the `x` confirmation dialog.
@@ -1652,4 +1657,38 @@ func (m Model) renderSourceTestDetail() string {
 	}
 
 	return truncateLines(strings.TrimRight(b.String(), "\n"), m.width)
+}
+
+// wrapLegend wraps a " · "-separated key legend onto as many lines as width
+// needs, breaking only between hints, so no hint is cut and none is lost on
+// a narrow terminal. A single hint wider than width is truncated.
+func wrapLegend(legend string, width int) string {
+	if width <= 0 {
+		return legend
+	}
+
+	const sep = " · "
+
+	var (
+		lines []string
+		line  string
+	)
+
+	for _, hint := range strings.Split(legend, sep) {
+		switch {
+		case line == "":
+			line = hint
+		case theme.Width(line+sep+hint) <= width:
+			line += sep + hint
+		default:
+			lines = append(lines, theme.Truncate(line, width))
+			line = hint
+		}
+	}
+
+	if line != "" {
+		lines = append(lines, theme.Truncate(line, width))
+	}
+
+	return strings.Join(lines, "\n")
 }

@@ -507,24 +507,40 @@ func (m Model) renderDownloadsScreen() string {
 		)
 	}
 
-	var b strings.Builder
-
-	cursor := 0
+	// lines is the whole body, one entry per line; starts holds the index of
+	// every block's first line (a section title or a row), and selStart/
+	// selEnd bound the selected row, so the window below can scroll by
+	// whole blocks while keeping the selected row on screen.
+	var (
+		lines    []string
+		starts   []int
+		selStart = -1
+		selEnd   = -1
+		cursor   int
+	)
 
 	writeSection := func(title string, statuses []engine.TorrentStatus) {
 		if len(statuses) == 0 {
 			return
 		}
 
-		if b.Len() > 0 {
-			b.WriteString("\n\n")
+		if len(lines) > 0 {
+			lines = append(lines, "")
 		}
 
-		b.WriteString(th.Muted.Render(title))
+		starts = append(starts, len(lines))
+		lines = append(lines, th.Muted.Render(title))
 
 		for _, s := range statuses {
-			b.WriteString("\n\n")
-			b.WriteString(m.renderDownloadRow(s, cursor == m.downloads.cursor))
+			lines = append(lines, "")
+			starts = append(starts, len(lines))
+
+			row := strings.Split(m.renderDownloadRow(s, cursor == m.downloads.cursor), "\n")
+			if cursor == m.downloads.cursor {
+				selStart, selEnd = len(lines), len(lines)+len(row)
+			}
+
+			lines = append(lines, row...)
 			cursor++
 		}
 	}
@@ -532,5 +548,36 @@ func (m Model) renderDownloadsScreen() string {
 	writeSection(fmt.Sprintf("Active (%d)", len(active)), active)
 	writeSection(fmt.Sprintf("Completed (%d)", len(completed)), completed)
 
-	return truncateLines(b.String(), m.width)
+	if budget := m.bodyBudget(true); budget > 0 && len(lines) > budget {
+		lines = scrollWindow(lines, starts, selStart, selEnd, budget)
+	}
+
+	return truncateLines(strings.Join(lines, "\n"), m.width)
+}
+
+// scrollWindow returns the budget-line slice of lines that keeps the
+// selected block [selStart, selEnd) visible, starting on a block boundary
+// (starts) so a row is never cut at its top unless it alone exceeds the
+// budget, in which case its top is kept and its tail clipped.
+func scrollWindow(lines []string, starts []int, selStart, selEnd, budget int) []string {
+	offset := 0
+
+	if selEnd > budget {
+		offset = selEnd - budget
+
+		for _, st := range starts {
+			if st >= offset {
+				offset = st
+				break
+			}
+		}
+	}
+
+	if selStart >= 0 && offset > selStart {
+		offset = selStart
+	}
+
+	end := min(offset+budget, len(lines))
+
+	return lines[offset:end]
 }
