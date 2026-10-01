@@ -650,7 +650,11 @@ func (e *Engine) Add(ctx context.Context, src engine.AddSource) (string, error) 
 		return e.addSpec(spec, dest, provenance{})
 
 	case sourceURL:
-		return e.addFromURL(ctx, src.TorrentURL, dest, provenance{torrentURL: src.TorrentURL})
+		// The address is never the display name: it may carry the user's
+		// api key or passkey (T-9057). Until the .torrent is fetched the
+		// torrent is named by the address's host alone.
+		return e.addFromURL(ctx, src.TorrentURL, engine.URLSourceName(src.TorrentURL), dest,
+			provenance{torrentURL: src.TorrentURL})
 
 	default:
 		return "", ErrNoSource
@@ -760,7 +764,10 @@ func specFromFile(path string) (*torrent.TorrentSpec, error) {
 // the URL (and the Add call's context values) until the queue promotes it,
 // and queued is true; otherwise the caller starts the fetch, having been
 // counted in e.wg under the same lock that checked the engine is open.
-func (e *Engine) track(ctx context.Context, dest, rawURL string, prov provenance) (tr *tracked, queued bool, err error) {
+//
+// name is the display name until the fetched .torrent names the torrent; it
+// is never rawURL (T-9057).
+func (e *Engine) track(ctx context.Context, dest, rawURL, name string, prov provenance) (tr *tracked, queued bool, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -768,7 +775,7 @@ func (e *Engine) track(ctx context.Context, dest, rawURL string, prov provenance
 		return nil, false, ErrClosed
 	}
 
-	t := prov.newTracked(e.mintIDLocked(prov.id), dest, rawURL)
+	t := prov.newTracked(e.mintIDLocked(prov.id), dest, name)
 	t.state = engine.StateChecking
 
 	e.torrents[t.id] = t
@@ -935,9 +942,10 @@ func (e *Engine) precheckSpec(spec *torrent.TorrentSpec, dest string) error {
 // background fetch carries ctx's values (e.g. tracing) forward but not its
 // cancellation or deadline: ctx belongs to the Add call, which has already
 // returned by the time the fetch runs, while the fetch's own lifetime is
-// governed by the metadata timeout instead.
-func (e *Engine) addFromURL(ctx context.Context, rawURL, dest string, prov provenance) (string, error) {
-	tr, queued, err := e.track(ctx, dest, rawURL, prov)
+// governed by the metadata timeout instead. name is the display name until
+// the fetched .torrent supplies the torrent's own.
+func (e *Engine) addFromURL(ctx context.Context, rawURL, name, dest string, prov provenance) (string, error) {
+	tr, queued, err := e.track(ctx, dest, rawURL, name, prov)
 	if err != nil {
 		return "", err
 	}

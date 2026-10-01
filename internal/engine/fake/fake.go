@@ -361,13 +361,18 @@ func (e *Engine) publishLocked() {
 
 // nameFor derives a display name for a newly added torrent from whichever
 // of Magnet, TorrentURL, or FilePath is set, falling back to id when none of
-// them yields anything useful.
+// them yields anything useful. A TorrentURL is named by the last segment of
+// its path only — never its query, which may carry an api key (T-9057).
 func nameFor(src engine.AddSource, id string) string {
 	switch {
 	case src.FilePath != "":
 		return filepath.Base(src.FilePath)
 	case src.TorrentURL != "":
-		if base := path.Base(src.TorrentURL); base != "" && base != "." && base != "/" {
+		u, err := url.Parse(src.TorrentURL)
+		if err != nil {
+			return id
+		}
+		if base := path.Base(u.Path); base != "" && base != "." && base != "/" {
 			return base
 		}
 		return id
