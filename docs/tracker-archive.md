@@ -4928,8 +4928,9 @@ early whenever colour was on, hid "couldn't add torrent", so the picker closed a
    the same path.
 3. A TUI test against an engine that refuses more than one source: enter on Results (and Details)
    with a two-link Result, accept the picker; no error, Downloads shown, one source added and
-   persisted. Cases: URL-only adds by URL; magnet-only unchanged; a magnet Resolve derives beside
-   a URL adds by magnet. Zero network.
+   persisted. Cases: URL-only adds by URL; magnet-only unchanged; an infohash beside a URL adds by
+   the URL, since Resolve builds a magnet from a bare hash only when there is no URL (a trackerless
+   magnet stalls on a private tracker). Zero network.
 4. The status bar measures and truncates visible text, not escape codes, and when space is short
    drops less important segments before the transient message. With a forced colour profile, a
    message is whole at 80 and 100 columns beside a failed-sources and a cache hint; the line never
@@ -4939,10 +4940,11 @@ early whenever colour was on, hid "couldn't add torrent", so the picker closed a
    until metadata arrives.
 
 **Notes:** `addSourceFor` (details.go) builds the AddSource in `confirmDestination`, the one point
-both screens reach after Resolve, dedup and the picker: magnet wins, else TorrentURL (DEC-147). The
-record and resume data copy the AddSource, so they hold only the chosen link. The fake engine now
-refuses two sources (`ErrAmbiguousSource`) as the real one does. An app test drives the real Torznab
-adapter, registry, offline engine and TUI for a magneturl item and an infohash-only item, each with
-an api-key enclosure. `StatusBar.View` measures each segment's plain text, drops cache hint, rates,
-active count, failed-sources hint, then screen name, truncates only the message, and styles after
-truncating. 9 mutations killed (3 helper, 1 fake, 5 status bar). Backlog T-9057, T-9058.
+both screens reach after Resolve, dedup and the picker: trimmed magnet wins, else TorrentURL
+(DEC-147); record and resume data copy it. Review round 1: torznab Resolve now checks TorrentURL
+before the infohash (as the scraper did), so a private-tracker result with hash and enclosure is
+added by the `.torrent`, not a trackerless magnet. Fake engine refuses two links. App test: real
+Torznab adapter, registry, offline engine and TUI; magneturl item adds by magnet, infohash item by
+its loopback enclosure. `StatusBar.View` measures plain text, drops cache hint, rates, active count,
+failed hint, screen name, then cuts the message; styles after truncating. 12 mutations killed
+(4 helper, 1 fake, 5 status bar, 2 Resolve). Backlog T-9057, T-9058.

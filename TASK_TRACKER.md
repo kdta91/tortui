@@ -931,7 +931,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-144 | 2026-09-29 | T-9045: a scraper base_url with any userinfo fails validation; httpx refuses any redirect whose target carries userinfo; torznab links have their userinfo dropped, the link kept; magnets untouched |
 | DEC-145 | 2026-09-30 | T-9046: refines DEC-144; httpx follows a redirect whose userinfo is byte-identical to the original request's (as written in the Location, or inherited by a relative one), only on the original host and effective port; scheme rule unchanged; every other userinfo redirect refused |
 | DEC-146 | 2026-09-30 | T-9049: httpx recognises net/http's unparseable-Location error by its leading text and replaces it with `ErrRedirectLocationInvalid` at the request host; no Location text kept; every other cause unchanged |
-| DEC-147 | 2026-10-01 | T-9056: an add sends the engine one link: a non-blank magnet, else the TorrentURL; chosen once in the TUI at `confirmDestination`; engine contract unchanged |
+| DEC-147 | 2026-10-01 | T-9056: an add sends the engine one link: a published magnet, else the TorrentURL, chosen once at `confirmDestination`; torznab Resolve builds a magnet from a hash only when there is no TorrentURL |
 
 ## Blocked
 
