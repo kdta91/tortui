@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kdta91/tortui/internal/tui/theme"
 )
@@ -147,29 +148,116 @@ func (s StatusBar) DetailLines() []string {
 	return lines
 }
 
-// View renders the status bar as a single line naming screen, truncated to
-// fit width columns (T-052 acceptance: "truncates gracefully at 80
-// columns"). It is pure: no I/O, no mutation, safe to call every render.
+// View renders the status bar as a single line naming screen, fitted to
+// width columns (T-052 acceptance: "truncates gracefully at 80 columns").
+// It is pure: no I/O, no mutation, safe to call every render.
+//
+// Widths are measured on each segment's plain text, before it is styled:
+// a styled string's escape codes take no columns on screen, and measuring
+// them cut the line far too early whenever colour was on (T-9056). When
+// the line does not fit, whole segments are dropped, least important
+// first — cache hint, rates, active count, the source-failure hint, then
+// the screen name — so the transient message, which is gone in seconds,
+// is the last thing cut, and only once it alone is too wide.
 func (s StatusBar) View(width int, screen string, th theme.Theme) string {
-	parts := []string{
-		th.Foreground.Render(strings.ToUpper(screen[:1]) + screen[1:]),
-		th.Muted.Render(fmt.Sprintf("%d active", s.ActiveDownloads)),
-		th.Muted.Render(fmt.Sprintf("down %s up %s", formatRate(s.DownRate), formatRate(s.UpRate))),
+	segs := s.segments(screen, th)
+
+	for statusWidth(segs) > width {
+		drop := -1
+
+		for i, seg := range segs {
+			if seg.rank > 0 && (drop < 0 || seg.rank < segs[drop].rank) {
+				drop = i
+			}
+		}
+
+		if drop < 0 {
+			break
+		}
+
+		segs = append(segs[:drop:drop], segs[drop+1:]...)
+	}
+
+	return renderSegments(segs, width)
+}
+
+// statusSeparator sits between segments.
+const statusSeparator = "  "
+
+// statusSegment is one field of the status bar: its plain text, the style
+// it renders in, and its rank. A lower rank is dropped first when the line
+// is too wide; rank 0 is never dropped.
+type statusSegment struct {
+	text  string
+	style lipgloss.Style
+	rank  int
+}
+
+// segments lists the status bar's fields in display order.
+func (s StatusBar) segments(screen string, th theme.Theme) []statusSegment {
+	segs := []statusSegment{
+		{text: strings.ToUpper(screen[:1]) + screen[1:], style: th.Foreground, rank: 5},
+		{text: fmt.Sprintf("%d active", s.ActiveDownloads), style: th.Muted, rank: 3},
+		{text: fmt.Sprintf("down %s up %s", formatRate(s.DownRate), formatRate(s.UpRate)), style: th.Muted, rank: 2},
 	}
 
 	if failed := len(s.FailedSources); s.SourcesTotal > 0 && failed > 0 {
-		parts = append(parts, th.Error.Render(fmt.Sprintf("%d/%d sources failed (e to view)", failed, s.SourcesTotal)))
+		segs = append(segs, statusSegment{text: fmt.Sprintf("%d/%d sources failed (e to view)", failed, s.SourcesTotal), style: th.Error, rank: 4})
 	}
 
 	if s.CacheHint != "" {
-		parts = append(parts, th.Muted.Render(s.CacheHint))
+		segs = append(segs, statusSegment{text: s.CacheHint, style: th.Muted, rank: 1})
 	}
 
 	if s.current != "" {
-		parts = append(parts, th.Accent.Render(s.current))
+		segs = append(segs, statusSegment{text: s.current, style: th.Accent})
 	}
 
-	return theme.Truncate(strings.Join(parts, "  "), width)
+	return segs
+}
+
+// statusWidth is the visible width segs take joined by statusSeparator.
+func statusWidth(segs []statusSegment) int {
+	w := 0
+
+	for i, seg := range segs {
+		if i > 0 {
+			w += theme.Width(statusSeparator)
+		}
+
+		w += theme.Width(seg.text)
+	}
+
+	return w
+}
+
+// renderSegments styles and joins segs, truncating the plain text — never
+// a styled string — so the visible line is at most width columns.
+func renderSegments(segs []statusSegment, width int) string {
+	var b strings.Builder
+
+	left := width
+
+	for i, seg := range segs {
+		if i > 0 {
+			if left <= theme.Width(statusSeparator) {
+				break
+			}
+
+			b.WriteString(statusSeparator)
+			left -= theme.Width(statusSeparator)
+		}
+
+		text := theme.Truncate(seg.text, left)
+		if text == "" {
+			break
+		}
+
+		b.WriteString(seg.style.Render(text))
+		left -= theme.Width(text)
+	}
+
+	return b.String()
 }
 
 // formatRate renders bps as a compact human-readable rate. It never returns
