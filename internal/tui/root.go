@@ -1143,6 +1143,27 @@ func (m Model) renderErrorDetail() string {
 	return b.String()
 }
 
+// bodyBudget is how many lines a screen body may use so the whole View fits
+// m.height: the status bar and its blank separator, the demo banner and its
+// separator when set, and, when withTabs, the tab bar and its separator. It
+// returns 0 (no limit) before the first WindowSizeMsg.
+func (m Model) bodyBudget(withTabs bool) int {
+	if m.height <= 0 {
+		return 0
+	}
+
+	used := 2
+	if m.Banner != "" {
+		used += 2
+	}
+
+	if withTabs {
+		used += 2
+	}
+
+	return max(m.height-used, 3)
+}
+
 // renderScreen draws the tab bar and the current screen's placeholder body.
 func (m Model) renderScreen() string {
 	var b strings.Builder
@@ -1190,8 +1211,7 @@ func itoa(n int) string {
 
 // renderScreenBody draws the current screen's real content, where a task has
 // built one (ScreenSearch, T-060, search.go; ScreenResults, T-061,
-// results.go), or its placeholder otherwise (see keymap.go's
-// Screen.placeholderTask for which task owns it).
+// results.go), or a bare screen name otherwise.
 func (m Model) renderScreenBody() string {
 	switch m.screen {
 	case ScreenSearch:
@@ -1206,7 +1226,7 @@ func (m Model) renderScreenBody() string {
 		return m.renderSettingsScreen()
 	}
 
-	body := m.screen.String() + " screen — placeholder, see " + m.screen.placeholderTask()
+	body := m.screen.String() + " screen"
 	return theme.Truncate(body, m.width)
 }
 
@@ -1220,12 +1240,20 @@ func (m Model) renderHelp() string {
 	b.WriteString(m.theme.Accent.Render("Keys"))
 	b.WriteString("\n\n")
 
-	for _, line := range m.keys.HelpFor(screenContext(m.screen)) {
-		b.WriteString(m.theme.Foreground.Render(line))
-		b.WriteString("\n")
+	rows := append(m.keys.HelpFor(screenContext(m.screen)), m.keys.HelpFor(ContextHelp)...)
+
+	// The table (one binding per line) is the layout whenever it fits. On a
+	// short terminal (the 80x24 floor, or with the demo banner) it would push
+	// the "Keys" heading off the top, so the bindings flow as wrapped
+	// "key action" runs instead, clipped to what is left.
+	if budget := m.bodyBudget(false) - 2; budget > 0 && len(rows) > budget {
+		rows = compactHelp(rows, m.width)
+		if len(rows) > budget {
+			rows = rows[:budget]
+		}
 	}
 
-	for _, line := range m.keys.HelpFor(ContextHelp) {
+	for _, line := range rows {
 		b.WriteString(m.theme.Foreground.Render(line))
 		b.WriteString("\n")
 	}
@@ -1235,6 +1263,39 @@ func (m Model) renderHelp() string {
 	// screen's overlay (the longest) would scroll its "Keys" heading off an
 	// 80x24 terminal (T-9034 added one binding to it).
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// compactHelp turns HelpFor's "key<pad>action" lines into "key action"
+// entries joined by a dot and wrapped greedily to width, so a long binding
+// list takes a third of the lines. An entry wider than width is truncated.
+func compactHelp(rows []string, width int) []string {
+	const sep = "  ·  "
+
+	var (
+		out  []string
+		line string
+	)
+
+	for _, r := range rows {
+		key, text, _ := strings.Cut(r, " ")
+		entry := key + " " + strings.TrimLeft(text, " ")
+
+		switch {
+		case line == "":
+			line = entry
+		case width <= 0 || theme.Width(line+sep+entry) <= width:
+			line += sep + entry
+		default:
+			out = append(out, theme.Truncate(line, width))
+			line = entry
+		}
+	}
+
+	if line != "" {
+		out = append(out, theme.Truncate(line, width))
+	}
+
+	return out
 }
 
 // renderQuitConfirm draws the one-shot "active downloads" quit prompt

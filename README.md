@@ -350,7 +350,7 @@ markers — regenerate and paste instead.
 | `x` | remove (opens keep/delete data confirm) | downloads |
 | `?` | toggle this help overlay | global |
 | `q` / `ctrl+c` | quit (prompts if downloads active) | global |
-| `e` | view source errors, if any (T-052; DEC-092) | search, results, details, downloads |
+| `e` | view source errors, if any | search, results, details, downloads |
 <!-- keymap:end -->
 
 On the Search screen, `space` on a source row toggles that source in or out of the search (the

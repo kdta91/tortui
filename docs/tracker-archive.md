@@ -4994,3 +4994,40 @@ by its path's last segment, no query. App test: real Torznab adapter, offline en
 TUI, gated and failing enclosure, restart each; every rendered byte, record and debug log checked;
 reverting the fix fails it. 16 mutations killed (2 helper, 4 engine incl. logging the raw address,
 3 record, 6 TUI, 1 fake); the app's masking file log hides even that logged address.
+
+### T-9061 · UI fixes from the README audit
+
+```
+status: done
+depends: T-9057
+tier: M
+```
+Owner request (2026-10-01). A README audit drove the real app in a pty at several sizes and found
+four UI faults: spaces dropped from text inputs, screens overflowing 80x24, truncated key legends,
+and tracker ids in user-facing text.
+
+**Acceptance:**
+1. A typed space is kept in every text input: the add/edit source form (name, URL, key, cookie,
+   definition, import fields), the aggregator import wizard, the destination picker's path, the
+   preferences panel and Search. Each has a test.
+2. Downloads is clipped to the terminal height: the tab bar stays the first line and the status bar
+   the last, with or without the demo banner, at 80x24, 100x30 and 120x40. The selected row stays
+   visible when moving past the fold, in both directions.
+3. The `?` overlay keeps its "Keys" heading and fits 80x24 on every screen, with or without the
+   banner, and loses no binding.
+4. The Settings legend, the add/edit form footer, the preferences footer and the aggregator footer
+   wrap onto more lines instead of cutting hints with "...": `p preferences`, `r reload
+   definitions`, `ctrl+t test` and `esc` are all findable at 80 columns.
+5. No tracker or decision id (`T-0nn`, `DEC-nnn`) appears in any user-visible string: the `e` Help
+   text is cleaned and the README keymap table regenerated (the only README change).
+6. Every guard is mutation-tested. Backlog T-9062 to T-9067 from the review of PR #81 and the audit.
+
+**Notes:** Space: `tea.KeySpace` joins `KeyRunes` in the source form and the aggregator wizard (the
+picker, preferences and Search already had it). `Model.bodyBudget` (root.go) is the line count a body
+may use under the tab bar, banner and status bar. Downloads builds its body as lines and
+`scrollWindow` shows a budget-line window starting on a block boundary that contains the selected
+row (a row taller than the room keeps its top). `renderHelp` keeps the one-binding-per-line table
+when it fits and otherwise flows "key action" runs (`compactHelp`), clipped to the budget.
+`wrapLegend` wraps " · " legends between hints. The preferences footer text was shortened to fit two
+lines. The unreachable screen placeholder (`placeholderTask`) was removed with its tracker ids.
+12 mutations killed (DEC-149).

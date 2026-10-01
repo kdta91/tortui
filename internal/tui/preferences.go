@@ -1049,7 +1049,7 @@ func (m Model) destinationInUse(dir string) bool {
 
 // preferencesLegend documents the panel's own keys, the same one-line
 // legend convention settingsScreenLegend already uses for the source list.
-const preferencesLegend = "tab/shift+tab move · left/right cycle/toggle · enter on \"add\" adds a destination, saves elsewhere · ctrl+x remove destination · ctrl+s save · esc back"
+const preferencesLegend = "tab/shift+tab move · left/right cycle/toggle · enter add destination/save · ctrl+x remove destination · ctrl+s save · esc back"
 
 // renderPreferencesScreen draws the open preferences panel. Pure
 // (AGENT.md §6.8).
@@ -1136,5 +1136,5 @@ func (m Model) renderPreferencesScreen() string {
 
 	body := th.Border.Width(inner).Render(strings.TrimRight(b.String(), "\n"))
 
-	return body + "\n" + th.Muted.Render(theme.Truncate(preferencesLegend, m.width))
+	return body + "\n" + th.Muted.Render(wrapLegend(preferencesLegend, m.width))
 }

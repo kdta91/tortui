@@ -178,8 +178,11 @@ func (m Model) handleAggregatorInputKey(msg tea.KeyMsg, f aggregatorForm) (tea.M
 	}
 
 	switch msg.Type {
-	case tea.KeyRunes:
+	case tea.KeyRunes, tea.KeySpace:
 		text := string(msg.Runes)
+		if msg.Type == tea.KeySpace {
+			text = " "
+		}
 
 		if f.cursor == int(aggregatorFieldAPIKey) {
 			f.apiKey += text
@@ -511,7 +514,7 @@ func (m Model) renderAggregatorImport() string {
 		legend = aggregatorImportListLegend
 	}
 
-	return body + "\n" + th.Muted.Render(theme.Truncate(legend, m.width))
+	return body + "\n" + th.Muted.Render(wrapLegend(legend, m.width))
 }
 
 func (m Model) renderAggregatorInputFields(b *strings.Builder, th theme.Theme, textW int, f aggregatorForm) {

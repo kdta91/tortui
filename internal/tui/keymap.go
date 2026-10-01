@@ -76,26 +76,6 @@ func (s Screen) String() string {
 	}
 }
 
-// placeholderTask names the tracker task that owns this screen's real
-// content, shown in the placeholder body so a reader landing on a screen
-// mid-build knows where its implementation lives.
-func (s Screen) placeholderTask() string {
-	switch s {
-	case ScreenSearch:
-		return "T-060"
-	case ScreenResults:
-		return "T-061"
-	case ScreenDetails:
-		return "T-063"
-	case ScreenDownloads:
-		return "T-071"
-	case ScreenSettings:
-		return "T-080"
-	default:
-		return ""
-	}
-}
-
 // next returns the screen after s in screenOrder, wrapping around.
 func (s Screen) next() Screen {
 	for i, sc := range screenOrder {
@@ -375,7 +355,7 @@ func GlobalBindings() []Binding {
 			// (settingsScreenBindings) — the two never need to coexist on
 			// the same screen.
 			Keys: []string{"e"}, Action: ActionToggleErrorDetail,
-			Help:     "view source errors, if any (T-052; DEC-092)",
+			Help:     "view source errors, if any",
 			Contexts: []Context{screenContext(ScreenSearch), screenContext(ScreenResults), screenContext(ScreenDetails), screenContext(ScreenDownloads)},
 		},
 	}
