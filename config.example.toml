@@ -64,7 +64,7 @@ ascii = false
 # id      = "my-indexer"
 # name    = "My Indexer"
 # type    = "torznab"
-# url     = "http://localhost:9696/api/v1/indexer/1/newznab"
+# url     = "http://localhost:9696/1/api"
 # api_key = "paste-your-own-key-here"
 # enabled = true
 

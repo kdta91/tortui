@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor`.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes.
 
 ---
 
@@ -100,7 +100,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041, T-9045, T-9046, T-9049, T-9052, T-9056, T-9057, T-9061 and T-9069, are `done`.
+- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041, T-9045, T-9046, T-9049, T-9052, T-9056, T-9057, T-9061, T-9069 and T-9073, are `done`.
 - [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI. The race jobs
       (T-9025) are advisory per PR under DEC-107 but must all be green before the release tag.
 - [ ] Coverage thresholds from AGENT.md §9 met.
@@ -801,7 +801,20 @@ when it reaches it and does not start backlog items on its own.
   pinned at the bottom edge until the top is reached. A remembered offset would feel smoother.
   Non-blocking note from review of T-9061 (PR #82).
 - `T-9072` After adding an [[indexer]] entry whose id is a bundled source's, the Settings built-in
-  row stays until restart (the snapshot is read at start). Found during T-9069.
+  row stays until restart (the snapshot is read at start). Found during T-9069. Also the reverse:
+  removing an [[indexer]] override of a bundled id re-registers the built-in, but Settings shows no
+  row until restart. Suggested fix: return BuiltinSources from the save Cmd's result message.
+- `T-9074` Add a test for the `cloneConfig` DisabledBuiltins copy. The review of PR #83 showed that
+  without the clone a failed save mutates in-memory state. (T-9069's archived note calling the
+  survivor "not observable" is wrong.)
+- `T-9075` `doctor` probes the embedded definition's address, while Settings `t` honours a user's
+  definitions-dir override of the bundled id; the two can disagree.
+- `T-9076` Misplaced doc comment in `internal/tui/settings.go` (about line 1635): `const builtinTag`
+  sits between the `settingsScreenLegend` doc comment and its constant. Move it.
+- `T-9077` The Search empty state says "No sources configured. Press 'a' to add one." when the only
+  built-in is disabled. It should point to Settings.
+- `T-9078` `make run` should set TORTUI_HOME so the dev run does not touch real state, lock and
+  downloads. Noted in the README by T-9073.
 
 ---
 

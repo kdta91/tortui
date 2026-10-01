@@ -8,10 +8,10 @@ Single static binary that works on its own. No daemon, no indexer proxy, no Tran
 qBittorrent behind it, nothing to install first — download it and you can search and download
 straight away. Runs on **macOS, Linux, and Windows**.
 
-> **Status:** under active development, pre-release. Plain `tortui` runs the real app — your
-> config, the bundled sources plus your own, the built-in engine, real downloads that resume
+> **Status:** feature-complete, awaiting the v1.0.0 tag. Plain `tortui` runs the real app — your
+> config, the bundled source plus your own, the built-in engine, real downloads that resume
 > after a restart. `tortui --demo` runs the same UI against synthetic data. See
-> [`TASK_TRACKER.md`](TASK_TRACKER.md) for current build state.
+> [`TASK_TRACKER.md`](TASK_TRACKER.md) for the v1.0 release checklist.
 
 ---
 
@@ -36,16 +36,18 @@ straight away. Runs on **macOS, Linux, and Windows**.
 - **Resumes where it left off.** Downloads come back after a restart without re-fetching pieces
   already verified. Each download folder gets a hidden piece-record file (`.torrent.db` or
   `.torrent.bolt.db`) for this; leave it in place.
-- **Minimal by design.** One accent colour, no boxes, readable at 80×24.
+- **Minimal by design.** One accent colour, boxes only for dialogs and forms, and a layout that
+  fits 80×24.
 
 ## What it deliberately doesn't do
 
-tortui ships with a couple of **lawful default sources** — public archives and dataset
-repositories that officially distribute over BitTorrent — so it works the moment you install it.
-Beyond those, there are no built-in endpoints and no default source list. You add whatever else
-you want, and tortui talks to exactly that. The defaults appear in Settings tagged `built-in`: `t`
-tests one, `space` turns it off (kept across restarts as `disabled_builtin` in the config), and
-`tortui doctor` checks them too. A built-in cannot be edited or removed.
+tortui ships with exactly one **lawful default source**, the Internet Archive, which officially
+distributes its public-domain and openly licensed material over BitTorrent, so it works the moment
+you install it. Beyond that one, there are no built-in endpoints and no default source list. You
+add whatever else you want, and tortui talks to exactly that. The Internet Archive appears in
+Settings tagged `built-in`: `t` tests it, `space` turns it off (kept across restarts as
+`disabled_builtin` in the config), and `tortui doctor` checks it too. A built-in cannot be edited
+or removed.
 
 It also doesn't build an index of its own. No DHT crawling, no infohash database, no mirroring
 someone else's index. It queries the sources you point it at and shows you what they return.
@@ -193,34 +195,32 @@ tortui --demo       # full UI with fake data, no network, nothing to clean up
 correctly in your terminal. It uses a simulated engine and canned results — nothing is
 downloaded and nothing is written outside a temp directory.
 
-[![asciinema recording of tortui --demo](https://img.shields.io/badge/asciicast-docs%2Fassets%2Fdemo.cast-blue)](docs/assets/demo.cast)
-
-The recording above (`docs/assets/demo.cast`, standard asciinema v2 format — play it locally
-with `asciinema play docs/assets/demo.cast` or at [asciinema.org](https://asciinema.org)) was
-captured straight from `--demo`, so every source id, filename, and path in it is synthetic
+There is also a short asciinema recording at [`docs/assets/demo.cast`](docs/assets/demo.cast)
+(standard asciinema v2 format — play it locally with `asciinema play docs/assets/demo.cast`). It
+was captured straight from `--demo`, so every source id, filename, and path in it is synthetic
 fixture data, not anything real.
 
 Running `tortui` with no flags starts the real thing — your own config, your own sources, real
 downloads. On first run it writes a default config (the status bar says where) and shows a
-one-time welcome with the legal notice. It opens on an empty Search screen and queries nothing until you
-search or press `L`. Only one
-tortui runs per state directory; a second one says so and exits. Quitting (`q`), `SIGINT`, or
+one-time welcome with the legal notice. It opens on an empty Search screen and queries nothing
+until you search or press `L`. Only one tortui runs per state directory; a second one says so and
+exits. Quitting (`q`), `SIGINT`, or
 `SIGTERM` pauses and saves your downloads before exiting, and the next start resumes them.
 
 ---
 
 ## Configuring a source
 
-tortui works out of the box. A few sources are built into the binary and enabled on first run,
-so you can search and download without configuring anything or installing anything else. They
-cover public archives, research datasets, and distro releases — the material that's officially
-distributed over BitTorrent.
+tortui works out of the box. One source, the Internet Archive, is built into the binary and
+enabled on first run, so you can search and download without configuring anything or installing
+anything else. It shows in Settings tagged `built-in`, and `space` turns it off. It covers the
+public-domain and openly licensed material the Archive itself distributes over BitTorrent.
 
 Anything beyond that, you add yourself. Everything below is how.
 
 **The easiest way is inside the app.** Press `5` for Settings, then `a` to add a source. You get
-a form with validation as you type and a `t` key to test the connection before saving — no need
-to touch a config file.
+a form with validation as you type and `ctrl+t` to test the connection before saving — no need
+to touch a config file. Later, on the Settings list, plain `t` tests the selected source.
 
 If you'd rather edit the file directly, it lives at:
 
@@ -252,18 +252,23 @@ tortui splits it into the right fields for you. Or in the file:
 id      = "my-indexer"
 name    = "My Indexer"
 type    = "torznab"
-url     = "http://localhost:9696/api/v1/indexer/1/newznab"
+url     = "http://localhost:9696/1/api"
 api_key = "paste-your-own-key-here"
 enabled = true
 ```
 
-Settings also has an import option: point it at your aggregator once and pick which of its
-indexers to add, rather than adding them one at a time.
+Settings also has an import option for Prowlarr: on a blank add form with the type set to
+torznab, move to the "Import from aggregator (enter opens it)" field (just above "ID
+(override)") and press `enter`; give Prowlarr's base URL and your own API key, and pick which
+of its indexers to add, rather than adding them one at a time. The `1` in the URL above is
+Prowlarr's id for that indexer.
 
 ### Option B — scraper definition
 
 For a source with no Torznab endpoint, tortui uses a YAML definition describing where the fields
-live on the page. You can import one from a file or URL via Settings → `a` → import, or write
+live on the page. With the type set to scraper, the add form has an "Import from (path or URL)"
+field: type a path or a URL (`tab` completes a path), then press `enter` to import it. If you
+save with a path still typed there and no definition file set, the import runs first. Or write
 your own. Definitions live in the `definitions/` directory next to your config:
 
 | OS | Path |
@@ -404,7 +409,9 @@ kitty, Windows Terminal, the VS Code integrated terminal, tmux, GNU screen, and 
   your font renders them badly.
 - Piping output or running with `TERM=dumb` prints a message and exits rather than emitting
   escape-sequence garbage.
-- Minimum usable size is 80×24. Below that, columns drop right-to-left rather than wrapping.
+- Minimum usable size is 80×24; Downloads, Settings, the forms and the `?` overlay are
+  tested to fit it. On a narrower window the results table drops its Source column first, then
+  Age, then Trust, rather than wrapping.
 
 **Windows:** use [Windows Terminal](https://aka.ms/terminal). Legacy `conhost` (the old console
 window) can't render the UI properly, and tortui will tell you so instead of trying.
@@ -414,7 +421,9 @@ window) can't render the UI properly, and tortui will tell you so instead of try
 ## Troubleshooting
 
 Run `tortui doctor` first. It reports your terminal capabilities, resolved paths, file-descriptor
-limits, and whether each configured source is reachable — which covers most problems. Its output
+limits, and whether each source is reachable — your configured ones and the built-in one
+(marked `[built-in]`). A disabled source is listed but skipped, not probed. That covers most
+problems. Its output
 is plain text and safe to paste into an issue; credentials are masked.
 
 **macOS: "cannot be opened because the developer cannot be verified"**
@@ -450,13 +459,13 @@ Unblock-File "$env:LOCALAPPDATA\Programs\tortui\tortui.exe"
 ```
 
 **Search returns nothing**
-Check Settings (`5`) → select the source → `t` to test it. Distinguishes *unreachable* from
-*auth failed* from *parse failed*. Auth failures mean your API key or cookie is wrong or expired.
+Check Settings (`5`) → select the source (the built-in one included) → `t` to test it.
+Distinguishes *unreachable* from *auth failed* from *parse failed*. Auth failures mean your API key or cookie is wrong or expired.
 Parse failures on a scraper source usually mean the site changed its markup — update the YAML.
 
 **Some sources fail but others work**
-Intended. A failing source never blocks the rest; the status bar shows `2/4 sources failed` and
-`tab` expands the detail.
+Intended. A failing source never blocks the rest; the status bar shows
+`2/4 sources failed (e to view)`. `e` opens the list, `tab` collapses it, and `esc` closes it.
 
 **A download is refused, or an active one pauses itself with no peer error**
 Intended — `min_free_space` (default 1GB). Adding a torrent that would leave less than that much
@@ -467,10 +476,9 @@ with `p`.
 
 **I changed a setting in the preferences panel and nothing happened**
 Most fields need a restart to take effect — the save confirmation names exactly which ones
-("restart to apply: ..."). Only the download directory, saved destinations, and the free-space
-margin apply immediately; rate limits, peer/port limits, seed policy, search timeout, theme, and
-ASCII mode are read once at startup and take a restart. `ascii = true` is the one exception this
-mirrors: forcing it live has no code path yet either (Backlog `T-982`).
+("restart to apply: ..."), and the panel marks them "(restart required)". Only the download
+directory, saved destinations, and the free-space margin apply immediately; everything else,
+including theme and ASCII mode, takes effect on the next start.
 
 **Columns are misaligned or the table looks garbled**
 Usually a font without block-glyph coverage. Try `ascii = true` in `config.toml`. If it happens
@@ -495,12 +503,14 @@ git clone https://github.com/kdta91/tortui.git
 cd tortui
 make check      # fmt + lint + vet + tests — the commit gate
 make build      # → bin/tortui
-make run        # run against ./dev-config.toml
+make run        # run with --config ./dev-config.toml (state and downloads stay in the real places)
 make build-all  # cross-compile all six OS/arch targets
 make release-check  # validate .goreleaser.yaml + a local snapshot build (no publish)
 ```
 
-Use a scratch directory so development never touches your real config:
+`make run` only passes `--config ./dev-config.toml`; the state directory, lock file and downloads
+still use the real locations. To keep development away from your real data, use a scratch
+directory:
 
 ```sh
 TORTUI_HOME=$(mktemp -d) ./bin/tortui
