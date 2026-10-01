@@ -258,16 +258,18 @@ enabled = true
 ```
 
 Settings also has an import option for Prowlarr: on a blank add form with the type set to
-torznab, the last field is "Import from aggregator"; press `enter` on it, give Prowlarr's address
-and your own API key, and pick which of its indexers to add, rather than adding them one at a
-time. The `1` in the URL above is Prowlarr's id for that indexer.
+torznab, move to the "Import from aggregator (enter opens it)" field (just above "ID
+(override)") and press `enter`; give Prowlarr's base URL and your own API key, and pick which
+of its indexers to add, rather than adding them one at a time. The `1` in the URL above is
+Prowlarr's id for that indexer.
 
 ### Option B — scraper definition
 
 For a source with no Torznab endpoint, tortui uses a YAML definition describing where the fields
 live on the page. With the type set to scraper, the add form has an "Import from (path or URL)"
 field: type a path or a URL (`tab` completes a path), then press `enter` to import it. If you
-save with a path still typed there, the import runs first. Or write your own. Definitions live in the `definitions/` directory next to your config:
+save with a path still typed there and no definition file set, the import runs first. Or write
+your own. Definitions live in the `definitions/` directory next to your config:
 
 | OS | Path |
 |---|---|
@@ -457,8 +459,8 @@ Unblock-File "$env:LOCALAPPDATA\Programs\tortui\tortui.exe"
 ```
 
 **Search returns nothing**
-Check Settings (`5`) → select the source (the built-in one included) → `t` to test it. Distinguishes *unreachable* from
-*auth failed* from *parse failed*. Auth failures mean your API key or cookie is wrong or expired.
+Check Settings (`5`) → select the source (the built-in one included) → `t` to test it.
+Distinguishes *unreachable* from *auth failed* from *parse failed*. Auth failures mean your API key or cookie is wrong or expired.
 Parse failures on a scraper source usually mean the site changed its markup — update the YAML.
 
 **Some sources fail but others work**
