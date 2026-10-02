@@ -5351,3 +5351,33 @@ swaps the snapshot and clamps the Settings cursor. T-9077's premise was partly w
 the add form from an empty Search screen (root.go), so the real defect was the wording for the
 all-off case, which now names Settings (`5`). `DoctorBuiltins` takes the definitions directory;
 `cmd/tortui/doctor.go` passes the loaded config's path. No DEC: no new design choice.
+
+### T-9106 · One Enter runs the Search; Trust sort is a total order
+
+```
+status: done
+depends: T-9101
+tier: M
+```
+Promotes Backlog T-9066 and T-9067. The first Enter in the Search query field only committed the
+field and a second one ran the search, and the empty-query hint promised Latest while editing; the
+Trust sort showed blank-badge rows at both ends because Unknown was pinned last and None sorted
+first, and equal rows had no tie-break.
+
+**Acceptance:**
+1. One Enter in the query field runs the search with the typed text, spaces kept; with an empty query
+   it runs Latest. Enter in the min-seeders field only commits. Tested through `Update`: one Enter
+   emits the dispatch Cmd with `ModeSearch` and the text, or `ModeLatest` and no text.
+2. The empty-query hint is shown while editing and while idle, and names Latest only when a selected
+   source can serve it; otherwise it says none can. Tested in each state.
+3. Trust sorts Unknown < None < Verified < Trusted < VIP ascending (reversed for descending), so
+   the blank-badge rows sit together at one end in both directions. Ties break by seeders (more
+   first, unknown last), then title without case, then id, in the same direction either way. A mixed,
+   shuffled slice gives the exact expected order both ways, identical across 20 shuffles. DEC-158.
+4. Reverting each fix fails its test (quoted in the PR). `make check`, `make race PKG=./internal/tui/...`
+   and `make cover` are green.
+
+**Notes:** `Table` gained an optional `TieBreak`; the results model sets it. The `SortMissingLast`
+hook is no longer used for Trust (still used by S/L). Existing tests that pressed Enter twice, or
+used Enter to commit a field without searching, now send one Enter or Esc. Backlog T-9107 to T-9110
+from the PR #92 review.

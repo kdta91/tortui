@@ -163,8 +163,7 @@ func TestAddingATwoLinkTorznabResult(t *testing.T) {
 			waitForAny(t, tm, "Welcome to tortui")
 			tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 			tm.Type("/corpus")
-			tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // commit the query field
-			tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // submit the search
+			tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // one enter submits the search
 			waitForAny(t, tm, "Synthetic Two Link Corpus")
 
 			tm.Send(tea.KeyMsg{Type: tea.KeyEnter})

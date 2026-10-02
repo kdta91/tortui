@@ -2,6 +2,8 @@ package tui
 
 import (
 	"io"
+	"math/rand"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -270,36 +272,71 @@ func sampleResultsForTrust(now time.Time) []indexer.Result {
 	}
 }
 
-// TestTrustSortOrdersByRealTrustAndPinsUnknownLast is T-062's acceptance:
-// "Sortable by trust" (in real indexer.Trust order, not badge text — VIP,
-// Trusted, and Verified all render distinct badges but None and Unknown
-// both render blank) and "TrustUnknown sorts last", checked in both
-// directions since a user pressing "S" must never see Unknown jump to the
-// top.
-func TestTrustSortOrdersByRealTrustAndPinsUnknownLast(t *testing.T) {
+// trustRowIDs lists a table's row ids in order.
+func trustRowIDs(m resultsModel) []string {
+	var ids []string
+	for _, r := range m.table.Rows() {
+		ids = append(ids, r.ID)
+	}
+
+	return ids
+}
+
+// TestTrustSortIsATotalOrder is T-9106 (DEC-158): a mixed slice sorts by
+// VIP > Trusted > Verified > None > Unknown, so the two blank-badge levels
+// are adjacent at one end in either direction, and equal-trust rows fall
+// back to seeders (descending), then title, then id. The input is shuffled
+// and re-sorted many times; the order never changes.
+func TestTrustSortIsATotalOrder(t *testing.T) {
 	now := time.Now()
+	mk := func(id, title string, seeders int, tr indexer.Trust) indexer.Result {
+		return indexer.Result{IndexerID: "a", ID: id, Title: title, Seeders: seeders, Trust: tr, Published: now}
+	}
+	in := []indexer.Result{
+		mk("u1", "Zulu", 5, indexer.TrustUnknown),
+		mk("v1", "alpha", 1, indexer.TrustVerified),
+		mk("n1", "bravo", 9, indexer.TrustNone),
+		mk("vip", "vip", 0, indexer.TrustVIP),
+		mk("u2", "Echo", 5, indexer.TrustUnknown),
+		mk("v2", "Alpha", 1, indexer.TrustVerified),
+		mk("n2", "charlie", 9, indexer.TrustNone),
+		mk("t1", "tr", 3, indexer.TrustTrusted),
+		mk("v3", "mid", 7, indexer.TrustVerified),
+		mk("u3", "Zulu", 8, indexer.TrustUnknown),
+		mk("n3", "alpha", 2, indexer.TrustNone),
+		mk("k0", "zero seeders", 0, indexer.TrustTrusted),
+		mk("k?", "unknown seeders", 0, indexer.TrustTrusted),
+	}
+	in[len(in)-1].Extra = map[string]string{indexer.ExtraKeySeedersUnknown: "1"}
 
-	m2 := newResultsModel().setResults(sampleResultsForTrust(now), indexer.ModeSearch, now)
-	m2.table = m2.table.SortBy(colTrust) // ascending
-
-	rows := m2.table.Rows()
-	if rows[len(rows)-1].ID != "alpha|unknown" {
-		t.Fatalf("ascending: last row = %+v, want TrustUnknown last", rows[len(rows)-1])
+	// v1 ("alpha") and v2 ("Alpha") tie on seeders and, case-folded, on
+	// title, so the id decides: v1 before v2.
+	wantDesc := []string{
+		"a|vip", "a|t1", "a|k0", "a|k?", "a|v3", "a|v1", "a|v2", "a|n1", "a|n2", "a|n3", "a|u3", "a|u2", "a|u1",
 	}
 
-	if rows[0].ID != "alpha|none" {
-		t.Fatalf("ascending: first row = %+v, want the lowest known trust (None) first", rows[0])
+	wantAsc := []string{
+		"a|u3", "a|u2", "a|u1", "a|n1", "a|n2", "a|n3", "a|v3", "a|v1", "a|v2", "a|t1", "a|k0", "a|k?", "a|vip",
 	}
 
-	m2.table = m2.table.SortBy(colTrust) // toggle to descending
-	rows = m2.table.Rows()
+	for run := 0; run < 20; run++ {
+		shuffled := append([]indexer.Result(nil), in...)
+		rand.New(rand.NewSource(int64(run))).Shuffle(len(shuffled), func(i, j int) {
+			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+		})
 
-	if rows[len(rows)-1].ID != "alpha|unknown" {
-		t.Fatalf("descending: last row = %+v, want TrustUnknown still last", rows[len(rows)-1])
-	}
+		m := newResultsModel().setResults(shuffled, indexer.ModeSearch, now)
+		m.table = m.table.SortBy(colTrust) // ascending
 
-	if rows[0].ID != "alpha|vip" {
-		t.Fatalf("descending: first row = %+v, want the highest known trust (VIP) first", rows[0])
+		if got := trustRowIDs(m); !slices.Equal(got, wantAsc) {
+			t.Fatalf("run %d ascending:\n got %v\nwant %v", run, got, wantAsc)
+		}
+
+		m.table = m.table.SortBy(colTrust) // descending
+
+		if got := trustRowIDs(m); !slices.Equal(got, wantDesc) {
+			t.Fatalf("run %d descending:\n got %v\nwant %v", run, got, wantDesc)
+		}
 	}
 }
 
@@ -385,8 +422,7 @@ func dispatchNonEmptySearch(tm *teatest.TestModel, text string) {
 	for _, r := range text {
 		tm.Send(keyRune(string(r)))
 	}
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // commits the field
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // submits
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // one enter commits the field and runs the search
 }
 
 // TestResultsScreenRendersColumnsAndHeader is T-061's "teatest covers
@@ -640,7 +676,7 @@ func TestRefreshReDispatchesLastQueryNotTheSearchForm(t *testing.T) {
 	// Commit "x" into the query field without submitting it.
 	tm.Send(keyRune("/"))
 	tm.Send(keyRune("x"))
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // commits the field, does not submit
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // blurs the field, keeps the text, does not submit
 	waitForOutput(t, tm, "x")
 
 	tm.Send(keyRune("L")) // dispatches Latest, independent of the form's own mode/text
@@ -689,7 +725,6 @@ func TestRefreshDoesNotRecordHistory(t *testing.T) {
 	for _, r := range "brand-new" {
 		tm.Send(keyRune(string(r)))
 	}
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 	waitForOutput(t, tm, "Sources queried")
 	waitForCallCount(t, searcher, 1)

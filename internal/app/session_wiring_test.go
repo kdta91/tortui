@@ -104,8 +104,7 @@ func TestAddFlowRecordsThroughTheSession(t *testing.T) {
 	// The program opens on Search with nothing queried (T-9011): search
 	// for the lab feed's one result.
 	tm.Type("/corpus")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // commit the query field
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // submit the search
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // one enter submits the search
 	waitForAny(t, tm, "Invented Wiring Corpus")
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})

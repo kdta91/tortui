@@ -129,6 +129,12 @@ type Table struct {
 	// it.
 	Columns []Column
 
+	// TieBreak, when non-nil, orders two rows the sorted column ranks as
+	// equal. It is applied in the same direction whichever way the column
+	// sorts, and must itself be a strict weak ordering, so a re-sort never
+	// reshuffles equal rows (T-9106). Nil keeps insertion order for ties.
+	TieBreak func(a, b Row) bool
+
 	rows       []Row
 	sortCol    int // index into Columns; -1 means unsorted (insertion order)
 	sortAsc    bool
@@ -189,11 +195,20 @@ func (t *Table) applySort() {
 			}
 		}
 
-		if t.sortAsc {
-			return less(a, b)
+		lo, hi := a, b
+		if !t.sortAsc {
+			lo, hi = b, a
 		}
 
-		return less(b, a)
+		if less(lo, hi) {
+			return true
+		}
+
+		if less(hi, lo) || t.TieBreak == nil {
+			return false
+		}
+
+		return t.TieBreak(t.rows[i], t.rows[j])
 	})
 }
 

@@ -502,8 +502,7 @@ func TestTypedQueryDispatchesSearchWithText(t *testing.T) {
 	}
 	waitForOutput(t, tm, "software")
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // commits the field, does not submit
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // submits
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // one enter commits the field and submits (T-9106)
 
 	waitForOutput(t, tm, "Sources queried")
 
@@ -679,7 +678,6 @@ func TestRecentQueriesRenderedAndRecorded(t *testing.T) {
 	}
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
 	waitForOutput(t, tm, "Sources queried")
 
@@ -711,7 +709,6 @@ func TestHistorySaveFailureIsSurfacedNotSwallowed(t *testing.T) {
 		tm.Send(keyRune(string(r)))
 	}
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
 	// This (non-blocking) stub resolves the search almost instantly, so
@@ -901,4 +898,176 @@ func TestCtrlCQuitsEvenWhileEditingQuery(t *testing.T) {
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
+}
+
+// --- T-9106: one enter in the query field runs the search ----------------
+
+// editedSearchModel returns a Model on the Search screen with the query
+// field focused and text typed, driven through Update only.
+func editedSearchModel(t *testing.T, searcher Searcher, text string) Model {
+	t.Helper()
+
+	m := New(newTestEngine(t), testTheme(), WithSearcher(searcher))
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(Model)
+
+	updated, _ = m.Update(keyRune("/"))
+	m = updated.(Model)
+
+	for _, r := range text {
+		key := keyRune(string(r))
+		if r == ' ' {
+			key = tea.KeyMsg{Type: tea.KeySpace}
+		}
+
+		updated, _ = m.Update(key)
+		m = updated.(Model)
+	}
+
+	return m
+}
+
+// TestSingleEnterInQueryFieldRunsTheSearch pins T-9106: the first enter in
+// the query field emits the search Cmd, with the spaces in the query kept.
+func TestSingleEnterInQueryFieldRunsTheSearch(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	m := editedSearchModel(t, searcher, "open source")
+
+	if m.search.editing != editQuery {
+		t.Fatalf("editing = %v, want editQuery before enter", m.search.editing)
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	if cmd == nil || !m.search.inFlight {
+		t.Fatalf("one enter: cmd nil = %v, inFlight = %v, want a dispatched search", cmd == nil, m.search.inFlight)
+	}
+
+	if m.search.editing != editNone {
+		t.Fatalf("editing = %v after enter, want the field committed", m.search.editing)
+	}
+
+	if m.search.generation != 1 {
+		t.Fatalf("generation = %d, want exactly one dispatch", m.search.generation)
+	}
+
+	if got := m.search.query; got != "open source" {
+		t.Fatalf("query = %q, want spaces kept", got)
+	}
+
+	call, ok := runUntilCall(t, searcher, cmd)
+	if !ok || call.q.Mode != indexer.ModeSearch || call.q.Text != "open source" {
+		t.Fatalf("SearchAll call = %+v (ok %v), want Search \"open source\"", call, ok)
+	}
+}
+
+// TestSingleEnterOnEmptyQueryRunsLatest pins the empty case.
+func TestSingleEnterOnEmptyQueryRunsLatest(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	m := editedSearchModel(t, searcher, "")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	if cmd == nil || !m.search.inFlight {
+		t.Fatalf("one enter on an empty query: cmd nil = %v, inFlight = %v, want Latest dispatched", cmd == nil, m.search.inFlight)
+	}
+
+	call, ok := runUntilCall(t, searcher, cmd)
+	if !ok || call.q.Mode != indexer.ModeLatest || call.q.Text != "" {
+		t.Fatalf("SearchAll call = %+v (ok %v), want Latest with no text", call, ok)
+	}
+}
+
+// TestEnterInMinSeedersFieldOnlyCommits keeps the other field's enter as a
+// plain commit: nothing to run from there.
+func TestEnterInMinSeedersFieldOnlyCommits(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	m := editedSearchModel(t, searcher, "")
+	m.search.editing = editMinSeeders
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	if cmd != nil || m.search.inFlight || m.search.editing != editNone {
+		t.Fatalf("enter in min-seeders: cmd nil = %v, inFlight = %v, editing = %v, want commit only", cmd == nil, m.search.inFlight, m.search.editing)
+	}
+}
+
+// TestQueryHintIsTruthfulInEveryState pins the empty-query hint while
+// editing, while idle, and when no selected source can list Latest.
+func TestQueryHintIsTruthfulInEveryState(t *testing.T) {
+	latest := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	m := editedSearchModel(t, latest, "")
+
+	if got := m.search.queryDisplay(); !strings.Contains(got, "enter runs Latest") || !strings.Contains(got, "█") {
+		t.Errorf("editing, empty: %q, want the caret and the Latest hint", got)
+	}
+
+	m = editedSearchModel(t, latest, "abc")
+	if got := m.search.queryDisplay(); got != "abc█" {
+		t.Errorf("editing, text: %q, want %q", got, "abc█")
+	}
+
+	m.search.editing = editNone
+	m.search.query = ""
+
+	if got := m.search.queryDisplay(); got != "(empty - enter runs Latest)" {
+		t.Errorf("idle, empty: %q", got)
+	}
+
+	searchOnly := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, false), nil))
+	m = editedSearchModel(t, searchOnly, "")
+
+	const noLatest = "no selected source can list Latest"
+
+	if got := m.search.queryDisplay(); !strings.Contains(got, noLatest) || !strings.Contains(got, "█") {
+		t.Errorf("editing, no Latest-capable source: %q, want the caret and %q", got, noLatest)
+	}
+
+	m.search.editing = editNone
+
+	if got := m.search.queryDisplay(); !strings.Contains(got, noLatest) || strings.Contains(got, "enter runs Latest") {
+		t.Errorf("idle, no Latest-capable source: %q, want %q", got, noLatest)
+	}
+
+	// A whitespace-only query is empty to dispatch, so it reads as empty.
+	m.search.query = "  "
+
+	if got := m.search.queryDisplay(); !strings.Contains(got, noLatest) {
+		t.Errorf("idle, whitespace query: %q, want the empty-query hint", got)
+	}
+}
+
+// runUntilCall runs every command of a dispatch batch off the test goroutine
+// (one of them is the spinner tick, which must not be waited for) and waits
+// until the stub has seen its SearchAll call.
+func runUntilCall(t *testing.T, searcher *stubSearcher, cmd tea.Cmd) (stubCall, bool) {
+	t.Helper()
+
+	msg := cmd()
+
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("dispatch cmd returned %T, want tea.BatchMsg", msg)
+	}
+
+	for _, c := range batch {
+		if c != nil {
+			go func() { _ = c() }()
+		}
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if call, ok := searcher.lastCall(); ok {
+			return call, true
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	return stubCall{}, false
 }
