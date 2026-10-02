@@ -33,10 +33,13 @@ permissions:
 
 env:
   GO_VERSION: "1.25"
-  GOLANGCI_LINT_VERSION: "v2.13.2"
-  GOFUMPT_VERSION: "v0.12.0"
+  GOLANGCI_LINT_VERSION: "v2.12.2"
+  GOFUMPT_VERSION: "v0.11.0"
   GITLEAKS_VERSION: "v8.30.1"
-  # T-9090: x/tools v0.50.0 needs Go 1.26; v0.49.0 is the newest whose go.mod says go 1.25.
+  # T-9090: the runner builds these with GOTOOLCHAIN=local Go 1.25, so each is the newest release
+  # whose go.mod says go 1.25 or lower: gofumpt v0.11.0 (v0.12.0 needs 1.26), golangci-lint
+  # v2.12.2 (v2.13.0 and later need 1.26), x/tools v0.49.0 (v0.50.0 needs 1.26). gitleaks v8.30.1
+  # (go 1.24) and go-licenses v2.0.1 (go 1.23) are already fine. Revisit on Go 1.26 (Backlog T-9093).
   GOIMPORTS_VERSION: "v0.49.0"
   GO_LICENSES_VERSION: "v2.0.1"
   # T-949: pinned so the Windows leg no longer depends on Chocolatey's community feed.

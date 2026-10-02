@@ -5175,5 +5175,9 @@ and several actions still run on Node.js 20.
 **Notes:** Linux jobs in ci.yml on ubuntu-26.04, release pinned to ubuntu-24.04 (DEC-152). Matrix
 `include` with `os` (display) and `runner`; explicit job names keep the old strings. cosign-installer
 v3 is composite, left. Backlog T-9091, T-9092. actionlint's label list does not know 26.04 yet.
-CI fix: `go install goimports@latest` broke (x/tools v0.50.0 needs Go 1.26); pinned to v0.49.0 as
-GOIMPORTS_VERSION, cached with the other tools and in the key. Backlog T-9093.
+CI fix: the tool installs run under Go 1.25 with GOTOOLCHAIN=local, and three pins needed Go 1.26
+(they only passed from a warm cache): gofumpt v0.12.0 to v0.11.0, golangci-lint v2.13.2 to
+v2.12.2, and goimports (was @latest) to x/tools v0.49.0 as GOIMPORTS_VERSION. All three are in the
+cache key. Checked on a Go 1.25.14 toolchain: all five tools install, gofumpt and goimports list no
+files, golangci-lint reports 0 issues. gitleaks (go 1.24) and go-licenses (go 1.23) were fine.
+Backlog T-9093.
