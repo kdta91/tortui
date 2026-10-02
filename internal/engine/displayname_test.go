@@ -91,6 +91,42 @@ func TestSafeNameReducesOnlyWebAddresses(t *testing.T) {
 		})
 	}
 
+	// An invisible rune — a C0 control byte, or a Unicode format character
+	// such as U+200B or U+FEFF — before or inside the scheme, or in the
+	// separator after it, does not stop the name being an address (T-9099,
+	// DEC-155). Neither does an http(s) scheme with no host: url.Parse
+	// accepts these, and the key is still in the query.
+	hidden := map[string]string{
+		"leading C0 byte":         "\x01https://host.example/x?apikey=" + key,
+		"leading NUL byte":        "\x00https://host.example/x?apikey=" + key,
+		"leading U+200B":          "\u200bhttps://host.example/x?apikey=" + key,
+		"leading U+FEFF":          "\ufeffhttps://host.example/x?apikey=" + key,
+		"space then U+200B":       " \u200b https://host.example/x?apikey=" + key,
+		"C0 byte in the scheme":   "https\x01://host.example/x?apikey=" + key,
+		"U+200B in the scheme":    "ht\u200btps://host.example/x?apikey=" + key,
+		"C0 byte after the colon": "https:\x01//host.example/x?apikey=" + key,
+		"U+FEFF after the colon":  "https:\ufeff//host.example/x?apikey=" + key,
+		"opaque, no host":         "https:host?apikey=" + key,
+		"one slash, no host":      "https:/host/x?apikey=" + key,
+		"three slashes, no host":  "https:///x?apikey=" + key,
+		"upper-case, no host":     "HTTP:host?apikey=" + key,
+	}
+
+	for name, in := range hidden {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := SafeName(in)
+			if !strings.HasPrefix(got, "torrent file") {
+				t.Errorf("SafeName(%q) = %q, want it named as a torrent file", in, got)
+			}
+
+			if strings.Contains(got, key) {
+				t.Errorf("SafeName(%q) kept the key: %q", in, got)
+			}
+		})
+	}
+
 	kept := []string{
 		"",
 		"Synthetic Corpus 9057",
@@ -101,6 +137,10 @@ func TestSafeNameReducesOnlyWebAddresses(t *testing.T) {
 		"1http://not a scheme",
 		"://no scheme",
 		`C:\data\corpus.iso`,
+		"Family\u200dphotos: summer",
+		"\u200bSynthetic Corpus 9057",
+		"HTTP Field Notes 9057",
+		"https-corpus 9057",
 	}
 
 	for _, in := range kept {
