@@ -126,11 +126,14 @@ type aggregatorImportResultMsg struct {
 	applied  []config.Indexer
 	previous []config.Indexer
 	count    int
+	builtins builtinRefresh
 }
 
 func saveAggregatorImportCmd(sm SourceManager, all, previous []config.Indexer, count int) tea.Cmd {
 	return func() tea.Msg {
-		return aggregatorImportResultMsg{err: sm.SaveSources(all), applied: all, previous: previous, count: count}
+		err := sm.SaveSources(all)
+
+		return aggregatorImportResultMsg{err: err, applied: all, previous: previous, count: count, builtins: refreshBuiltins(sm, err)}
 	}
 }
 
@@ -416,7 +419,7 @@ func (m Model) handleAggregatorImportResult(msg aggregatorImportResultMsg) (tea.
 		return m, nil
 	}
 
-	m = m.refreshSearchSources()
+	m = m.applyBuiltins(msg.builtins).refreshSearchSources()
 	m.settings.aggImport = nil
 
 	return m.pushStatus(fmt.Sprintf("imported %d source(s) from aggregator", msg.count))

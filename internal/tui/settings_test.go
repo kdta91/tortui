@@ -982,7 +982,9 @@ func TestDisablingLastSourceUpdatesSearchScreenLive(t *testing.T) {
 	waitForPredicate(t, func() bool { return sm.saveCallCount() > 0 })
 
 	tm.Send(keyRune("1")) // -> search
-	waitForOutput(t, tm, "No sources configured. Press 'a' to add one.")
+
+	// T-9077: the source still exists, so this is "turned off", not "unconfigured".
+	waitForOutput(t, tm, "Every source is turned off. Press 5 for Settings")
 }
 
 // TestFormArrowKeysMoveBetweenFields proves up/down move the form's field

@@ -300,13 +300,15 @@ func searchTimeout(s string, logger *slog.Logger) time.Duration {
 }
 
 // DoctorBuiltins lists the bundled sources for `tortui doctor` (T-9069): id,
-// name and the address its definition searches. A bundled set that cannot be
-// loaded is an empty list; doctor is a diagnostic, not a gate.
-func DoctorBuiltins() []doctor.Builtin {
-	defs, err := builtin.Definitions()
-	if err != nil {
-		return nil
-	}
+// name and the address its definition searches. The definitions come from
+// bundledDefinitions, the resolver Search and Settings `t` use, so a
+// definition the user placed in defsDir under a bundled id is the one
+// doctor probes (T-9075). A bundled set that cannot be loaded is an empty
+// list; doctor is a diagnostic, not a gate.
+func DoctorBuiltins(defsDir string) []doctor.Builtin {
+	// A definitions directory that cannot be read still leaves the bundled
+	// set, which is what bundledDefinitions returns alongside the error.
+	defs, _ := bundledDefinitions(defsDir, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	out := make([]doctor.Builtin, 0, len(defs))
 	for _, d := range defs {
