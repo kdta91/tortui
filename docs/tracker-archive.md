@@ -5290,3 +5290,32 @@ without a host, so a title opening "HTTP:" is now shown as "torrent file". httpx
 judges a chain whose first request has userinfo or any header besides User-Agent by the strict
 rule (DEC-156), since httpx cannot know every credential header's name; the engine's .torrent
 client sends none, so T-9010 and T-9079 are unchanged. Seven mutations, each failing its tests.
+
+### T-9100 · Styled-line truncation; tab bar and Settings list clip
+
+```
+status: done
+depends: T-9099
+tier: M
+```
+Promotes Backlog T-9058 and T-9068. `truncateLines` truncated already-styled lines with
+`theme.Truncate`, which counts escape codes as columns; the tab bar (about 69 columns) was never
+clipped; the Settings source list was never clipped to the height.
+
+**Acceptance:**
+1. `theme.TruncateStyled` leaves a styled line that fits untouched, cuts one that does not at the
+   visible column (result exactly the target wide) and never inside an escape sequence, with colour
+   forced on. `truncateLines`, and the two styled one-line messages in Downloads and Details, use it.
+   No other caller truncates or pads a styled string. DEC-157 records the library choice.
+2. The tab bar drops its `[n]` hints, then clips, so no line of View() is wider than the terminal at
+   widths 40, 60, 68 and 80 on every screen.
+3. With 30 sources at 80x24, the Settings list scrolls with the selection: the selected row, the
+   legend and the status bar are on screen at every step down the list.
+4. Reverting the truncation, the tab bar clip or the list window fails its test (quoted in the PR).
+   `make check`, `make race PKG=./internal/tui/...` and `make cover` are green; goldens unchanged.
+
+**Notes:** `theme.TruncateStyled` wraps `ansi.Truncate` (x/ansi was already in the module graph;
+now a direct requirement, DEC-157). Audit: every other Truncate/Pad/Width call is on plain text
+before styling (table cells, status bar, legends, forms); only Downloads and Details empty-state
+lines were styled first, and now use the new helper. The tab bar falls back to unnumbered labels
+(47 columns), then an ellipsis clip. `sourceWindow` mirrors `destWindow`. Three mutations fail.

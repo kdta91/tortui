@@ -3,6 +3,8 @@ package theme
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestWidthASCII(t *testing.T) {
@@ -174,5 +176,51 @@ func TestWrapEmptyStringReturnsOneEmptyLine(t *testing.T) {
 	got := Wrap("", 10)
 	if len(got) != 1 || got[0] != "" {
 		t.Fatalf("Wrap(\"\", 10) = %v, want one empty line", got)
+	}
+}
+
+func styledLine(t *testing.T, text string) string {
+	t.Helper()
+
+	th := New(DefaultThemeName, Capability{Color: ColorTrue, Unicode: true})
+	got := th.Accent.Render(text)
+
+	if !strings.ContainsRune(got, '\x1b') {
+		t.Fatalf("Accent.Render(%q) = %q, want escape codes with colour forced on", text, got)
+	}
+
+	return got
+}
+
+func TestTruncateStyledKeepsALineThatFits(t *testing.T) {
+	line := styledLine(t, "hello world")
+
+	if got := TruncateStyled(line, 11); got != line {
+		t.Fatalf("TruncateStyled(fits) = %q, want it unchanged %q", got, line)
+	}
+}
+
+func TestTruncateStyledCutsAtTheVisibleColumn(t *testing.T) {
+	line := styledLine(t, "hello wonderful world")
+
+	for w := 0; w <= 21; w++ {
+		got := TruncateStyled(line, w)
+		if vis := ansi.StringWidth(got); vis > w {
+			t.Fatalf("w=%d: visible width %d exceeds the target in %q", w, vis, got)
+		}
+
+		plain := ansi.Strip(got)
+		if strings.ContainsRune(plain, '\x1b') || strings.Contains(plain, "[") {
+			t.Fatalf("w=%d: escape sequence cut in two, stripped text %q", w, plain)
+		}
+	}
+
+	got := TruncateStyled(line, 10)
+	if want := "hello w..."; ansi.Strip(got) != want {
+		t.Fatalf("TruncateStyled(.., 10) text = %q, want %q", ansi.Strip(got), want)
+	}
+
+	if ansi.StringWidth(got) != 10 {
+		t.Fatalf("visible width = %d, want exactly 10", ansi.StringWidth(got))
 	}
 }

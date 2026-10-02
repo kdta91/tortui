@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kdta91/tortui/internal/config"
 	"github.com/kdta91/tortui/internal/engine"
@@ -1188,22 +1189,43 @@ func (m Model) renderScreen() string {
 // renderTabs draws the five screen names, the current one accented, joined
 // by the theme's dim style — one line, degrading to the theme's own
 // no-colour behaviour under NO_COLOR (AGENT.md §14) since it uses Theme's
-// styles rather than any hardcoded escape.
+// styles rather than any hardcoded escape. The line never exceeds m.width:
+// the full bar drops the " [n]" jump hints when it does not fit, and a bar
+// still too wide is clipped with an ellipsis (T-9068).
 func (m Model) renderTabs() string {
-	labels := make([]string, 0, len(screenOrder))
+	const sep = " · "
 
-	for i, s := range screenOrder {
-		label := fmtTabLabel(i+1, s)
-		if s == m.screen {
-			label = m.theme.Accent.Render(label)
-		} else {
-			label = m.theme.Muted.Render(label)
+	build := func(numbered bool) string {
+		labels := make([]string, 0, len(screenOrder))
+
+		for i, s := range screenOrder {
+			label := fmtTabLabel(i+1, s)
+			if !numbered {
+				label = strings.TrimSuffix(label, " ["+itoa(i+1)+"]")
+			}
+
+			if s == m.screen {
+				label = m.theme.Accent.Render(label)
+			} else {
+				label = m.theme.Muted.Render(label)
+			}
+
+			labels = append(labels, label)
 		}
 
-		labels = append(labels, label)
+		return strings.Join(labels, m.theme.Dim.Render(sep))
 	}
 
-	return strings.Join(labels, m.theme.Dim.Render(" · "))
+	bar := build(true)
+	if m.width > 0 && ansi.StringWidth(bar) > m.width {
+		bar = build(false)
+	}
+
+	if m.width <= 0 {
+		return bar
+	}
+
+	return theme.TruncateStyled(bar, m.width)
 }
 
 func fmtTabLabel(n int, s Screen) string {

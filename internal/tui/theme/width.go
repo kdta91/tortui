@@ -3,6 +3,7 @@ package theme
 import (
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/rivo/uniseg"
 )
 
@@ -172,4 +173,27 @@ func Truncate(s string, w int) string {
 	b.WriteString(ellipsis)
 
 	return b.String()
+}
+
+// TruncateStyled is Truncate for a string that already carries ANSI styling
+// (a rendered lipgloss value). Escape sequences take no columns and are never
+// cut in two, so a styled line that fits is returned untouched and one that
+// does not is cut at the visible column w with a three-dot ellipsis. Prefer
+// truncating the plain text before styling where the caller can; use this when
+// it cannot.
+func TruncateStyled(s string, w int) string {
+	if ansi.StringWidth(s) <= w {
+		return s
+	}
+
+	if w <= 0 {
+		return ""
+	}
+
+	const ellipsis = "..."
+	if w <= len(ellipsis) {
+		return ellipsis[:w]
+	}
+
+	return ansi.Truncate(s, w, ellipsis)
 }
