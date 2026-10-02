@@ -65,6 +65,9 @@ ascii = false
 # name    = "My Indexer"
 # type    = "torznab"
 # url     = "http://localhost:9696/1/api"
+# (A url written as https://user:pw@example.org/api keeps its credentials across a
+# redirect only to the same host and port. If the server upgrades http to https, the
+# redirect is refused or the request goes out without them: give the https address.)
 # api_key = "paste-your-own-key-here"
 # enabled = true
 

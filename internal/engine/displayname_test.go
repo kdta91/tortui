@@ -33,7 +33,10 @@ func TestURLSourceNameKeepsOnlyTheHost(t *testing.T) {
 		})
 	}
 
-	for _, raw := range []string{"", "   ", "not a url " + sentinel, "/relative/" + sentinel, "%zz" + sentinel} {
+	unnamed := []string{
+		"", "   ", "not a url " + sentinel, "/relative/" + sentinel, "%zz" + sentinel,
+	}
+	for _, raw := range unnamed {
 		if got := URLSourceName(raw); got != "torrent file" {
 			t.Errorf("URLSourceName(%q) = %q, want %q", raw, got, "torrent file")
 		}

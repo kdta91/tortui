@@ -4864,7 +4864,7 @@ status bar. Pre-existing on main; found during T-9046.
 **Notes:** DEC-146. `withoutLocationEcho` in `attempt` replaces a cause beginning with net/http's
 "failed to parse Location header " (built with %v, so only text survives) with
 `ErrRedirectLocationInvalid` at the original request's host, wrapped like the other redirect
-refusals; every other cause is returned as is. Other paths checked in go1.27.1: the proxy parse
+refusals; every other cause is returned as is. Other paths checked in Go 1.25+: the proxy parse
 error that quotes HTTP_PROXY is dropped inside ProxyFromEnvironment and never returned; the
 HTTP/2 `:path` error needs an opaque URL no redirect check lets through; *url.Error's URL was
 already stripped. New `location_parse_test.go`: 8 malformed Locations on both client shapes,
@@ -5283,13 +5283,14 @@ honouring a credential that rides on the request instead of in `Config.Credentia
 4. Each fix reverted fails its new tests (quoted in the PR). `make check`, `make race` for the
    touched packages and `make cover` are green.
 
-**Notes:** SafeName classifies the name with its invisible runes (control, Cf, default-ignorable) removed and
-returns the name as given when it is no address; one rule covers the invisible rune before, inside
-or just after the scheme (DEC-155, refining DEC-154). An http(s) scheme is an address with or
-without a host, so a title opening "HTTP:" is now shown as "torrent file". httpx: a lenient client
-judges a chain whose first request has userinfo or any header besides User-Agent by the strict
-rule (DEC-156), since httpx cannot know every credential header's name; the engine's .torrent
-client sends none, so T-9010 and T-9079 are unchanged. Seven mutations, each failing its tests.
+**Notes:** SafeName classifies the name with its invisible runes (control, Cf, default-ignorable)
+removed and returns the name as given when it is no address; one rule covers the invisible rune
+before, inside or just after the scheme (DEC-155, refining DEC-154). An http(s) scheme is an
+address with or without a host, so a title opening "HTTP:" is now shown as "torrent file". httpx:
+a lenient client judges a chain whose first request has userinfo or any header besides User-Agent
+by the strict rule (DEC-156), since httpx cannot know every credential header's name; the engine's
+.torrent client sends none, so T-9010 and T-9079 are unchanged. Seven mutations, each failing its
+tests.
 
 ### T-9100 · Styled-line truncation; tab bar and Settings list clip
 
@@ -5436,3 +5437,30 @@ the old switch (now `update`) and, on the Downloads screen, runs `syncDownloadsS
 cursor moves, resizes, list changes, expands and pending toggles all re-clamp it. `downloadsLayout` builds
 the lines once for both Update and View. A scroll-down lands on the first block start at or after the
 minimum, as before, so the window may be a line or two short at the bottom. Each rule was mutation-checked.
+
+### T-9114 · Doc and comment nits
+
+```
+status: done
+depends: T-9112
+tier: L
+```
+Promotes Backlog T-9050, T-9053, T-9059, T-9076, T-9080, T-9102, T-9103.
+
+**Acceptance:**
+1. The README torznab section and `config.example.toml` say that an endpoint written with `user:pw@`
+   keeps its credentials across a redirect only to the same host and port (DEC-145), so when the
+   server upgrades an http address to https the redirect is refused or the https request goes out
+   without credentials, and the https address should be configured directly. Example hosts only
+   (T-9050).
+2. The httpx Location-parse comment and the T-9049 notes cite Go 1.25+, not 1.27 (T-9053).
+3. The `addSourceFor` doc comment, the `builtinTag` comment, the `SafeName` doc comment, the
+   `dropInvisible` condition and the long line in `displayname_test.go` are rewrapped or moved
+   (T-9059, T-9076, T-9103); the first Notes line of T-9099 is rewrapped.
+4. The two README lines are rewrapped at about 98 columns (T-9080).
+5. The T-9099 session-log line says seven mutations (T-9102).
+6. No behaviour changes. `make check` and `make check-hostnames` are green.
+
+**Notes:** Documentation and formatting only; the single new claim is the T-9050 redirect note.
+The `settingsScreenLegend` string literal stays on one line. PR #95 review notes logged as T-9115
+to T-9117.
