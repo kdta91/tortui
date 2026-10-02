@@ -180,7 +180,9 @@ func Truncate(s string, w int) string {
 // cut in two, so a styled line that fits is returned untouched and one that
 // does not is cut at the visible column w with a three-dot ellipsis. Prefer
 // truncating the plain text before styling where the caller can; use this when
-// it cannot.
+// it cannot. The input must close every style it opens (a rendered lipgloss
+// value does), since a cut can drop the closing sequence of a style that was
+// still open. At w <= 3 the result is a plain "...", w dots, or empty.
 func TruncateStyled(s string, w int) string {
 	if ansi.StringWidth(s) <= w {
 		return s

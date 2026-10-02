@@ -128,3 +128,86 @@ func TestSettingsListScrollsWithManySources(t *testing.T) {
 		m = layoutPress(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	}
 }
+
+// TestEveryOverlayFitsNarrowWidths covers the help overlay and the modal
+// contexts: none may draw a line wider than the terminal.
+func TestEveryOverlayFitsNarrowWidths(t *testing.T) {
+	t.Parallel()
+
+	opens := map[string]func(t *testing.T, sz termSize) Model{
+		"help": func(t *testing.T, sz termSize) Model {
+			return layoutPress(t, settingsLayoutModel(t, sz), keyRune("?"))
+		},
+		"help-search": func(t *testing.T, sz termSize) Model {
+			m := settingsLayoutModel(t, sz)
+			m.screen = ScreenSearch
+
+			return layoutPress(t, m, keyRune("?"))
+		},
+		"first-run": func(t *testing.T, sz termSize) Model {
+			m := New(newTestEngine(t), testTheme(), WithFirstRun(true))
+			next, _ := m.Update(tea.WindowSizeMsg{Width: sz.w, Height: sz.h})
+
+			return next.(Model)
+		},
+		"error-detail": func(t *testing.T, sz termSize) Model {
+			m := settingsLayoutModel(t, sz)
+			next, _ := m.Update(sourceStatusMsg{total: 4, failed: []string{"alpha", "bravo"}})
+
+			return layoutPress(t, next.(Model), keyRune("e"))
+		},
+		"source-form": func(t *testing.T, sz termSize) Model {
+			return layoutPress(t, settingsLayoutModel(t, sz), keyRune("a"))
+		},
+		"preferences": func(t *testing.T, sz termSize) Model {
+			return layoutPress(t, settingsLayoutModel(t, sz), keyRune("p"))
+		},
+		"remove-dialog": func(t *testing.T, sz termSize) Model {
+			return layoutPress(t, settingsLayoutModel(t, sz), keyRune("x"))
+		},
+	}
+
+	for name, open := range opens {
+		for _, w := range []int{40, 60, 68, 80} {
+			m := open(t, termSize{w, 24})
+
+			for _, line := range strings.Split(m.View(), "\n") {
+				if got := ansi.StringWidth(line); got > w {
+					t.Errorf("%s at width %d: line is %d columns: %q", name, w, got, line)
+				}
+			}
+		}
+	}
+}
+
+func TestSettingsRemovalKeepsCursorAndRows(t *testing.T) {
+	t.Parallel()
+
+	for _, n := range []int{3, 30} {
+		sz := termSize{80, 24}
+		m := manySourcesModel(t, n, sz)
+
+		for range n - 1 {
+			m = layoutPress(t, m, tea.KeyMsg{Type: tea.KeyDown})
+		}
+
+		m = layoutPress(t, m, keyRune("x"))
+		// The default highlight is Cancel; move up to Remove.
+		m = layoutPress(t, m, tea.KeyMsg{Type: tea.KeyUp}, tea.KeyMsg{Type: tea.KeyEnter})
+
+		if len(m.sourcesSnapshot) != n-1 {
+			t.Fatalf("n=%d: %d sources left, want %d", n, len(m.sourcesSnapshot), n-1)
+		}
+
+		out := m.View()
+
+		if got := strings.Count(out, "\n> "); got != 1 {
+			t.Fatalf("n=%d: %d marked rows, want 1:\n%s", n, got, out)
+		}
+
+		want := min(n-1, 17)
+		if got := strings.Count(out, "torznab"); got != want {
+			t.Fatalf("n=%d: %d rows drawn, want %d:\n%s", n, got, want, out)
+		}
+	}
+}

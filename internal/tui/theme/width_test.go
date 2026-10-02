@@ -209,10 +209,7 @@ func TestTruncateStyledCutsAtTheVisibleColumn(t *testing.T) {
 			t.Fatalf("w=%d: visible width %d exceeds the target in %q", w, vis, got)
 		}
 
-		plain := ansi.Strip(got)
-		if strings.ContainsRune(plain, '\x1b') || strings.Contains(plain, "[") {
-			t.Fatalf("w=%d: escape sequence cut in two, stripped text %q", w, plain)
-		}
+		assertCompleteEscapes(t, w, got)
 	}
 
 	got := TruncateStyled(line, 10)
@@ -222,5 +219,31 @@ func TestTruncateStyledCutsAtTheVisibleColumn(t *testing.T) {
 
 	if ansi.StringWidth(got) != 10 {
 		t.Fatalf("visible width = %d, want exactly 10", ansi.StringWidth(got))
+	}
+}
+
+// assertCompleteEscapes fails when any ESC in s does not start a whole CSI
+// sequence (ESC [ params, ended by a final byte 0x40-0x7e).
+func assertCompleteEscapes(t *testing.T, w int, s string) {
+	t.Helper()
+
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\x1b' {
+			continue
+		}
+
+		j := i + 1
+		if j >= len(s) || s[j] != '[' {
+			t.Fatalf("w=%d: ESC not followed by '[' in %q", w, s)
+		}
+
+		for j++; j < len(s) && s[j] >= 0x20 && s[j] <= 0x3f; j++ {
+		}
+
+		if j >= len(s) || s[j] < 0x40 || s[j] > 0x7e {
+			t.Fatalf("w=%d: escape sequence cut in two in %q", w, s)
+		}
+
+		i = j
 	}
 }

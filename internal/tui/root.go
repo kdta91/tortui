@@ -1286,6 +1286,10 @@ func (m Model) renderHelp() string {
 	}
 
 	for _, line := range rows {
+		if m.width > 0 {
+			line = theme.Truncate(line, m.width)
+		}
+
 		b.WriteString(m.theme.Foreground.Render(line))
 		b.WriteString("\n")
 	}

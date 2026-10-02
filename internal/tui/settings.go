@@ -841,6 +841,9 @@ func (m Model) handleSourceRemoveConfirmAction(action Action) (tea.Model, tea.Cm
 
 		m.sourcesSnapshot = remaining
 
+		// Keep the cursor on a row that still exists.
+		m.settings.cursor = max(min(m.settings.cursor, len(remaining)+len(m.builtinSnapshot)-1), 0)
+
 		return m, saveSourcesCmd(m.sources, remaining, previous)
 	}
 
@@ -1709,9 +1712,11 @@ func (m Model) sourceWindow(total, legendLines int) (int, int) {
 		visible = min(total, max(m.bodyBudget(true)-1-legendLines, 1))
 	}
 
+	cursor := max(min(m.settings.cursor, total-1), 0)
+
 	start := 0
-	if m.settings.cursor >= visible {
-		start = m.settings.cursor - visible + 1
+	if cursor >= visible {
+		start = cursor - visible + 1
 	}
 
 	return start, min(start+visible, total)
