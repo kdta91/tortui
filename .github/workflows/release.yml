@@ -27,15 +27,17 @@ env:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # T-9090 (DEC-152): pinned to the image v1.0.0 was released on. ci.yml runs the Linux jobs on
+    # ubuntu-26.04; move this once those are green there, since a tag run cannot be tried in a PR.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 # goreleaser needs full history for the changelog
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -47,7 +49,7 @@ jobs:
         uses: sigstore/cosign-installer@v3
 
       - name: Run goreleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -72,6 +74,6 @@ jobs:
       # `gh attestation verify` (documented in README) without relying on
       # the Sigstore public infrastructure at all.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/tortui_*.tar.gz,dist/tortui_*.zip"

@@ -33,9 +33,14 @@ permissions:
 
 env:
   GO_VERSION: "1.25"
-  GOLANGCI_LINT_VERSION: "v2.13.2"
-  GOFUMPT_VERSION: "v0.12.0"
+  GOLANGCI_LINT_VERSION: "v2.12.2"
+  GOFUMPT_VERSION: "v0.11.0"
   GITLEAKS_VERSION: "v8.30.1"
+  # T-9090: the runner builds these with GOTOOLCHAIN=local Go 1.25, so each is the newest release
+  # whose go.mod says go 1.25 or lower: gofumpt v0.11.0 (v0.12.0 needs 1.26), golangci-lint
+  # v2.12.2 (v2.13.0 and later need 1.26), x/tools v0.49.0 (v0.50.0 needs 1.26). gitleaks v8.30.1
+  # (go 1.24) and go-licenses v2.0.1 (go 1.23) are already fine. Revisit on Go 1.26 (Backlog T-9093).
+  GOIMPORTS_VERSION: "v0.49.0"
   GO_LICENSES_VERSION: "v2.0.1"
   # T-949: pinned so the Windows leg no longer depends on Chocolatey's community feed.
   SHELLCHECK_VERSION: "0.11.0"
@@ -43,18 +48,24 @@ env:
 
 jobs:
   check:
-    name: make check
+    # T-9090: os is the display key (the job names in branch protection and the history are
+    # `make check (<os>)`); runner is what runs. Only the Linux leg is pinned (DEC-152). A matrix
+    # with include entries would otherwise add runner to the job name, so the name is explicit.
+    name: make check (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - { os: ubuntu-latest, runner: ubuntu-26.04 }
+          - { os: macos-latest, runner: macos-latest }
+          - { os: windows-latest, runner: windows-latest }
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -65,22 +76,22 @@ jobs:
       # served a stale binary.
       - name: Cache pinned tool binaries
         id: tools-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/go/bin/gofumpt*
             ~/go/bin/golangci-lint*
             ~/go/bin/gitleaks*
-          key: tools-${{ runner.os }}-go${{ env.GO_VERSION }}-gofumpt${{ env.GOFUMPT_VERSION }}-golangci${{ env.GOLANGCI_LINT_VERSION }}-gitleaks${{ env.GITLEAKS_VERSION }}
+            ~/go/bin/goimports*
+          key: tools-${{ runner.os }}-go${{ env.GO_VERSION }}-gofumpt${{ env.GOFUMPT_VERSION }}-golangci${{ env.GOLANGCI_LINT_VERSION }}-gitleaks${{ env.GITLEAKS_VERSION }}-goimports${{ env.GOIMPORTS_VERSION }}
 
       - name: Install gofumpt
         if: steps.tools-cache.outputs.cache-hit != 'true'
         run: go install mvdan.cc/gofumpt@${{ env.GOFUMPT_VERSION }}
 
-      # Unpinned (@latest), so deliberately not cached: it would otherwise freeze at whatever
-      # version the first cache fill saw.
       - name: Install goimports
-        run: go install golang.org/x/tools/cmd/goimports@latest
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: go install golang.org/x/tools/cmd/goimports@${{ env.GOIMPORTS_VERSION }}
 
       - name: Install golangci-lint
         if: steps.tools-cache.outputs.cache-hit != 'true'
@@ -118,7 +129,7 @@ jobs:
       - name: Cache shellcheck (Windows)
         id: shellcheck-cache
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: C:\shellcheck
           key: shellcheck-${{ runner.os }}-${{ env.SHELLCHECK_VERSION }}
@@ -153,21 +164,24 @@ jobs:
   # T-9025: the race detector over ./... on all three OSes. Advisory per PR (DEC-107) but must be
   # green everywhere before a release tag. Not in branch protection (owner-only).
   race:
-    name: go test -race
+    name: go test -race (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - { os: ubuntu-latest, runner: ubuntu-26.04 }
+          - { os: macos-latest, runner: macos-latest }
+          - { os: windows-latest, runner: windows-latest }
+    runs-on: ${{ matrix.runner }}
     env:
       # -race needs cgo; set it explicitly rather than trusting the runner default.
       CGO_ENABLED: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -204,32 +218,32 @@ jobs:
 
   build-all:
     name: make build-all
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
       # Cross-compilation output does not depend on the host OS/arch — a
-      # single ubuntu-latest job builds and verifies all six tier-1
+      # single Linux job builds and verifies all six tier-1
       # combinations from AGENT.md §14 on every push, per T-005.
       - name: make build-all
         run: make build-all
 
   licenses:
     name: make licenses (NOTICE up to date, no disallowed license)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -253,7 +267,7 @@ jobs:
       # github.com/anacrolix/ path, since that list is names, not a prefix
       # (see AGENT.md §16 for why the allowlist alone can't enforce this).
       # Both checks run before NOTICE is regenerated. Like
-      # build-all, this runs once on ubuntu-latest: the Makefile target
+      # build-all, this runs once on Linux: the Makefile target
       # itself loops GOOS=darwin/linux/windows internally (see the Makefile's
       # T-006 comment), so one host is enough to analyze all three.
       - name: make licenses
@@ -286,10 +300,10 @@ jobs:
     # treats as passing -- the pull_request-triggered run alongside it is
     # the one that actually evaluates the diff.
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Both the base and head commits must be present locally for the
           # diff the script runs; the default shallow/single-commit checkout
@@ -314,13 +328,13 @@ jobs:
     # result here is investigated, not treated as a merge blocker.
     name: make test-integration (manual, real network)
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true

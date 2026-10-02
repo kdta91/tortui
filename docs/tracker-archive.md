@@ -5148,3 +5148,36 @@ Owner request (2026-10-02). The owner tagged v1.0.0 at d18c06e (release run 3697
 4. `make check` is green, including the README keymap test.
 
 **Notes:** Docs only. Backlog T-9083 to T-9089.
+
+### T-9090 · CI runner and action versions
+
+```
+status: done
+depends: T-9082
+tier: M
+```
+Promotes Backlog T-9088 and T-9089 (owner request, 2026-10-02). `ubuntu-latest` moves to Ubuntu 26
+and several actions still run on Node.js 20.
+
+**Acceptance:**
+1. Every action that targets Node.js 20 in ci.yml and release.yml (checkout, setup-go, cache,
+   goreleaser-action, attest-build-provenance) is on a release that targets Node 24, each major
+   confirmed from the action's own action.yml, and every input the workflows use still exists.
+2. The Linux jobs (the C toolchain check, build-all, licenses, the hostname check, the race job,
+   the manual integration job, and the release job) are decided against Ubuntu 26.04: tried in CI
+   or pinned, with the choice in a DEC and a Backlog entry to revisit it.
+3. No check name changes: `make check (macos-latest)`, `make build-all`, `make licenses (NOTICE up
+   to date, no disallowed license)` and the indexer hostname allowlist job read exactly as before,
+   and so do the advisory matrix names.
+4. TASK_TRACKER.md's long v1.0.0 line is wrapped like its neighbours.
+5. `make check` is green and actionlint reports nothing else.
+
+**Notes:** Linux jobs in ci.yml on ubuntu-26.04, release pinned to ubuntu-24.04 (DEC-152). Matrix
+`include` with `os` (display) and `runner`; explicit job names keep the old strings. cosign-installer
+v3 is composite, left. Backlog T-9091, T-9092. actionlint's label list does not know 26.04 yet.
+CI fix: the tool installs run under Go 1.25 with GOTOOLCHAIN=local, and three pins needed Go 1.26
+(they only passed from a warm cache): gofumpt v0.12.0 to v0.11.0, golangci-lint v2.13.2 to
+v2.12.2, and goimports (was @latest) to x/tools v0.49.0 as GOIMPORTS_VERSION. All three are in the
+cache key. Checked on a Go 1.25.14 toolchain: all five tools install, gofumpt and goimports list no
+files, golangci-lint reports 0 issues. gitleaks (go 1.24) and go-licenses (go 1.23) were fine.
+Backlog T-9093.
