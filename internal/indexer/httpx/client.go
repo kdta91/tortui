@@ -496,9 +496,9 @@ type hopKey struct{}
 
 // hopTracker remembers the host of the last request net/http issued for one
 // attempt, so an error that arises while reading that hop's response can name
-// the hop and not the host the attempt started at (T-9054). A redirect never
-// runs on a different goroutine from the attempt that started it, but the
-// tracker is read after Do returns, so it is locked anyway.
+// the hop and not the host the attempt started at (T-9054). net/http runs the
+// redirect rule on the goroutine that called Do and the tracker is read on
+// that same goroutine, so the lock is defence in depth, not a need.
 type hopTracker struct {
 	mu   sync.Mutex
 	host string
@@ -879,6 +879,22 @@ func (e *StatusError) AuthFailed() bool {
 	return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
 }
 
+// notRetryingError is the error Do returns when a retryable status will not
+// be retried (the wait is too long, or would outlast the deadline). It wraps
+// the StatusError so errors.As and errors.Is still reach it, and its text
+// drops the StatusError's own "httpx:" prefix so the package name appears
+// once (T-9119).
+type notRetryingError struct {
+	reason string
+	status *StatusError
+}
+
+func (e *notRetryingError) Error() string {
+	return "httpx: not retrying, " + e.reason + ": " + strings.TrimPrefix(e.status.Error(), "httpx: ")
+}
+
+func (e *notRetryingError) Unwrap() error { return e.status }
+
 // Get issues a GET request for rawURL with the given extra query
 // parameters, which may be nil.
 func (c *Client) Get(ctx context.Context, rawURL string, query url.Values) (*Response, error) {
@@ -937,17 +953,17 @@ func (c *Client) Do(ctx context.Context, req Request) (*Response, error) {
 
 		delay, ok := c.retryDelay(attempt, statusErr)
 		if !ok {
-			return nil, fmt.Errorf(
-				"httpx: not retrying, the server asked to wait %s which is longer than the %s limit: %w",
-				statusErr.RetryAfter, c.maxRetryAfter, statusErr,
-			)
+			return nil, &notRetryingError{
+				reason: fmt.Sprintf("the server asked to wait %s which is longer than the %s limit", statusErr.RetryAfter, c.maxRetryAfter),
+				status: statusErr,
+			}
 		}
 
 		if !c.fitsDeadline(ctx, delay) {
-			return nil, fmt.Errorf(
-				"httpx: not retrying, a %s wait would outlast the request deadline: %w",
-				delay, statusErr,
-			)
+			return nil, &notRetryingError{
+				reason: fmt.Sprintf("a %s wait would outlast the request deadline", delay),
+				status: statusErr,
+			}
 		}
 
 		c.log().Debug("httpx: retrying request",
