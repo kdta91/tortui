@@ -841,6 +841,9 @@ func (m Model) handleSourceRemoveConfirmAction(action Action) (tea.Model, tea.Cm
 
 		m.sourcesSnapshot = remaining
 
+		// Keep the cursor on a row that still exists.
+		m.settings.cursor = max(min(m.settings.cursor, len(remaining)+len(m.builtinSnapshot)-1), 0)
+
 		return m, saveSourcesCmd(m.sources, remaining, previous)
 	}
 
@@ -1659,7 +1662,11 @@ func (m Model) renderSettingsScreen() string {
 		rows = append(rows, config.Indexer{ID: bs.ID, Name: bs.Name, Type: builtinTag, Enabled: bs.Enabled})
 	}
 
-	for i, s := range rows {
+	legend := wrapLegend(settingsScreenLegend, m.width)
+	first, last := m.sourceWindow(len(rows), strings.Count(legend, "\n")+1)
+
+	for i := first; i < last; i++ {
+		s := rows[i]
 		marker := "  "
 		if i == m.settings.cursor {
 			marker = "> "
@@ -1688,9 +1695,31 @@ func (m Model) renderSettingsScreen() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(th.Muted.Render(wrapLegend(settingsScreenLegend, m.width)))
+	b.WriteString(th.Muted.Render(legend))
 
 	return truncateLines(strings.TrimRight(b.String(), "\n"), m.width)
+}
+
+// sourceWindow is the range of source rows shown: all of them when they fit,
+// otherwise a window that follows the cursor (the same scroll-with-selection
+// as destWindow) so the legend below the list and the status bar stay on
+// screen. legendLines is how many lines the wrapped legend takes.
+func (m Model) sourceWindow(total, legendLines int) (int, int) {
+	visible := total
+
+	if m.height > 0 {
+		// The blank line between the list and the legend is the "- 1".
+		visible = min(total, max(m.bodyBudget(true)-1-legendLines, 1))
+	}
+
+	cursor := max(min(m.settings.cursor, total-1), 0)
+
+	start := 0
+	if cursor >= visible {
+		start = cursor - visible + 1
+	}
+
+	return start, min(start+visible, total)
 }
 
 // renderSourceForm draws the open add/edit form: every visible field, the

@@ -872,7 +872,7 @@ func (s searchModel) minSeedersDisplay() string {
 	return s.minSeedersText
 }
 
-// truncateLines applies theme.Truncate to every line of s independently, so
+// truncateLines applies theme.TruncateStyled to every line of s independently, so
 // a multi-line screen body degrades the same way every single-line render
 // in this package already does (AGENT.md §14), rather than truncating the
 // whole block as if it were one line. A non-positive width returns s
@@ -885,7 +885,7 @@ func truncateLines(s string, width int) string {
 
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
-		lines[i] = theme.Truncate(line, width)
+		lines[i] = theme.TruncateStyled(line, width)
 	}
 
 	return strings.Join(lines, "\n")

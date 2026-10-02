@@ -501,7 +501,7 @@ func (m Model) renderDownloadsScreen() string {
 
 	active, completed := partitionDownloads(m.torrentStatuses)
 	if len(active) == 0 && len(completed) == 0 {
-		return theme.Truncate(
+		return theme.TruncateStyled(
 			th.Muted.Render("No downloads yet — add a result from search or details."),
 			m.width,
 		)

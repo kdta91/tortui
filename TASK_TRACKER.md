@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip.
 
 ---
 
@@ -773,9 +773,6 @@ deferrals stay deferred to Backlog T-9004.
   from review of T-9049 (PR #78).
 - `T-9055` Redirect refusal errors carry a doubled "httpx:" prefix. If fixed, fix every one in a
   single follow-up. Non-blocking note from review of T-9049 (PR #78).
-- `T-9058` `truncateLines` (search.go) truncates already-styled screen bodies with `theme.Truncate`,
-  which counts escape codes as columns, so with colour on a screen line is cut early and an escape
-  sequence can be cut in two. T-9056 fixed only the status bar. Found during T-9056.
 - `T-9059` The doc comment on `addSourceFor` in `internal/tui/details.go` has a reflowed line of 119
   columns (line 123); rewrap it. Non-blocking note from review of T-9056 (PR #80).
 - `T-9060` The "infohash attr" subtest of `TestAddingATwoLinkTorznabResult`
@@ -791,9 +788,6 @@ deferrals stay deferred to Backlog T-9004.
   hint "(empty - enter runs Latest)" is misleading while editing.
 - `T-9067` Trust sort places unknown-trust rows both above and below verified rows; check whether
   that is intended.
-- `T-9068` The tab bar (about 69 columns) is not clipped below that width, and the Settings source
-  list is not clipped to the height with many sources, so its legend can scroll off. Found during
-  T-9061.
 - `T-9070` The block-boundary snap in the Downloads `scrollWindow` (downloads.go, the loop over block
   starts) has no test. Add an assertion that, after scrolling down at 80x24, the first body line
   under the tab bar is a section title or a torrent name. Non-blocking note from review of T-9061
@@ -1009,6 +1003,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-154 | 2026-10-02 | T-9095: when url.Parse refuses a name, `engine.SafeName` treats a `scheme://` prefix (RFC 3986 scheme) as an address and names it "torrent file"; a name like `http://example.org with spaces` is no longer kept |
 | DEC-155 | 2026-10-02 | T-9099: refines DEC-154; `engine.SafeName` judges a name with its invisible runes (control, Cf, default-ignorable) removed, and an http(s) scheme is an address with or without a host |
 | DEC-156 | 2026-10-02 | T-9099: a lenient httpx redirect rule (subdomain, magnet) applies only when the chain's first request carries no userinfo and no header besides User-Agent; otherwise the strict rule |
+| DEC-157 | 2026-10-02 | T-9100: styled lines are truncated with `charmbracelet/x/ansi` (already in the module graph, MIT), promoted to a direct dependency behind `theme.TruncateStyled`; no new module. The tab bar degrades in steps: full, no `[n]` hints, then an ellipsis clip. |
 
 ## Blocked
 

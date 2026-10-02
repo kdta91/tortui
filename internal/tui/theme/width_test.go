@@ -3,6 +3,8 @@ package theme
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestWidthASCII(t *testing.T) {
@@ -174,5 +176,74 @@ func TestWrapEmptyStringReturnsOneEmptyLine(t *testing.T) {
 	got := Wrap("", 10)
 	if len(got) != 1 || got[0] != "" {
 		t.Fatalf("Wrap(\"\", 10) = %v, want one empty line", got)
+	}
+}
+
+func styledLine(t *testing.T, text string) string {
+	t.Helper()
+
+	th := New(DefaultThemeName, Capability{Color: ColorTrue, Unicode: true})
+	got := th.Accent.Render(text)
+
+	if !strings.ContainsRune(got, '\x1b') {
+		t.Fatalf("Accent.Render(%q) = %q, want escape codes with colour forced on", text, got)
+	}
+
+	return got
+}
+
+func TestTruncateStyledKeepsALineThatFits(t *testing.T) {
+	line := styledLine(t, "hello world")
+
+	if got := TruncateStyled(line, 11); got != line {
+		t.Fatalf("TruncateStyled(fits) = %q, want it unchanged %q", got, line)
+	}
+}
+
+func TestTruncateStyledCutsAtTheVisibleColumn(t *testing.T) {
+	line := styledLine(t, "hello wonderful world")
+
+	for w := 0; w <= 21; w++ {
+		got := TruncateStyled(line, w)
+		if vis := ansi.StringWidth(got); vis > w {
+			t.Fatalf("w=%d: visible width %d exceeds the target in %q", w, vis, got)
+		}
+
+		assertCompleteEscapes(t, w, got)
+	}
+
+	got := TruncateStyled(line, 10)
+	if want := "hello w..."; ansi.Strip(got) != want {
+		t.Fatalf("TruncateStyled(.., 10) text = %q, want %q", ansi.Strip(got), want)
+	}
+
+	if ansi.StringWidth(got) != 10 {
+		t.Fatalf("visible width = %d, want exactly 10", ansi.StringWidth(got))
+	}
+}
+
+// assertCompleteEscapes fails when any ESC in s does not start a whole CSI
+// sequence (ESC [ params, ended by a final byte 0x40-0x7e).
+func assertCompleteEscapes(t *testing.T, w int, s string) {
+	t.Helper()
+
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\x1b' {
+			continue
+		}
+
+		j := i + 1
+		if j >= len(s) || s[j] != '[' {
+			t.Fatalf("w=%d: ESC not followed by '[' in %q", w, s)
+		}
+
+		for j++; j < len(s) && s[j] >= 0x20 && s[j] <= 0x3f; j++ {
+		}
+
+		if j >= len(s) || s[j] < 0x40 || s[j] > 0x7e {
+			t.Fatalf("w=%d: escape sequence cut in two in %q", w, s)
+		}
+
+		i = j
 	}
 }

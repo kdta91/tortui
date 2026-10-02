@@ -559,7 +559,7 @@ func (m Model) renderDetailsScreen() string {
 	th := m.theme
 
 	if !m.details.hasResult {
-		return theme.Truncate(
+		return theme.TruncateStyled(
 			th.Muted.Render("No result selected — press d on the results screen to view one."),
 			m.width,
 		)
