@@ -402,7 +402,8 @@ var endToEndClients = map[string]Config{
 // allowlist (T-9095): a target that is not http or https is refused even
 // with the original userinfo, host and effective port, so the decision
 // never rests on the transport refusing the scheme later. An http(s) target
-// with the same bytes is still followed.
+// with the same bytes is still followed. An ftp origin redirecting to http on
+// its own host and port is refused by the origin check alone (T-9099).
 func TestSameOriginUserinfoNeedsAWebScheme(t *testing.T) {
 	t.Parallel()
 
@@ -414,6 +415,7 @@ func TestSameOriginUserinfoNeedsAWebScheme(t *testing.T) {
 		"ftp, explicit http port":        {"http://alice:s3cret@example.org/a", "ftp://alice:s3cret@example.org:80/b", false},
 		"ws, same explicit port":         {"http://alice:s3cret@example.org:8080/a", "ws://alice:s3cret@example.org:8080/b", false},
 		"ftp origin, same explicit port": {"ftp://alice:s3cret@example.org:2121/a", "ftp://alice:s3cret@example.org:2121/b", false},
+		"ftp origin, http target":        {"ftp://alice:s3cret@example.org:2121/a", "http://alice:s3cret@example.org:2121/b", false},
 		"http, same explicit port":       {"http://alice:s3cret@example.org:8080/a", "http://alice:s3cret@example.org:8080/b", true},
 		"HTTPS, same explicit port":      {"http://alice:s3cret@example.org:8443/a", "HTTPS://alice:s3cret@example.org:8443/b", true},
 	}
