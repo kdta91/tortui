@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses.
 
 ---
 
@@ -829,11 +829,6 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9080` README line widths: in "Search returns nothing" the line beginning "Distinguishes
   *unreachable* from *auth failed*" is 130 columns, and the `make run` comment line under
   Development is 99. Rewrap both at about 98 columns. Owner request (T-9079).
-- `T-9081` A magnet added directly (a source-published one, or a session restore) keeps its `xs=`
-  and `as=` parameters, and the torrent library then fetches a .torrent from those addresses with
-  its own HTTP client, on any host, even with the engine's Offline option (it does not cover
-  metainfo sources). T-9079 drops them only from a magnet taken from a redirect (DEC-151). Decide
-  whether every magnet add should drop them and Offline should disable that client. Found in T-9079.
 - `T-9083` Honour the httpx `MagnetRedirects` option only when the client has no credentials,
   mirroring how `FollowSubdomainRedirects` is gated (internal/indexer/httpx/client.go, around line
   397). Found in review of T-9079 (PR #85).
@@ -841,9 +836,6 @@ deferrals stay deferred to Backlog T-9004.
   the two T-937 lists. Found in review of T-9079 (PR #85).
 - `T-9085` Reword the comment at internal/engine/anacrolix/engine.go, around line 1081, to "may
   make tortui fetch a .torrent from no host the .torrent fetch would not have followed". Found in
-  review of T-9079 (PR #85).
-- `T-9086` The engine-level test that `xs=`/`as=` are stripped should point those keys at a loopback
-  httptest server and assert zero hits, rather than only checking the persisted string. Found in
   review of T-9079 (PR #85).
 - `T-9087` Note only: the magnet validator allows non-ASCII and UTF-8 C1 control bytes. Harmless,
   because the display name is replaced. Found in review of T-9079 (PR #85).
@@ -1019,6 +1011,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-150 | 2026-10-01 | T-9069: bundled sources are Settings rows tagged built-in and doctor lines; a `disabled_builtin` config list is their off switch (default empty, all on) |
 | DEC-151 | 2026-10-02 | T-9079: a .torrent link that redirects to a magnet adds by the validated magnet in place (same id, destination, name); the magnet replaces the link in resume data and the record |
 | DEC-152 | 2026-10-02 | T-9090: the Linux CI jobs run on ubuntu-26.04 (tried in the PR), the release job is pinned to ubuntu-24.04; matrix job names keep the os key, so no check name changes |
+| DEC-153 | 2026-10-02 | T-9094: every magnet drops `xs=`/`as=` at `specFromMagnet`, the one magnet-to-spec call (add, queue, restore, redirect); the stripped magnet is what resume data and the record keep; Offline refuses the library's metainfo-sources client |
 
 ## Blocked
 
