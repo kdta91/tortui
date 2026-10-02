@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records.
 
 ---
 
@@ -100,29 +100,39 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [ ] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041, T-9045, T-9046, T-9049, T-9052, T-9056, T-9057, T-9061, T-9069, T-9073 and T-9079, are `done`.
-- [ ] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI. The race jobs
+- [x] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041, T-9045, T-9046, T-9049, T-9052, T-9056, T-9057, T-9061, T-9069, T-9073, T-9079 and T-9082, are `done`.
+- [x] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI. The race jobs
       (T-9025) are advisory per PR under DEC-107 but must all be green before the release tag.
-- [ ] Coverage thresholds from AGENT.md §9 met.
-- [ ] `govulncheck` clean; `NOTICE` current; no GPL/AGPL dependency.
-- [ ] Terminal matrix (T-094) passes on macOS for v1.0 (DEC-132 — owner has no Windows/Linux
+- [x] Coverage thresholds from AGENT.md §9 met.
+- [x] `govulncheck` clean; `NOTICE` current; no GPL/AGPL dependency.
+- [x] Terminal matrix (T-094) passes on macOS for v1.0 (DEC-132 — owner has no Windows/Linux
       device; Windows Terminal/conhost/Linux emulator/PowerShell deferred to Backlog T-9004).
-- [ ] A real download completes, resumes across a restart, and removes cleanly on macOS for
+- [x] A real download completes, resumes across a restart, and removes cleanly on macOS for
       v1.0 (DEC-132 — Linux/Windows deferred to Backlog T-9004).
-- [ ] No infringement-oriented site is named anywhere in the repository (AGENT.md §2, §16).
+- [x] No infringement-oriented site is named anywhere in the repository (AGENT.md §2, §16).
       Verified by grep against the T-024 allowlist.
-- [ ] A fresh install searches and downloads successfully with no configuration, no account,
+- [x] A fresh install searches and downloads successfully with no configuration, no account,
       and no other software installed — verified on macOS for v1.0 (T-091; DEC-132 —
       Linux/Windows deferred to Backlog T-9004).
-- [ ] A search works on first launch with zero config, against every bundled source.
-- [ ] Malicious-path `.torrent` fixtures are refused on all three OSes (T-034).
-- [ ] A second instance refuses to start; a crash mid-config-write loses nothing (T-042).
-- [ ] Quit and `SIGINT` both restore the terminal cleanly with downloads active (T-042).
-- [ ] Per-torrent destinations survive a restart and are honoured by open, reveal, and
+- [x] A search works on first launch with zero config, against every bundled source.
+- [x] Malicious-path `.torrent` fixtures are refused on all three OSes (T-034).
+- [x] A second instance refuses to start; a crash mid-config-write loses nothing (T-042).
+- [x] Quit and `SIGINT` both restore the terminal cleanly with downloads active (T-042).
+- [x] Per-torrent destinations survive a restart and are honoured by open, reveal, and
       remove-with-data (T-074).
-- [ ] No documented path to a core capability (search, add, download, open, remove) requires
+- [x] No documented path to a core capability (search, add, download, open, remove) requires
       installing anything besides tortui.
-- [ ] README accurate against shipped behaviour; `--demo` works on a clean install.
+- [x] README accurate against shipped behaviour; `--demo` works on a clean install.
+
+---
+
+**v1.0.0 was tagged by the owner on 2026-10-02 at d18c06e; release run 36975766756 succeeded (goreleaser, cosign, build attestation).** Verified: CI (macOS, Linux, Windows `make check` and
+`-race` green on main), the local release check (`make cover` floors, `govulncheck` 0 reachable with
+the 3 module-level findings being T-093's triaged set, `make licenses` with NOTICE unchanged, a
+full-history hostname scan clean), and the owner's macOS checks (a real download completes, resumes
+after `q` and after Ctrl-C with the terminal restored, and is removed with its data; a fresh
+`TORTUI_HOME` searches and downloads with zero config; `--demo` matches the README). The DEC-132
+deferrals stay deferred to Backlog T-9004.
 
 ---
 
@@ -823,6 +833,25 @@ when it reaches it and does not start backlog items on its own.
   its own HTTP client, on any host, even with the engine's Offline option (it does not cover
   metainfo sources). T-9079 drops them only from a magnet taken from a redirect (DEC-151). Decide
   whether every magnet add should drop them and Offline should disable that client. Found in T-9079.
+- `T-9083` Honour the httpx `MagnetRedirects` option only when the client has no credentials,
+  mirroring how `FollowSubdomainRedirects` is gated (internal/indexer/httpx/client.go, around line
+  397). Found in review of T-9079 (PR #85).
+- `T-9084` Add httpx's `validInfohash` to T-937's scope: it is a third infohash validator beside
+  the two T-937 lists. Found in review of T-9079 (PR #85).
+- `T-9085` Reword the comment at internal/engine/anacrolix/engine.go, around line 1081, to "may
+  make tortui fetch a .torrent from no host the .torrent fetch would not have followed". Found in
+  review of T-9079 (PR #85).
+- `T-9086` The engine-level test that `xs=`/`as=` are stripped should point those keys at a loopback
+  httptest server and assert zero hits, rather than only checking the persisted string. Found in
+  review of T-9079 (PR #85).
+- `T-9087` Note only: the magnet validator allows non-ASCII and UTF-8 C1 control bytes. Harmless,
+  because the display name is replaced. Found in review of T-9079 (PR #85).
+- `T-9088` CI: the actions in use (checkout@v4, setup-go@v5, goreleaser-action@v6,
+  attest-build-provenance) target Node.js 20, which is deprecated and being forced onto Node 24.
+  Bump them to releases that target Node 24, in ci.yml and release.yml.
+- `T-9089` CI: the `ubuntu-latest` label migrates to Ubuntu 26 beginning 2026-10-19. Check the
+  Linux jobs (the C toolchain check, build-all, the race job) against it and pin the version if
+  anything breaks.
 
 ---
 

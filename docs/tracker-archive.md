@@ -5127,3 +5127,24 @@ generic error), dedups, sets the spec's display name to the entry's, swaps the s
 magnet and attaches; the slot is the one the fetch held. The record's TorrentURL is replaced by the
 magnet (DEC-151). The log mask now redacts magnets and udp/ws addresses. App test drives the real
 adapter, engine, session and TUI through a restart. 27 mutations killed. Backlog T-9080, T-9081.
+
+### T-9082 · v1.0.0 release records
+
+```
+status: done
+depends: T-9079
+tier: L
+```
+Owner request (2026-10-02). The owner tagged v1.0.0 at d18c06e (release run 36975766756). Record it.
+
+**Acceptance:**
+1. Every box under "v1.0 release criteria" is ticked, with a dated line giving the tag, the commit,
+   the release run and where each criterion was verified. The DEC-132 deferrals stay, pointing to
+   Backlog T-9004.
+2. The README status line says v1.0.0 is released and links the release page; no other
+   "pre-release" or "awaiting tag" wording remains in the README.
+3. Backlog entries exist for the five findings from the review of PR #85, the Node.js 20 action
+   bump, and the Ubuntu 26 label migration.
+4. `make check` is green, including the README keymap test.
+
+**Notes:** Docs only. Backlog T-9083 to T-9089.

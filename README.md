@@ -8,9 +8,10 @@ Single static binary that works on its own. No daemon, no indexer proxy, no Tran
 qBittorrent behind it, nothing to install first — download it and you can search and download
 straight away. Runs on **macOS, Linux, and Windows**.
 
-> **Status:** feature-complete, awaiting the v1.0.0 tag. Plain `tortui` runs the real app — your
-> config, the bundled source plus your own, the built-in engine, real downloads that resume
-> after a restart. `tortui --demo` runs the same UI against synthetic data. See
+> **Status:** v1.0.0 is released: see the
+> [release page](https://github.com/kdta91/tortui/releases/latest). Plain `tortui` runs the real
+> app — your config, the bundled source plus your own, the built-in engine, real downloads that
+> resume after a restart. `tortui --demo` runs the same UI against synthetic data. See
 > [`TASK_TRACKER.md`](TASK_TRACKER.md) for the v1.0 release checklist.
 
 ---
