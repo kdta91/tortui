@@ -30,7 +30,7 @@ var ErrMagnetRedirect = errors.New("redirected to a magnet link")
 // carry a passkey (T-9079, DEC-151).
 var ErrMagnetRedirectInvalid = errors.New("refusing a redirect to a magnet link that is not usable")
 
-// MagnetRedirectError is returned, on a client built with
+// MagnetRedirectError is returned, on a credential-free client built with
 // Config.MagnetRedirects, when a request is answered by a redirect (301,
 // 302, 303, 307 or 308) whose Location is a magnet URI. It is not a
 // transport failure: a Torznab aggregator answers a result's download

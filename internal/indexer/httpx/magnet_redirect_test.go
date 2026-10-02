@@ -300,3 +300,63 @@ func TestMagnetRedirectsLeaveHTTPHopsAlone(t *testing.T) {
 		}
 	})
 }
+
+// TestMagnetRedirectsNeedACredentialFreeClient: MagnetRedirects takes
+// effect only on a client with no Credentials, the way
+// FollowSubdomainRedirects does (T-9095). A client carrying an api key or a
+// cookie refuses a magnet Location as a hop to another host even with the
+// option set, while the credential-free client surfaces it.
+func TestMagnetRedirectsNeedACredentialFreeClient(t *testing.T) {
+	t.Parallel()
+
+	refused := map[string]Credentials{
+		"api key":        {APIKey: testAPIKey},
+		"cookie":         {CookieHeader: testSessionValue},
+		"key and cookie": testCredentials(),
+	}
+
+	for name, creds := range refused {
+		t.Run("refused with "+name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := magnetServer(t, http.StatusFound, testMagnet)
+
+			client := New(Config{MinHostInterval: -1, MaxAttempts: 1, Credentials: creds, MagnetRedirects: true})
+
+			_, err := client.Get(testContext(t), srv.URL+"/api", nil)
+			if !errors.Is(err, ErrCrossHostRedirect) {
+				t.Fatalf("error = %v, want ErrCrossHostRedirect", err)
+			}
+
+			var mr *MagnetRedirectError
+			if errors.Is(err, ErrMagnetRedirect) || errors.As(err, &mr) {
+				t.Errorf("a credentialed client surfaced the magnet: %v", err)
+			}
+
+			assertNoEcho(t, err, testMagnet)
+
+			if srv.count() != 1 {
+				t.Errorf("server saw %d requests, want 1", srv.count())
+			}
+		})
+	}
+
+	t.Run("followed without credentials", func(t *testing.T) {
+		t.Parallel()
+
+		srv := magnetServer(t, http.StatusFound, testMagnet)
+
+		client := New(Config{MinHostInterval: -1, MaxAttempts: 1, MagnetRedirects: true})
+
+		_, err := client.Get(testContext(t), srv.URL+"/api", nil)
+
+		var mr *MagnetRedirectError
+		if !errors.As(err, &mr) {
+			t.Fatalf("error = %v, want a *MagnetRedirectError", err)
+		}
+
+		if mr.Magnet() != testMagnet {
+			t.Errorf("Magnet() = %q, want the Location byte for byte", mr.Magnet())
+		}
+	})
+}

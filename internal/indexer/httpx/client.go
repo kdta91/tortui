@@ -304,6 +304,9 @@ type Config struct {
 	// requested from it. Only the engine's .torrent client sets it: a
 	// Torznab aggregator answers a magnet-only result's download address
 	// this way (T-9079, DEC-151). Every http(s) hop keeps the rules above.
+	// Like FollowSubdomainRedirects, it takes effect only on a client with
+	// no Credentials; one carrying an api key or a cookie refuses a magnet
+	// Location as a hop to another host (T-9095).
 	MagnetRedirects bool
 }
 
@@ -389,12 +392,14 @@ func New(cfg Config) *Client {
 		transport = newTransport(cfg.ConnectTimeout, cfg.ReadTimeout)
 	}
 
+	credentialFree := cfg.Credentials == (Credentials{})
+
 	redirect := checkRedirect
-	if cfg.FollowSubdomainRedirects && cfg.Credentials == (Credentials{}) {
+	if cfg.FollowSubdomainRedirects && credentialFree {
 		redirect = checkRedirectToSubdomain
 	}
 
-	if cfg.MagnetRedirects {
+	if cfg.MagnetRedirects && credentialFree {
 		redirect = withMagnetRedirects(redirect)
 	}
 
@@ -517,10 +522,12 @@ func checkRedirectHosts(req *http.Request, via []*http.Request, subdomains bool)
 // "Exactly the same bytes" is literal: a percent-encoding variant decodes to
 // the same credentials but is a server rewriting them, and is refused. The
 // original's bytes are its userinfo as httpx issued it, in Go's escaping.
-// Nothing here ever reaches an error or a log line.
+// Both ends must be http or https (T-9095): the rule allows a web endpoint
+// redirecting within itself and nothing else, whatever the transport would
+// make of another scheme. Nothing here ever reaches an error or a log line.
 func sameOriginUserinfo(req *http.Request, via []*http.Request) bool {
 	origin := via[0].URL
-	if origin.User == nil {
+	if origin.User == nil || !isWebScheme(origin.Scheme) || !isWebScheme(req.URL.Scheme) {
 		return false
 	}
 
@@ -532,6 +539,11 @@ func sameOriginUserinfo(req *http.Request, via []*http.Request) bool {
 	port := effectivePort(origin)
 
 	return strings.EqualFold(req.URL.Hostname(), origin.Hostname()) && port != "" && port == effectivePort(req.URL)
+}
+
+// isWebScheme reports whether scheme is http or https, in any case.
+func isWebScheme(scheme string) bool {
+	return strings.EqualFold(scheme, "http") || strings.EqualFold(scheme, "https")
 }
 
 // redirectUserinfo returns req's userinfo as the redirect wrote it, read

@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names.
 
 ---
 
@@ -765,10 +765,6 @@ deferrals stay deferred to Backlog T-9004.
   redirect only to itself, on the same host and port (DEC-145), so an http address the server
   upgrades to https is refused; users should configure the https address directly. Note from
   review of T-9046 (PR #77).
-- `T-9051` `sameOriginUserinfo` has no scheme allowlist of its own: an ftp target on the same host
-  and explicit port passes it (from an http endpoint; from https the scheme rule refuses it) and
-  is refused only later by the transport. Add an explicit http/https check there. Note from
-  review of T-9046 (PR #77).
 - `T-9053` The comment in `internal/indexer/httpx/client.go` near the Location-parse prefix
   constant, and the T-9049 notes, cite Go 1.27. The repo pins 1.25, where the wording is identical;
   cite 1.25+. Non-blocking note from review of T-9049 (PR #78).
@@ -785,12 +781,6 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9060` The "infohash attr" subtest of `TestAddingATwoLinkTorznabResult`
   (`internal/app/addsource_test.go`) could also assert the engine's infohash, and that the
   enclosure was fetched at least once. Non-blocking note from review of T-9056 (PR #80).
-
-- `T-9062` `engine.SafeName` returns an unparseable address unchanged, api key included. Examples from
-  the review of PR #81: `https://feed.example.org/dl/%zz?apikey=K`, a bad port, an unclosed IPv6
-  bracket, a bad fragment escape, a trailing control byte. Fix: when parsing fails, treat a
-  `scheme://` prefix as an address and return `URLSourceName`; add those cases to
-  `TestSafeNameReducesOnlyWebAddresses`.
 - `T-9063` The `internal/app` HTTP-500 subtests take about 4s each because of real httpx backoff. Add
   a zero-backoff option or a fake clock.
 - `T-9064` Host-only naming (DEC-148) still shows a secret embedded in a hostname. Note only; no
@@ -829,14 +819,8 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9080` README line widths: in "Search returns nothing" the line beginning "Distinguishes
   *unreachable* from *auth failed*" is 130 columns, and the `make run` comment line under
   Development is 99. Rewrap both at about 98 columns. Owner request (T-9079).
-- `T-9083` Honour the httpx `MagnetRedirects` option only when the client has no credentials,
-  mirroring how `FollowSubdomainRedirects` is gated (internal/indexer/httpx/client.go, around line
-  397). Found in review of T-9079 (PR #85).
 - `T-9084` Add httpx's `validInfohash` to T-937's scope: it is a third infohash validator beside
   the two T-937 lists. Found in review of T-9079 (PR #85).
-- `T-9085` Reword the comment at internal/engine/anacrolix/engine.go, around line 1081, to "may
-  make tortui fetch a .torrent from no host the .torrent fetch would not have followed". Found in
-  review of T-9079 (PR #85).
 - `T-9087` Note only: the magnet validator allows non-ASCII and UTF-8 C1 control bytes. Harmless,
   because the display name is replaced. Found in review of T-9079 (PR #85).
 - `T-9091` Ubuntu 26.04: once the Linux CI jobs are green on it, move release.yml from ubuntu-24.04
@@ -849,6 +833,16 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9093` Three CI tools are pinned below their latest because those need Go 1.26 and CI builds
   with Go 1.25: gofumpt v0.11.0 (v0.12.0), golangci-lint v2.12.2 (v2.13.0 and later), goimports
   from x/tools v0.49.0 (v0.50.0). Bump all three when the repo moves to Go 1.26. Found in T-9090.
+- `T-9096` The app-level zero-hit check in `internal/app/metainfosources_test.go` is vacuous: the
+  app engine runs Offline, whose metainfo-sources client refuses every request, so the loopback
+  server sees zero hits even with the strip removed. Drop it, or label it as backing only the
+  Offline refusal. Non-blocking note from review of T-9094 (PR #88).
+- `T-9097` The add flow's record keeps a magnet's `xs=`/`as=` on disk until the next session save
+  rewrites it from the engine's stripped magnet. Strip them in that first write too. Non-blocking
+  note from review of T-9094 (PR #88).
+- `T-9098` The zero-hit tests in `internal/engine/anacrolix/metainfo_sources_test.go` wait a fixed
+  250 ms (`sourceFetchGrace`) for a fetch that must not come. Under heavy load a broken strip could
+  fetch late and pass; a correct one never fails. Non-blocking note from review of T-9094 (PR #88).
 
 ---
 
@@ -1012,6 +1006,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-151 | 2026-10-02 | T-9079: a .torrent link that redirects to a magnet adds by the validated magnet in place (same id, destination, name); the magnet replaces the link in resume data and the record |
 | DEC-152 | 2026-10-02 | T-9090: the Linux CI jobs run on ubuntu-26.04 (tried in the PR), the release job is pinned to ubuntu-24.04; matrix job names keep the os key, so no check name changes |
 | DEC-153 | 2026-10-02 | T-9094: every magnet drops `xs=`/`as=` at `specFromMagnet`, the one magnet-to-spec call (add, queue, restore, redirect); the stripped magnet is what resume data and the record keep; Offline refuses the library's metainfo-sources client |
+| DEC-154 | 2026-10-02 | T-9095: when url.Parse refuses a name, `engine.SafeName` treats a `scheme://` prefix (RFC 3986 scheme) as an address and names it "torrent file"; a name like `http://example.org with spaces` is no longer kept |
 
 ## Blocked
 
