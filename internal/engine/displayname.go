@@ -36,9 +36,10 @@ func URLSourceName(rawURL string) string {
 // not hand back the api key in its query. Its host cannot be read, so
 // URLSourceName names it "torrent file".
 //
-// The test is made on the name with every control and format rune removed
-// (T-9099, DEC-155), so a NUL, a C0 byte, U+200B or U+FEFF before, inside or
-// just after the scheme cannot hide an address. An http or https scheme is an
+// The test is made on the name with its invisible runes removed (T-9099,
+// DEC-155): control and format (Cf) runes, variation selectors, and the
+// other default-ignorable runes. So a NUL, a C0 byte, U+200B, U+FEFF or
+// U+034F before, inside or just after the scheme cannot hide an address. An http or https scheme is an
 // address even with no host ("https:host?apikey=..."). The name returned when
 // it is not an address is the one given, invisible runes and all.
 func SafeName(name string) string {
@@ -65,11 +66,12 @@ func isAddress(s string) bool {
 	return u.Scheme != "" && u.Host != ""
 }
 
-// dropInvisible is a strings.Map function that removes a control rune or a
-// Unicode format (Cf) rune — zero-width spaces, joiners, byte order marks —
+// dropInvisible is a strings.Map function that removes a control rune, a
+// Unicode format (Cf) rune — zero-width spaces, joiners, byte order marks —,
+// a variation selector, or another default-ignorable rune such as U+034F,
 // and keeps every other rune.
 func dropInvisible(r rune) rune {
-	if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+	if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point) {
 		return -1
 	}
 

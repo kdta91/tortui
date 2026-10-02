@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +32,16 @@ func (s *headerHandoff) RoundTrip(r *http.Request) (*http.Response, error) {
 	s.userinfo = append(s.userinfo, r.URL.User != nil)
 	s.mu.Unlock()
 
+	if r.URL.Host == "files.example.org" && r.URL.Path == "/start" {
+		return &http.Response{
+			StatusCode: http.StatusFound,
+			Status:     "302 Found",
+			Header:     http.Header{"Location": []string{"/download/x.torrent"}},
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    r,
+		}, nil
+	}
+
 	if r.URL.Host == "files.example.org" {
 		return &http.Response{
 			StatusCode: http.StatusFound,
@@ -47,6 +59,15 @@ func (s *headerHandoff) RoundTrip(r *http.Request) (*http.Response, error) {
 		Body:       io.NopCloser(strings.NewReader("torrent-bytes")),
 		Request:    r,
 	}, nil
+}
+
+// credentialedURL is scheme://host+path with the userinfo alice and
+// requestAPIKey, built through the net/url package rather than spelled as
+// a literal.
+func credentialedURL(scheme, host, path string) string {
+	u := url.URL{Scheme: scheme, User: url.UserPassword("alice", requestAPIKey), Host: host, Path: path}
+
+	return u.String()
 }
 
 func (s *headerHandoff) seen() ([]string, []http.Header) {
@@ -110,7 +131,7 @@ func TestSubdomainRedirectRefusesACredentialedRequest(t *testing.T) {
 		"Cookie header":           {URL: target, Header: http.Header{"Cookie": {"session=" + requestAPIKey}}},
 		"a vendor's token header": {URL: target, Header: http.Header{"X-Indexer-Token": {requestAPIKey}}},
 		"lower-case header name":  {URL: target, Header: http.Header{"x-api-key": {requestAPIKey}}},
-		"userinfo":                {URL: "https://alice:" + requestAPIKey + "@files.example.org/download/x.torrent"},
+		"userinfo":                {URL: credentialedURL("https", "files.example.org", "/download/x.torrent")},
 	}
 
 	for name, req := range refused {
@@ -129,6 +150,30 @@ func TestSubdomainRedirectRefusesACredentialedRequest(t *testing.T) {
 			}
 		})
 	}
+
+	// net/http puts a Referer on the request it builds for a redirect, so
+	// the second hop's previous request carries a header the first did
+	// not. The rule judges the chain's first request, which carries none:
+	// a same-host hop then a subdomain hop is followed.
+	t.Run("followed after a same-host hop", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &headerHandoff{}
+
+		resp, err := client(transport).Get(testContext(t), "https://files.example.org/start", nil)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		if string(resp.Body) != "torrent-bytes" {
+			t.Errorf("Body = %q, want the storage host's file", resp.Body)
+		}
+
+		want := []string{"files.example.org", "files.example.org", "node7.files.example.org"}
+		if hosts, _ := transport.seen(); !slices.Equal(hosts, want) {
+			t.Errorf("hosts requested = %v, want %v", hosts, want)
+		}
+	})
 
 	t.Run("followed with only a User-Agent", func(t *testing.T) {
 		t.Parallel()
@@ -165,7 +210,7 @@ func TestMagnetRedirectRefusesACredentialedRequest(t *testing.T) {
 			return Request{URL: base + "/api", Header: http.Header{"X-Api-Key": {requestAPIKey}}}
 		},
 		"userinfo": func(base string) Request {
-			return Request{URL: strings.Replace(base, "://", "://alice:"+requestAPIKey+"@", 1) + "/api"}
+			return Request{URL: credentialedURL("http", strings.TrimPrefix(base, "http://"), "/api")}
 		},
 	}
 

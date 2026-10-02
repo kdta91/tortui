@@ -91,8 +91,9 @@ func TestSafeNameReducesOnlyWebAddresses(t *testing.T) {
 		})
 	}
 
-	// An invisible rune — a C0 control byte, or a Unicode format character
-	// such as U+200B or U+FEFF — before or inside the scheme, or in the
+	// An invisible rune — a C0 control byte, a Unicode format character
+	// such as U+200B or U+FEFF, a variation selector, or another
+	// default-ignorable rune such as U+034F — before or inside the scheme, or in the
 	// separator after it, does not stop the name being an address (T-9099,
 	// DEC-155). Neither does an http(s) scheme with no host: url.Parse
 	// accepts these, and the key is still in the query.
@@ -104,6 +105,8 @@ func TestSafeNameReducesOnlyWebAddresses(t *testing.T) {
 		"space then U+200B":       " \u200b https://host.example/x?apikey=" + key,
 		"C0 byte in the scheme":   "https\x01://host.example/x?apikey=" + key,
 		"U+200B in the scheme":    "ht\u200btps://host.example/x?apikey=" + key,
+		"U+034F in the scheme":    "ht\u034ftps://host.example/x?apikey=" + key,
+		"U+FE0F in the scheme":    "https\ufe0f://host.example/x?apikey=" + key,
 		"C0 byte after the colon": "https:\x01//host.example/x?apikey=" + key,
 		"U+FEFF after the colon":  "https:\ufeff//host.example/x?apikey=" + key,
 		"opaque, no host":         "https:host?apikey=" + key,

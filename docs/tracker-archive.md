@@ -5283,10 +5283,10 @@ honouring a credential that rides on the request instead of in `Config.Credentia
 4. Each fix reverted fails its new tests (quoted in the PR). `make check`, `make race` for the
    touched packages and `make cover` are green.
 
-**Notes:** SafeName classifies the name with every control and Cf rune removed, then trimmed, and
+**Notes:** SafeName classifies the name with its invisible runes (control, Cf, default-ignorable) removed and
 returns the name as given when it is no address; one rule covers the invisible rune before, inside
 or just after the scheme (DEC-155, refining DEC-154). An http(s) scheme is an address with or
 without a host, so a title opening "HTTP:" is now shown as "torrent file". httpx: a lenient client
 judges a chain whose first request has userinfo or any header besides User-Agent by the strict
 rule (DEC-156), since httpx cannot know every credential header's name; the engine's .torrent
-client sends none, so T-9010 and T-9079 are unchanged. Five mutations, each failing its tests.
+client sends none, so T-9010 and T-9079 are unchanged. Seven mutations, each failing its tests.

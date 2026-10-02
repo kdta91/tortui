@@ -1007,7 +1007,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-152 | 2026-10-02 | T-9090: the Linux CI jobs run on ubuntu-26.04 (tried in the PR), the release job is pinned to ubuntu-24.04; matrix job names keep the os key, so no check name changes |
 | DEC-153 | 2026-10-02 | T-9094: every magnet drops `xs=`/`as=` at `specFromMagnet`, the one magnet-to-spec call (add, queue, restore, redirect); the stripped magnet is what resume data and the record keep; Offline refuses the library's metainfo-sources client |
 | DEC-154 | 2026-10-02 | T-9095: when url.Parse refuses a name, `engine.SafeName` treats a `scheme://` prefix (RFC 3986 scheme) as an address and names it "torrent file"; a name like `http://example.org with spaces` is no longer kept |
-| DEC-155 | 2026-10-02 | T-9099: refines DEC-154; `engine.SafeName` judges a name with its control and format runes removed, and an http(s) scheme is an address with or without a host |
+| DEC-155 | 2026-10-02 | T-9099: refines DEC-154; `engine.SafeName` judges a name with its invisible runes (control, Cf, default-ignorable) removed, and an http(s) scheme is an address with or without a host |
 | DEC-156 | 2026-10-02 | T-9099: a lenient httpx redirect rule (subdomain, magnet) applies only when the chain's first request carries no userinfo and no header besides User-Agent; otherwise the strict rule |
 
 ## Blocked
