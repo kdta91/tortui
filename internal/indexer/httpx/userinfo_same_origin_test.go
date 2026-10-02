@@ -116,6 +116,15 @@ var sameOriginRefused = map[string]sameOriginCase{
 	"unknown scheme on both ends": {
 		"ftp://alice:s3cret@example.org/api/start", "ftp://alice:s3cret@example.org/api/final", ErrUserinfoRedirect,
 	},
+	"unknown scheme, same explicit port": {
+		"http://alice:s3cret@example.org:8080/api/start", "ftp://alice:s3cret@example.org:8080/api/final", ErrUserinfoRedirect,
+	},
+	"unknown scheme, explicit http default port": {
+		"http://alice:s3cret@example.org/api/start", "ftp://alice:s3cret@example.org:80/api/final", ErrUserinfoRedirect,
+	},
+	"unknown scheme on both ends, same explicit port": {
+		"ftp://alice:s3cret@example.org:2121/api/start", "ftp://alice:s3cret@example.org:2121/api/final", ErrUserinfoRedirect,
+	},
 	"percent-encoded user letter": {
 		sameOriginFrom, "https://%61lice:s3cret@example.org/api/final", ErrUserinfoRedirect,
 	},
@@ -387,6 +396,73 @@ func (h *sameOriginHop) seen() (paths, auth []string) {
 var endToEndClients = map[string]Config{
 	"plain client":     {},
 	"subdomain client": {FollowSubdomainRedirects: true},
+}
+
+// TestSameOriginUserinfoNeedsAWebScheme checks the rule's own scheme
+// allowlist (T-9095): a target that is not http or https is refused even
+// with the original userinfo, host and effective port, so the decision
+// never rests on the transport refusing the scheme later. An http(s) target
+// with the same bytes is still followed.
+func TestSameOriginUserinfoNeedsAWebScheme(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		from, location string
+		want           bool
+	}{
+		"ftp, same explicit port":        {"http://alice:s3cret@example.org:8080/a", "ftp://alice:s3cret@example.org:8080/b", false},
+		"ftp, explicit http port":        {"http://alice:s3cret@example.org/a", "ftp://alice:s3cret@example.org:80/b", false},
+		"ws, same explicit port":         {"http://alice:s3cret@example.org:8080/a", "ws://alice:s3cret@example.org:8080/b", false},
+		"ftp origin, same explicit port": {"ftp://alice:s3cret@example.org:2121/a", "ftp://alice:s3cret@example.org:2121/b", false},
+		"http, same explicit port":       {"http://alice:s3cret@example.org:8080/a", "http://alice:s3cret@example.org:8080/b", true},
+		"HTTPS, same explicit port":      {"http://alice:s3cret@example.org:8443/a", "HTTPS://alice:s3cret@example.org:8443/b", true},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			req, via := redirectHop(t, tc.from, tc.location)
+			if got := sameOriginUserinfo(req, via); got != tc.want {
+				t.Errorf("sameOriginUserinfo(%s -> %s) = %v, want %v", tc.from, tc.location, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSameOriginUserinfoNonWebSchemeRefusedEndToEnd drives an http endpoint
+// with userinfo and an explicit port that redirects to ftp on the same host
+// and port: the client refuses it at the redirect check, so the transport
+// never sees a second request carrying the credentials.
+func TestSameOriginUserinfoNonWebSchemeRefusedEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	const from = "http://alice:s3cret@example.org:8080/api/start"
+
+	const location = "ftp://alice:s3cret@example.org:8080/api/final"
+
+	for clientName, base := range endToEndClients {
+		t.Run(clientName, func(t *testing.T) {
+			t.Parallel()
+
+			transport := &sameOriginHop{location: location}
+			cfg := base
+			cfg.MinHostInterval = -1
+			cfg.MaxAttempts = 1
+			cfg.Transport = transport
+
+			_, err := New(cfg).Get(testContext(t), from, nil)
+			if !errors.Is(err, ErrUserinfoRedirect) {
+				t.Fatalf("Get = %v, want ErrUserinfoRedirect", err)
+			}
+
+			assertNoUserinfoEcho(t, err.Error(), sameOriginCase{from: from, location: location})
+
+			if paths, _ := transport.seen(); len(paths) != 1 {
+				t.Fatalf("requests = %v, want only the first one", paths)
+			}
+		})
+	}
 }
 
 // TestSameOriginUserinfoRedirectIsFollowed drives an allowed redirect
