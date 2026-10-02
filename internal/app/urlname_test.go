@@ -33,8 +33,9 @@ const (
 
 // How the keyed server answers a .torrent request.
 const (
-	fetchBlock int32 = iota // wait for release, or for the client to go away
-	fetchFail               // HTTP 500
+	fetchBlock  int32 = iota // wait for release, or for the client to go away
+	fetchFail                // HTTP 500
+	fetchMagnet              // redirect to the server's magnet (T-9079)
 )
 
 // keyedServer is a loopback Torznab source whose one result is added by an
@@ -43,6 +44,7 @@ type keyedServer struct {
 	*httptest.Server
 
 	enclosure string
+	magnet    string
 	mode      atomic.Int32
 	gate      chan struct{}
 	release   func()
@@ -56,7 +58,7 @@ func newKeyedServer(t *testing.T, mode int32) *keyedServer {
 
 	torrent, _ := syntheticTorrent(t)
 	caps := fixture(t, "caps-minimal.xml")
-	ks := &keyedServer{gate: make(chan struct{})}
+	ks := &keyedServer{gate: make(chan struct{}), magnet: redirectMagnet}
 	ks.mode.Store(mode)
 
 	var once sync.Once
@@ -75,8 +77,14 @@ func newKeyedServer(t *testing.T, mode int32) *keyedServer {
 			ks.gets++
 			ks.mu.Unlock()
 
-			if ks.mode.Load() == fetchFail {
+			switch ks.mode.Load() {
+			case fetchFail:
 				http.Error(w, "synthetic failure", http.StatusInternalServerError)
+				return
+			case fetchMagnet:
+				w.Header().Set("Location", ks.magnet)
+				w.WriteHeader(http.StatusFound)
+
 				return
 			}
 

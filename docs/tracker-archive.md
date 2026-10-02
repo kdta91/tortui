@@ -5089,3 +5089,41 @@ their real labels; `doctor` lists configured plus built-in sources, disabled one
 opens the error list, `tab` collapses, `esc` closes. The 80x24 claim is limited to what
 layout_80x24_test.go covers (Downloads, Settings legend, forms, `?` overlay). `make run` is not
 changed; Backlog T-9078. No DEC.
+
+### T-9079 · A .torrent link that redirects to a magnet adds by the magnet
+
+```
+status: done
+depends: T-9073
+tier: H
+```
+Owner request (2026-10-02). A Torznab aggregator gives each result a download link on its own
+host. For an indexer that only offers magnets, that link answers with a redirect to a `magnet:`
+URI. The engine's .torrent fetch refused the hop as cross-host, so the add failed with "fetch
+torrent file: httpx: ... refusing to follow ...". Owner decision: only magnet redirects change.
+
+**Acceptance:**
+1. Only the engine's .torrent client turns a redirect (301, 302, 303, 307, 308) to a `magnet:`
+   URI into a typed result carrying the magnet. Indexer clients and every other client refuse it
+   as before; cross-host http(s) hops stay refused (DEC-136); nothing is requested from it.
+2. The magnet is validated strictly: it starts `magnet:?`, names an `xt=urn:btih:` infohash of 40
+   hex or 32 base32 characters, and stays under a length cap. Anything else is refused with an
+   error that names the host and never echoes the Location.
+3. The engine switches the tracked torrent to a magnet add in place: same id, destination and
+   display name; a duplicate infohash fails like a fetched .torrent's; queueing and max-active
+   rules hold; resume data holds the magnet, so a restart resumes by it without fetching the link.
+   DEC-151 records whether the record's TorrentURL is replaced.
+4. No magnet or tracker (`tr=`) address, which can carry a passkey, is logged or shown unmasked.
+5. The Downloads row and error detail stay free of the link (T-9057).
+6. Loopback-only tests with synthetic hashes and example.org names cover each redirect status, an
+   invalid magnet, cross-host and same-host http hops, an indexer client, a duplicate, a restart,
+   and screen and log sentinels. Every guard is mutation-tested. Backlog entry for README widths.
+
+**Notes:** httpx `Config.MagnetRedirects` (set only by the engine's default client) wraps the
+redirect rule: a `magnet:` hop returns `*MagnetRedirectError` once `validMagnet` passes (exactly
+one btih, no fragment, whitespace or control byte, 8 KiB cap), else `ErrMagnetRedirectInvalid` at
+the host. `attachRedirectMagnet` (engine.go) drops `xs=`/`as=`, parses (a library failure becomes a
+generic error), dedups, sets the spec's display name to the entry's, swaps the source to the
+magnet and attaches; the slot is the one the fetch held. The record's TorrentURL is replaced by the
+magnet (DEC-151). The log mask now redacts magnets and udp/ws addresses. App test drives the real
+adapter, engine, session and TUI through a restart. 27 mutations killed. Backlog T-9080, T-9081.

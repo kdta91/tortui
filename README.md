@@ -243,6 +243,11 @@ That matters here: if you already run Prowlarr or Jackett, tortui works with eve
 set up there, immediately, with no per-site work. Those tools handle the scraping and keep the
 site definitions on your machine; tortui just speaks the API.
 
+For an indexer that only offers magnets, the aggregator's download link answers with a redirect
+to the magnet. tortui adds the download by that magnet and keeps the magnet, not the link, for
+a restart. Other redirects keep their rules: only the link's own host, or a storage host
+under its domain, is followed.
+
 Grab the URL and key from Prowlarr's indexer page or Jackett's *Copy Torznab Feed* button and
 paste the whole thing into the add form — if the URL already has `?apikey=...` on the end,
 tortui splits it into the right fields for you. Or in the file:

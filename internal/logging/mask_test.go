@@ -67,6 +67,28 @@ func TestMaskText(t *testing.T) {
 			wantMasked: []string{"sk-live-999"},
 		},
 		{
+			name:        "magnet with a passkey in an encoded tracker address",
+			in:          "adding magnet:?xt=urn:btih:9079907990799079907990799079907990799079&tr=https%3A%2F%2Ftracker.example.org%2FPASSKEY-9079%2Fannounce now",
+			wantMasked:  []string{"PASSKEY-9079", "tracker.example.org", "9079907990799079"},
+			wantPresent: []string{"adding", "now"},
+		},
+		{
+			name:       "upper-case magnet scheme",
+			in:         "MAGNET:?xt=urn:btih:9079907990799079907990799079907990799079&tr=x%2FPASSKEY-9079",
+			wantMasked: []string{"PASSKEY-9079"},
+		},
+		{
+			name:        "udp tracker announce address",
+			in:          "announce to udp://tracker.example.org:6969/PASSKEY-9079/announce failed",
+			wantMasked:  []string{"PASSKEY-9079", "tracker.example.org"},
+			wantPresent: []string{"announce to", "failed"},
+		},
+		{
+			name:       "websocket tracker address",
+			in:         "tracker wss://tracker.example.org/PASSKEY-9079 closed",
+			wantMasked: []string{"PASSKEY-9079"},
+		},
+		{
 			name:        "ordinary message untouched",
 			in:          "search dispatched to 3 sources",
 			wantPresent: []string{"search dispatched to 3 sources"},

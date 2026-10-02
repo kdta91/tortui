@@ -296,6 +296,15 @@ type Config struct {
 	// forwards it to a subdomain), and the indexer clients that carry one
 	// keep the strict same-host rule (DEC-062, DEC-136).
 	FollowSubdomainRedirects bool
+
+	// MagnetRedirects surfaces a redirect whose Location is a magnet URI as
+	// a *MagnetRedirectError carrying the validated magnet, instead of
+	// refusing it as a hop to another host; one that is not a usable
+	// magnet is refused with ErrMagnetRedirectInvalid. Nothing is ever
+	// requested from it. Only the engine's .torrent client sets it: a
+	// Torznab aggregator answers a magnet-only result's download address
+	// this way (T-9079, DEC-151). Every http(s) hop keeps the rules above.
+	MagnetRedirects bool
 }
 
 // Client is a shared HTTP client for indexer adapters. It is safe for
@@ -383,6 +392,10 @@ func New(cfg Config) *Client {
 	redirect := checkRedirect
 	if cfg.FollowSubdomainRedirects && cfg.Credentials == (Credentials{}) {
 		redirect = checkRedirectToSubdomain
+	}
+
+	if cfg.MagnetRedirects {
+		redirect = withMagnetRedirects(redirect)
 	}
 
 	return &Client{
