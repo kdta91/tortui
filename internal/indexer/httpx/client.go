@@ -294,7 +294,10 @@ type Config struct {
 	// hop, is still refused. It takes effect only on a client with no
 	// Credentials: an injected cookie would follow the hop (net/http
 	// forwards it to a subdomain), and the indexer clients that carry one
-	// keep the strict same-host rule (DEC-062, DEC-136).
+	// keep the strict same-host rule (DEC-062, DEC-136). Nor does it apply
+	// to a request that carries a credential of its own — userinfo, or any
+	// Request.Header besides User-Agent, such as X-Api-Key: that request
+	// keeps the strict rule too (T-9099, DEC-156).
 	FollowSubdomainRedirects bool
 
 	// MagnetRedirects surfaces a redirect whose Location is a magnet URI as
@@ -306,7 +309,8 @@ type Config struct {
 	// this way (T-9079, DEC-151). Every http(s) hop keeps the rules above.
 	// Like FollowSubdomainRedirects, it takes effect only on a client with
 	// no Credentials; one carrying an api key or a cookie refuses a magnet
-	// Location as a hop to another host (T-9095).
+	// Location as a hop to another host (T-9095), and so does a request
+	// that carries userinfo or any header besides User-Agent (T-9099).
 	MagnetRedirects bool
 }
 
@@ -395,12 +399,17 @@ func New(cfg Config) *Client {
 	credentialFree := cfg.Credentials == (Credentials{})
 
 	redirect := checkRedirect
-	if cfg.FollowSubdomainRedirects && credentialFree {
-		redirect = checkRedirectToSubdomain
-	}
+	if credentialFree && (cfg.FollowSubdomainRedirects || cfg.MagnetRedirects) {
+		lenient := checkRedirect
+		if cfg.FollowSubdomainRedirects {
+			lenient = checkRedirectToSubdomain
+		}
 
-	if cfg.MagnetRedirects && credentialFree {
-		redirect = withMagnetRedirects(redirect)
+		if cfg.MagnetRedirects {
+			lenient = withMagnetRedirects(lenient)
+		}
+
+		redirect = strictForCredentialedRequests(lenient)
 	}
 
 	return &Client{
@@ -478,6 +487,42 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 // request was addressed to is followed too (DEC-136).
 func checkRedirectToSubdomain(req *http.Request, via []*http.Request) error {
 	return checkRedirectHosts(req, via, true)
+}
+
+// strictForCredentialedRequests wraps the lenient rule of a credential-free
+// client built with FollowSubdomainRedirects or MagnetRedirects so a chain
+// whose first request carries a credential of its own (carriesCredentials)
+// is judged by the strict checkRedirect instead (T-9099, DEC-156): net/http
+// forwards an X-Api-Key header on every hop it follows, and Authorization
+// and Cookie to a subdomain, so the lenient rules hold only for a request
+// with nothing to forward.
+func strictForCredentialedRequests(lenient func(*http.Request, []*http.Request) error) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if carriesCredentials(via[0]) {
+			return checkRedirect(req, via)
+		}
+
+		return lenient(req, via)
+	}
+}
+
+// carriesCredentials reports whether r carries anything that may be a
+// credential: userinfo in its URL, or any header besides the User-Agent.
+// httpx cannot tell which header names hold a secret (X-Api-Key, a bearer
+// Authorization, a vendor's own token header), so every caller header
+// counts; a lenient client's caller sends none.
+func carriesCredentials(r *http.Request) bool {
+	if r.URL.User != nil {
+		return true
+	}
+
+	for name := range r.Header {
+		if !strings.EqualFold(name, "User-Agent") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // checkRedirectHosts is the redirect rule itself; subdomains admits a hop to
