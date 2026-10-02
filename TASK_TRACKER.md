@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text.
 
 ---
 
@@ -762,16 +762,10 @@ deferrals stay deferred to Backlog T-9004.
   `TestListedLinksNeverCarryUserinfo` had to move to a clean base_url once a base_url with
   userinfo no longer reaches `New`. The change was justified. Future criteria: "existing tests
   pass; a test changes only where another criterion requires it". Note from review of T-9045 (PR #76).
-- `T-9060` The "infohash attr" subtest of `TestAddingATwoLinkTorznabResult`
-  (`internal/app/addsource_test.go`) could also assert the engine's infohash, and that the
-  enclosure was fetched at least once. Non-blocking note from review of T-9056 (PR #80).
 - `T-9064` Host-only naming (DEC-148) still shows a secret embedded in a hostname. Note only; no
   change planned.
 - `T-9065` Results rows with wide emoji (U+1F680, U+1F6F0 in the demo) may shift later columns.
   Verify in a real terminal (owner step).
-- `T-9074` Add a test for the `cloneConfig` DisabledBuiltins copy. The review of PR #83 showed that
-  without the clone a failed save mutates in-memory state. (T-9069's archived note calling the
-  survivor "not observable" is wrong.)
 - `T-9078` `make run` should set TORTUI_HOME so the dev run does not touch real state, lock and
   downloads. Noted in the README by T-9073.
 - `T-9087` Note only: the magnet validator allows non-ASCII and UTF-8 C1 control bytes. Harmless,
@@ -786,30 +780,16 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9093` Three CI tools are pinned below their latest because those need Go 1.26 and CI builds
   with Go 1.25: gofumpt v0.11.0 (v0.12.0), golangci-lint v2.12.2 (v2.13.0 and later), goimports
   from x/tools v0.49.0 (v0.50.0). Bump all three when the repo moves to Go 1.26. Found in T-9090.
-- `T-9096` The app-level zero-hit check in `internal/app/metainfosources_test.go` is vacuous: the
-  app engine runs Offline, whose metainfo-sources client refuses every request, so the loopback
-  server sees zero hits even with the strip removed. Drop it, or label it as backing only the
-  Offline refusal. Non-blocking note from review of T-9094 (PR #88).
 - `T-9097` The add flow's record keeps a magnet's `xs=`/`as=` on disk until the next session save
   rewrites it from the engine's stripped magnet. Strip them in that first write too. Non-blocking
   note from review of T-9094 (PR #88).
-- `T-9098` The zero-hit tests in `internal/engine/anacrolix/metainfo_sources_test.go` wait a fixed
-  250 ms (`sourceFetchGrace`) for a fetch that must not come. Under heavy load a broken strip could
-  fetch late and pass; a correct one never fails. Non-blocking note from review of T-9094 (PR #88).
 - `T-9113` `doctor` checks only whether each enabled source is reachable. It never builds the adapter, so
   a source that fails registration (logged as "app: skipping source") can still show as reachable.
   Consider having `doctor` report build and Register failures. Non-blocking note from review of
   T-9111 (PR #94).
-- `T-9119` The retry-limit errors in httpx ("not retrying, ...") wrap a StatusError, so their text still
-  carries "httpx:" twice. Found while fixing T-9055, which covered redirect refusals only.
 - `T-9115` Downloads builds its layout twice per message, in Update and View, at about 2.4 ms each
   at 1000 torrents. Fine today. If it ever shows up, sync only on messages that can change the
   offset. Non-blocking note from review of T-9112 (PR #95).
-- `T-9116` `TestDownloadsScrollSnapsToBlockBoundary` passes without the scroll sync. Add a
-  `scroll > 0` assertion at the end of its loop. Non-blocking note from review of T-9112 (PR #95).
-- `T-9117` No permanent tests for three Downloads cases: returning to the screen from another after
-  the list changed, a Completed-only list, and the two-section title rule. Non-blocking note from
-  review of T-9112 (PR #95).
 
 ---
 
