@@ -182,7 +182,7 @@ var (
 
 // locationParseFailure is how net/http begins the error it returns for a
 // redirect whose Location header will not parse (net/http/client.go, Go
-// 1.27: "failed to parse Location header %q: %v"). It is matched as text
+// 1.25+: "failed to parse Location header %q: %v"). It is matched as text
 // because net/http builds that error with %v, not %w, so nothing
 // structured survives to match on.
 const locationParseFailure = "failed to parse Location header "

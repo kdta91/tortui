@@ -1729,10 +1729,10 @@ func maskSecret(v string, reveal bool) string {
 // settingsScreenLegend documents the list-view keys keymap.go deliberately
 // keeps out of the `?` overlay (the 80×24 budget) — shown here instead so
 // they stay discoverable without ever needing the config file.
+const settingsScreenLegend = "a add · e edit · t test (esc cancels) · d test detail · space enable/disable · x remove · r reload definitions · p preferences"
+
 // builtinTag is the type column text of a built-in source's row.
 const builtinTag = "built-in"
-
-const settingsScreenLegend = "a add · e edit · t test (esc cancels) · d test detail · space enable/disable · x remove · r reload definitions · p preferences"
 
 // renderSettingsScreen draws ScreenSettings' real body: the source list, or
 // the open add/edit form on top of it. Pure (AGENT.md §6.8).

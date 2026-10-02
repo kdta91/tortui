@@ -120,8 +120,9 @@ func addTorrentCmd(eng engine.Engine, src engine.AddSource, create bool, name, i
 // engine takes exactly one of Magnet, TorrentURL, and FilePath, and refuses
 // more, but a Result often carries two links: a Torznab feed publishes a
 // magnet and an enclosure, or a scraper maps both. A non-blank Magnet
-// (sent trimmed) wins and TorrentURL is left empty — it may carry the user's api key, and the engine and the session
-// keep whatever source they are given. Otherwise TorrentURL is used.
+// (sent trimmed) wins and TorrentURL is left empty — it may carry the user's
+// api key, and the engine and the session keep whatever source they are
+// given. Otherwise TorrentURL is used.
 // confirmDestination is the one place the add flow builds an AddSource, so
 // the results and details screens both go through here (DEC-147).
 func addSourceFor(r indexer.Result, savePath string) engine.AddSource {

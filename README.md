@@ -273,6 +273,10 @@ torznab, move to the "Import from aggregator (enter opens it)" field (just above
 of its indexers to add, rather than adding them one at a time. The `1` in the URL above is
 Prowlarr's id for that indexer.
 
+If you write the endpoint with credentials in it (`https://user:pw@example.org/api`), tortui
+follows a redirect only to the same host and port. So an `http://` address that the server
+upgrades to `https://` is refused: configure the `https://` address directly.
+
 ### Option B — scraper definition
 
 For a source with no Torznab endpoint, tortui uses a YAML definition describing where the fields
@@ -470,7 +474,8 @@ Unblock-File "$env:LOCALAPPDATA\Programs\tortui\tortui.exe"
 
 **Search returns nothing**
 Check Settings (`5`) → select the source (the built-in one included) → `t` to test it.
-Distinguishes *unreachable* from *auth failed* from *parse failed*. Auth failures mean your API key or cookie is wrong or expired.
+Distinguishes *unreachable* from *auth failed* from *parse failed*. Auth failures mean your API
+key or cookie is wrong or expired.
 Parse failures on a scraper source usually mean the site changed its markup — update the YAML.
 
 **Some sources fail but others work**
@@ -513,7 +518,7 @@ git clone https://github.com/kdta91/tortui.git
 cd tortui
 make check      # fmt + lint + vet + tests — the commit gate
 make build      # → bin/tortui
-make run        # run with --config ./dev-config.toml (state and downloads stay in the real places)
+make run        # run with --config ./dev-config.toml (state, downloads stay in the real places)
 make build-all  # cross-compile all six OS/arch targets
 make release-check  # validate .goreleaser.yaml + a local snapshot build (no publish)
 ```
