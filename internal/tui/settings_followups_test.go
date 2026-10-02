@@ -98,48 +98,60 @@ func builtinEnabled(m Model, id string) (enabled, found bool) {
 	return false, false
 }
 
-// TestBuiltinToggleResultCarriesItsOwnRefresh (T-9109): a configured-source
-// save that read the rows before the toggle landed delivers stale rows
-// while the toggle is in flight; the toggle's result must put the new value
-// back, and a stale result arriving after it must not undo it.
-func TestBuiltinToggleResultCarriesItsOwnRefresh(t *testing.T) {
+// TestBuiltinToggleOrdersByTheManagersVersion (T-9109): toggle A starts
+// first but lands last; a configured-source save B finishes in between and
+// reads a=on. Whichever result reaches Update first, Settings must end with
+// what the registry holds: a=off. The fake's gate holds A's save so the
+// interleaving is exact, not timed.
+func TestBuiltinToggleOrdersByTheManagersVersion(t *testing.T) {
 	sm := newBuiltinFake()
 	sm.builtins = builtinRows(true, true)
+	sm.gate = make(chan struct{})
+	sm.entered = make(chan struct{})
 	m := settingsModelFor(t, sm)
 	m.settings.cursor = 0 // row "a"
 
-	next, cmd := m.toggleBuiltin(m.builtinSnapshot[0])
+	next, cmdA := m.toggleBuiltin(m.builtinSnapshot[0])
 	m = next.(Model)
 
 	if on, _ := builtinEnabled(m, "a"); on {
 		t.Fatal("optimistic flip did not turn a off")
 	}
 
-	// The Cmd reads the rows itself, after the save.
-	res, ok := cmd().(builtinToggleResultMsg)
-	if !ok || !res.builtins.ok || len(res.builtins.rows) != 2 || res.builtins.rows[0].Enabled {
-		t.Fatalf("toggle result = %+v, want a refresh with a off", res)
+	resA := make(chan tea.Msg, 1)
+
+	go func() { resA <- cmdA() }() // blocks on the gate before it changes anything
+
+	<-sm.entered // A's Cmd is under way before B starts
+
+	msgB := saveSourcesCmd(sm, nil, nil)() // finishes first, reads a=on
+	if refresh := msgB.(sourcesSaveResultMsg).builtins; !refresh.ok || !refresh.rows[0].Enabled {
+		t.Fatalf("B's refresh = %+v, want a=on", refresh)
 	}
 
-	// Stale save result (read before the toggle) lands first.
-	stale := builtinRefresh{rows: builtinRows(true, true), ok: true, seq: res.builtins.seq - 1}
-	m = drive(t, m, sourcesSaveResultMsg{builtins: stale})
+	close(sm.gate)
 
-	// The toggle's result lands second and wins.
-	m = drive(t, m, res)
-	if on, _ := builtinEnabled(m, "a"); on {
-		t.Fatal("a is on after the toggle result, want off")
+	msgA := <-resA
+	if refresh := msgA.(builtinToggleResultMsg).builtins; !refresh.ok || refresh.rows[0].Enabled {
+		t.Fatalf("A's refresh = %+v, want a=off", refresh)
 	}
 
-	// A stale result delivered after the newer one is dropped.
-	m = drive(t, m, sourcesSaveResultMsg{builtins: stale})
-	if on, _ := builtinEnabled(m, "a"); on {
-		t.Fatal("a stale refresh overwrote a newer one")
+	for name, order := range map[string][]tea.Msg{"B then A": {msgB, msgA}, "A then B": {msgA, msgB}} {
+		got := m
+		for _, msg := range order {
+			got = drive(t, got, msg)
+		}
+
+		if on, _ := builtinEnabled(got, "a"); on {
+			t.Fatalf("%s: Settings shows a=on, registry has a=off (stale)", name)
+		}
 	}
 }
 
 // TestFailedBuiltinToggleRevertsOnlyItsRow (T-9109): the failure handler
-// must not restore an older whole snapshot.
+// must not restore an older whole snapshot. The failed save changed nothing,
+// so a refresh that lands meanwhile still shows a=on, and it also shows
+// that a configured entry has taken "b" over.
 func TestFailedBuiltinToggleRevertsOnlyItsRow(t *testing.T) {
 	sm := newBuiltinFake()
 	sm.builtins = builtinRows(true, true)
@@ -149,9 +161,8 @@ func TestFailedBuiltinToggleRevertsOnlyItsRow(t *testing.T) {
 	next, _ := m.toggleBuiltin(m.builtinSnapshot[0]) // a: off, optimistic
 	m = next.(Model)
 
-	// Meanwhile a configured entry took over "b": a save refreshed the rows.
 	m = drive(t, m, sourcesSaveResultMsg{builtins: builtinRefresh{
-		rows: []BuiltinSource{{ID: "a", Name: "A", Enabled: false}}, ok: true, seq: 50,
+		rows: []BuiltinSource{{ID: "a", Name: "A", Enabled: true}}, ok: true, seq: 50,
 	}})
 
 	m = drive(t, m, builtinToggleResultMsg{err: errors.New("disk full"), id: "a", enabled: false})
@@ -203,7 +214,7 @@ func TestSearchEmptyStateDoesNotBlameDisabledSourcesForAFailedRegistration(t *te
 		m = drive(t, m, tea.WindowSizeMsg{Width: 120, Height: 24})
 
 		out := view(m)
-		if strings.Contains(out, "turned off") || !strings.Contains(out, "doctor") {
+		if strings.Contains(out, "turned off") || !strings.Contains(out, "log file") {
 			t.Fatalf("%s: empty state wrong:\n%s", name, out)
 		}
 	}

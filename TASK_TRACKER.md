@@ -999,6 +999,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-156 | 2026-10-02 | T-9099: a lenient httpx redirect rule (subdomain, magnet) applies only when the chain's first request carries no userinfo and no header besides User-Agent; otherwise the strict rule |
 | DEC-157 | 2026-10-02 | T-9100: styled lines are truncated with `charmbracelet/x/ansi` (already in the module graph, MIT), promoted to a direct dependency behind `theme.TruncateStyled`; no new module. The tab bar degrades in steps: full, no `[n]` hints, then an ellipsis clip. |
 | DEC-158 | 2026-10-02 | T-9106: the Trust sort treats Unknown as the lowest level (Unknown < None < Verified < Trusted < VIP) and breaks ties by seeders, title, id, in one fixed direction. Supersedes T-062's "Unknown pinned last". |
+| DEC-159 | 2026-10-02 | T-9111: `BuiltinSources` returns a manager-side version with the rows; the TUI drops older refreshes by it. |
 
 ## Blocked
 

@@ -5403,7 +5403,8 @@ Promotes Backlog T-9104, T-9105, T-9107, T-9108, T-9109, T-9110.
 5. `sourceWindow(0, n)` is the empty range 0..0 (T-9105), and its cursor clamp has its own test (T-9104).
 6. Reverting each fix fails its test (quoted in the PR). `make check`, `make race` and `make cover` are green.
 
-**Notes:** `builtinRefresh` gained a `seq` from a package-level atomic counter taken before the
-registry read; `Model.builtinSeq` holds the newest one applied. `setBuiltinCmd` now takes the
-SourceManager too. No DEC: the sequence guard follows T-9052's generation-counter precedent.
-Each fix was mutation-checked (eight reverts, each failing its named test).
+**Notes:** `BuiltinSources` now returns the rows and a version the manager bumps under its own lock
+(DEC-159); `builtinRefresh.seq` carries it and `Model.builtinSeq` holds the newest applied, so
+two reads order by what the registry held, not by when a save started. The Search text for an
+enabled source that did not register points at the log file (doctor does not print its path).
+Each fix was mutation-checked; the ordering test uses a gated fake and both delivery orders.

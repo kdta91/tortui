@@ -801,7 +801,7 @@ func (m Model) noSourcesText() string {
 	// An enabled row with nothing to search means it failed to register
 	// (T-9110): "turned off" would be untrue, so point at the reason.
 	if m.anySourceEnabled() {
-		return "An enabled source could not be started. Press 5 for Settings, or run tortui doctor to see why."
+		return "An enabled source could not be started. Press 5 for Settings, or check the log file for the reason."
 	}
 
 	return "Every source is turned off. Press 5 for Settings, then space to turn one on."

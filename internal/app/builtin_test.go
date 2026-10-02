@@ -56,7 +56,7 @@ func TestBuiltinSourcesListsBundledWithState(t *testing.T) {
 	id := bundledID(t)
 	m, _ := newBuiltinManager(t, config.Default(t.TempDir()), &recordingTransport{})
 
-	rows := m.BuiltinSources()
+	rows, _ := m.BuiltinSources()
 	if len(rows) == 0 || rows[0].ID != id || !rows[0].Enabled || rows[0].Name == "" {
 		t.Fatalf("rows = %+v, want the bundled source, enabled, named", rows)
 	}
@@ -65,7 +65,7 @@ func TestBuiltinSourcesListsBundledWithState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if m.BuiltinSources()[0].Enabled {
+	if after, _ := m.BuiltinSources(); after[0].Enabled {
 		t.Fatal("row still enabled after SetBuiltinEnabled(false)")
 	}
 }
@@ -78,7 +78,7 @@ func TestBuiltinRowHiddenWhenAnEntryReplacesIt(t *testing.T) {
 
 	m, _ := newBuiltinManager(t, cfg, &recordingTransport{})
 
-	if rows := m.BuiltinSources(); len(rows) != 0 {
+	if rows, _ := m.BuiltinSources(); len(rows) != 0 {
 		t.Fatalf("rows = %+v, want none", rows)
 	}
 }
@@ -242,5 +242,39 @@ func TestDoctorAndSettingsTestResolveTheSameDefinition(t *testing.T) {
 
 	if len(rt.urls) == 0 || rt.urls[0] != "override.example.org" {
 		t.Fatalf("Settings test requested %v, want override.example.org", rt.urls)
+	}
+}
+
+// TestBuiltinVersionRisesOnlyOnASuccessfulSave (T-9111): the TUI orders two
+// reads by this number, so a save must raise it and a refused one must not.
+func TestBuiltinVersionRisesOnlyOnASuccessfulSave(t *testing.T) {
+	id := bundledID(t)
+	m, _ := newBuiltinManager(t, config.Default(t.TempDir()), &recordingTransport{})
+
+	_, v0 := m.BuiltinSources()
+
+	if err := m.SetBuiltinEnabled("not-a-bundled-id", false); err == nil {
+		t.Fatal("unknown id accepted")
+	}
+
+	if _, v := m.BuiltinSources(); v != v0 {
+		t.Fatalf("version %d after a refused toggle, want %d", v, v0)
+	}
+
+	if err := m.SetBuiltinEnabled(id, false); err != nil {
+		t.Fatal(err)
+	}
+
+	_, v1 := m.BuiltinSources()
+	if v1 <= v0 {
+		t.Fatalf("version %d after a toggle, want above %d", v1, v0)
+	}
+
+	if err := m.SaveSources(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, v2 := m.BuiltinSources(); v2 <= v1 {
+		t.Fatalf("version %d after SaveSources, want above %d", v2, v1)
 	}
 }

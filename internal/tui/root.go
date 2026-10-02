@@ -423,7 +423,7 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 	if m.sources != nil {
 		m.sourcesSnapshot = m.sources.Sources()
 		if bm, ok := m.sources.(BuiltinManager); ok {
-			m.builtinSnapshot = bm.BuiltinSources()
+			m.builtinSnapshot, m.builtinSeq = bm.BuiltinSources()
 		}
 	}
 

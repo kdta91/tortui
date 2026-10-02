@@ -27,6 +27,13 @@ type fakeBuiltinManager struct {
 	testBErr  error
 	onChanged func([]BuiltinSource)
 
+	// version rises on every successful save, under bmu, like the real
+	// manager's; gate, when set, holds SetBuiltinEnabled before it applies
+	// anything (T-9111).
+	version uint64
+	gate    chan struct{}
+	entered chan struct{} // closed once a gated save is waiting
+
 	// bundled, when set, makes SaveSources behave like the real manager: a
 	// bundled source whose id a configured entry carries is left out of
 	// BuiltinSources (T-9072).
@@ -38,12 +45,14 @@ func (f *fakeBuiltinManager) SaveSources(sources []config.Indexer) error {
 		return err
 	}
 
+	f.bmu.Lock()
+	defer f.bmu.Unlock()
+
+	f.version++
+
 	if f.bundled == nil {
 		return nil
 	}
-
-	f.bmu.Lock()
-	defer f.bmu.Unlock()
 
 	f.builtins = nil
 
@@ -62,14 +71,22 @@ func (f *fakeBuiltinManager) SaveSources(sources []config.Indexer) error {
 	return nil
 }
 
-func (f *fakeBuiltinManager) BuiltinSources() []BuiltinSource {
+func (f *fakeBuiltinManager) BuiltinSources() ([]BuiltinSource, uint64) {
 	f.bmu.Lock()
 	defer f.bmu.Unlock()
 
-	return append([]BuiltinSource(nil), f.builtins...)
+	return append([]BuiltinSource(nil), f.builtins...), f.version
 }
 
 func (f *fakeBuiltinManager) SetBuiltinEnabled(id string, enabled bool) error {
+	if f.gate != nil {
+		if f.entered != nil {
+			close(f.entered)
+		}
+
+		<-f.gate
+	}
+
 	f.bmu.Lock()
 	defer f.bmu.Unlock()
 
@@ -83,6 +100,8 @@ func (f *fakeBuiltinManager) SetBuiltinEnabled(id string, enabled bool) error {
 	if f.setErr != nil {
 		return f.setErr
 	}
+
+	f.version++
 
 	for i := range f.builtins {
 		if f.builtins[i].ID == id {

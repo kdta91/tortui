@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -105,8 +104,10 @@ type BuiltinSource struct {
 // the bundled sources. A SourceManager that also implements it gets built-in
 // rows; one that does not (a fake, the demo) shows none.
 type BuiltinManager interface {
-	// BuiltinSources lists the bundled sources and whether each is on.
-	BuiltinSources() []BuiltinSource
+	// BuiltinSources lists the bundled sources and whether each is on, with a
+	// version the manager bumps, under its own lock, on every successful save
+	// of sources or built-in state. Two reads are ordered by it (T-9111).
+	BuiltinSources() ([]BuiltinSource, uint64)
 
 	// SetBuiltinEnabled persists the on/off state and re-syncs the live
 	// registry, so the Search screen offers or drops the source at once.
@@ -777,10 +778,9 @@ type builtinToggleResultMsg struct {
 
 func setBuiltinCmd(sm SourceManager, bm BuiltinManager, id string, enabled bool) tea.Cmd {
 	return func() tea.Msg {
-		seq := nextBuiltinSeq()
 		err := bm.SetBuiltinEnabled(id, enabled)
 
-		return builtinToggleResultMsg{err: err, id: id, enabled: enabled, builtins: refreshBuiltinsAt(sm, err, seq)}
+		return builtinToggleResultMsg{err: err, id: id, enabled: enabled, builtins: refreshBuiltins(sm, err)}
 	}
 }
 
@@ -1141,25 +1141,15 @@ func saveSourcesCmd(sm SourceManager, sources, previous []config.Indexer) tea.Cm
 type builtinRefresh struct {
 	rows []BuiltinSource
 	ok   bool
-	// seq orders reads: it is taken just before the registry is read, so a
-	// larger seq saw a state at least as new (T-9109).
+	// seq is the manager's version read with the rows: a larger seq saw a
+	// state at least as new (T-9109).
 	seq uint64
 }
-
-var builtinReadSeq atomic.Uint64
-
-func nextBuiltinSeq() uint64 { return builtinReadSeq.Add(1) }
 
 // refreshBuiltins reads the bundled rows after a save that returned saveErr.
 // A failed save changed nothing, and a manager without built-in support has
 // no rows, so both return the zero value (no refresh).
 func refreshBuiltins(sm SourceManager, saveErr error) builtinRefresh {
-	return refreshBuiltinsAt(sm, saveErr, nextBuiltinSeq())
-}
-
-// refreshBuiltinsAt is refreshBuiltins with a seq the caller took before its
-// own save, for a result that must rank after nothing that started later.
-func refreshBuiltinsAt(sm SourceManager, saveErr error, seq uint64) builtinRefresh {
 	if saveErr != nil {
 		return builtinRefresh{}
 	}
@@ -1169,7 +1159,9 @@ func refreshBuiltinsAt(sm SourceManager, saveErr error, seq uint64) builtinRefre
 		return builtinRefresh{}
 	}
 
-	return builtinRefresh{rows: bm.BuiltinSources(), ok: true, seq: seq}
+	rows, seq := bm.BuiltinSources()
+
+	return builtinRefresh{rows: rows, ok: true, seq: seq}
 }
 
 // applyBuiltins replaces the built-in snapshot with a save's fresh rows and
