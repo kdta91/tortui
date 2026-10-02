@@ -5284,12 +5284,13 @@ honouring a credential that rides on the request instead of in `Config.Credentia
    touched packages and `make cover` are green.
 
 **Notes:** SafeName classifies the name with its invisible runes (control, Cf, default-ignorable)
-removed and returns the name as given when it is no address; one rule covers the invisible rune before, inside
-or just after the scheme (DEC-155, refining DEC-154). An http(s) scheme is an address with or
-without a host, so a title opening "HTTP:" is now shown as "torrent file". httpx: a lenient client
-judges a chain whose first request has userinfo or any header besides User-Agent by the strict
-rule (DEC-156), since httpx cannot know every credential header's name; the engine's .torrent
-client sends none, so T-9010 and T-9079 are unchanged. Seven mutations, each failing its tests.
+removed and returns the name as given when it is no address; one rule covers the invisible rune
+before, inside or just after the scheme (DEC-155, refining DEC-154). An http(s) scheme is an
+address with or without a host, so a title opening "HTTP:" is now shown as "torrent file". httpx:
+a lenient client judges a chain whose first request has userinfo or any header besides User-Agent
+by the strict rule (DEC-156), since httpx cannot know every credential header's name; the engine's
+.torrent client sends none, so T-9010 and T-9079 are unchanged. Seven mutations, each failing its
+tests.
 
 ### T-9100 · Styled-line truncation; tab bar and Settings list clip
 
@@ -5448,8 +5449,10 @@ Promotes Backlog T-9050, T-9053, T-9059, T-9076, T-9080, T-9102, T-9103.
 
 **Acceptance:**
 1. The README torznab section and `config.example.toml` say that an endpoint written with `user:pw@`
-   follows a redirect only to the same host and port (DEC-145), so an http address the server upgrades
-   to https is refused and the https address should be configured directly. Example hosts only (T-9050).
+   keeps its credentials across a redirect only to the same host and port (DEC-145), so when the
+   server upgrades an http address to https the redirect is refused or the https request goes out
+   without credentials, and the https address should be configured directly. Example hosts only
+   (T-9050).
 2. The httpx Location-parse comment and the T-9049 notes cite Go 1.25+, not 1.27 (T-9053).
 3. The `addSourceFor` doc comment, the `builtinTag` comment, the `SafeName` doc comment, the
    `dropInvisible` condition and the long line in `displayname_test.go` are rewrapped or moved

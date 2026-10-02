@@ -274,8 +274,9 @@ of its indexers to add, rather than adding them one at a time. The `1` in the UR
 Prowlarr's id for that indexer.
 
 If you write the endpoint with credentials in it (`https://user:pw@example.org/api`), tortui
-follows a redirect only to the same host and port. So an `http://` address that the server
-upgrades to `https://` is refused: configure the `https://` address directly.
+keeps the credentials across a redirect only to the same host and port. If the server upgrades an
+`http://` address to `https://`, the redirect is refused or the `https://` request goes out
+without your credentials, so configure the `https://` address directly.
 
 ### Option B — scraper definition
 
