@@ -47,6 +47,9 @@ type seedPolicyProvider interface {
 // torrents show the reason inline, truncated, expandable").
 type downloadsModel struct {
 	cursor int
+	// scroll is the remembered first visible body line, always a block start
+	// (DEC-160). Update maintains it; View only reads it.
+	scroll int
 	// expandedErr is the ID of the one torrent whose error line is shown in
 	// full rather than truncated, or "" when none is expanded.
 	expandedErr string
@@ -492,55 +495,58 @@ func (m Model) renderDownloadRow(s engine.TorrentStatus, selected bool) string {
 	return b.String()
 }
 
-// renderDownloadsScreen draws ScreenDownloads' real body: the active
-// section, then the completed section, each only when non-empty, or an
-// empty state when nothing has ever been added. Pure: reads m and returns a
-// string, no I/O, no mutation (AGENT.md §6.8).
-func (m Model) renderDownloadsScreen() string {
+// downloadsLayout is the whole Downloads body laid out as lines: starts holds
+// the index of every block's first line (a section title or a row), and
+// selStart/selEnd bound the selected row (-1 when there is none). It is the
+// one place the body is built, so Update (syncDownloadsScroll) and View
+// (renderDownloadsScreen) always agree on where each block sits.
+type downloadsLayout struct {
+	lines    []string
+	starts   []int
+	selStart int
+	selEnd   int
+	// selHead is where the up-scroll rule stops: the selected row's section
+	// title when it is the section's first row (so the title comes back with
+	// it), else selStart.
+	selHead int
+}
+
+// downloadsLayout builds the layout from the current statuses. Pure.
+func (m Model) downloadsLayout() downloadsLayout {
 	th := m.theme
-
 	active, completed := partitionDownloads(m.torrentStatuses)
-	if len(active) == 0 && len(completed) == 0 {
-		return theme.TruncateStyled(
-			th.Muted.Render("No downloads yet — add a result from search or details."),
-			m.width,
-		)
-	}
 
-	// lines is the whole body, one entry per line; starts holds the index of
-	// every block's first line (a section title or a row), and selStart/
-	// selEnd bound the selected row, so the window below can scroll by
-	// whole blocks while keeping the selected row on screen.
-	var (
-		lines    []string
-		starts   []int
-		selStart = -1
-		selEnd   = -1
-		cursor   int
-	)
+	l := downloadsLayout{selStart: -1, selEnd: -1, selHead: -1}
+	cursor := 0
 
 	writeSection := func(title string, statuses []engine.TorrentStatus) {
 		if len(statuses) == 0 {
 			return
 		}
 
-		if len(lines) > 0 {
-			lines = append(lines, "")
+		if len(l.lines) > 0 {
+			l.lines = append(l.lines, "")
 		}
 
-		starts = append(starts, len(lines))
-		lines = append(lines, th.Muted.Render(title))
+		titleStart := len(l.lines)
+		l.starts = append(l.starts, titleStart)
+		l.lines = append(l.lines, th.Muted.Render(title))
 
-		for _, s := range statuses {
-			lines = append(lines, "")
-			starts = append(starts, len(lines))
+		for i, s := range statuses {
+			l.lines = append(l.lines, "")
+			l.starts = append(l.starts, len(l.lines))
 
 			row := strings.Split(m.renderDownloadRow(s, cursor == m.downloads.cursor), "\n")
 			if cursor == m.downloads.cursor {
-				selStart, selEnd = len(lines), len(lines)+len(row)
+				l.selStart, l.selEnd = len(l.lines), len(l.lines)+len(row)
+
+				l.selHead = l.selStart
+				if i == 0 {
+					l.selHead = titleStart
+				}
 			}
 
-			lines = append(lines, row...)
+			l.lines = append(l.lines, row...)
 			cursor++
 		}
 	}
@@ -548,24 +554,39 @@ func (m Model) renderDownloadsScreen() string {
 	writeSection(fmt.Sprintf("Active (%d)", len(active)), active)
 	writeSection(fmt.Sprintf("Completed (%d)", len(completed)), completed)
 
-	if budget := m.bodyBudget(true); budget > 0 && len(lines) > budget {
-		lines = scrollWindow(lines, starts, selStart, selEnd, budget)
-	}
-
-	return truncateLines(strings.Join(lines, "\n"), m.width)
+	return l
 }
 
-// scrollWindow returns the budget-line slice of lines that keeps the
-// selected block [selStart, selEnd) visible, starting on a block boundary
-// (starts) so a row is never cut at its top unless it alone exceeds the
-// budget, in which case its top is kept and its tail clipped.
-func scrollWindow(lines []string, starts []int, selStart, selEnd, budget int) []string {
-	offset := 0
+// syncDownloadsScroll moves the remembered scroll offset by the least needed
+// to keep the selected block on screen, and clamps it when the list or the
+// height changed under it (DEC-160). Called from Update only; View reads the
+// result.
+func (m Model) syncDownloadsScroll() Model {
+	l := m.downloadsLayout()
+	m.downloads.scroll = nextScrollOffset(m.downloads.scroll, l, m.bodyBudget(true))
 
-	if selEnd > budget {
-		offset = selEnd - budget
+	return m
+}
 
-		for _, st := range starts {
+// nextScrollOffset is the pure offset step. The result is always a block start
+// (or 0), so a block is never cut at the top.
+func nextScrollOffset(offset int, l downloadsLayout, budget int) int {
+	if budget <= 0 || len(l.lines) <= budget {
+		return 0
+	}
+
+	// A stale offset (list shrank, height grew, rows changed height) is pulled
+	// back to the furthest offset that leaves nothing blank at the top: the
+	// first block start at or after the last full window, which is also where
+	// a scroll-down to the end lands. It then snaps to a block start.
+	offset = blockStartAtOrBefore(l.starts, min(max(offset, 0), blockStartAtOrAfter(l.starts, len(l.lines)-budget)))
+
+	// Down: scroll by the minimum that shows the selected block's end, then
+	// round up to a block start. A block taller than the budget keeps its top.
+	if l.selEnd > offset+budget {
+		offset = l.selEnd - budget
+
+		for _, st := range l.starts {
 			if st >= offset {
 				offset = st
 				break
@@ -573,11 +594,62 @@ func scrollWindow(lines []string, starts []int, selStart, selEnd, budget int) []
 		}
 	}
 
-	if selStart >= 0 && offset > selStart {
-		offset = selStart
+	// Up: the selected block's top must be visible.
+	if head := l.selHead; l.selStart >= 0 {
+		if l.selEnd-head > budget {
+			head = l.selStart
+		}
+
+		offset = min(offset, head)
 	}
 
-	end := min(offset+budget, len(lines))
+	return offset
+}
 
-	return lines[offset:end]
+// blockStartAtOrAfter is the smallest block start >= n, or n when none.
+func blockStartAtOrAfter(starts []int, n int) int {
+	for _, st := range starts {
+		if st >= n {
+			return st
+		}
+	}
+
+	return n
+}
+
+// blockStartAtOrBefore is the largest block start <= n, or 0 when none.
+func blockStartAtOrBefore(starts []int, n int) int {
+	best := 0
+
+	for _, st := range starts {
+		if st <= n {
+			best = st
+		}
+	}
+
+	return best
+}
+
+// renderDownloadsScreen draws ScreenDownloads' real body: the active
+// section, then the completed section, each only when non-empty, or an
+// empty state when nothing has ever been added. Pure: reads m and returns a
+// string, no I/O, no mutation (AGENT.md §6.8). The scroll offset is only
+// read here; Update keeps it current.
+func (m Model) renderDownloadsScreen() string {
+	if len(m.torrentStatuses) == 0 {
+		return theme.TruncateStyled(
+			m.theme.Muted.Render("No downloads yet — add a result from search or details."),
+			m.width,
+		)
+	}
+
+	l := m.downloadsLayout()
+	lines := l.lines
+
+	if budget := m.bodyBudget(true); budget > 0 && len(lines) > budget {
+		offset := min(max(m.downloads.scroll, 0), len(lines)-1)
+		lines = lines[offset:min(offset+budget, len(lines))]
+	}
+
+	return truncateLines(strings.Join(lines, "\n"), m.width)
 }

@@ -553,6 +553,19 @@ func (m Model) Init() tea.Cmd {
 // here can outlive a resize or a screen switch as a stale cached value
 // (AGENT.md's "no cached widths survive a resize").
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+
+	// The Downloads scroll offset follows every change that can move the
+	// cursor, the list or the height (DEC-160); View only reads it.
+	if nm, ok := next.(Model); ok && nm.screen == ScreenDownloads {
+		return nm.syncDownloadsScroll(), cmd
+	}
+
+	return next, cmd
+}
+
+// update is Update's message switch.
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
