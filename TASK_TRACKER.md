@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions.
 
 ---
 
@@ -100,7 +100,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 Every one of these must hold before tagging `v1.0.0`. This is the finish line — the agent stops
 when it reaches it and does not start backlog items on its own.
 
-- [x] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041, T-9045, T-9046, T-9049, T-9052, T-9056, T-9057, T-9061, T-9069, T-9073, T-9079 and T-9082, are `done`.
+- [x] All tasks T-001 through T-097, plus T-993, T-994, T-9008, T-9010, T-9011, T-9012, T-9019, T-9021, T-9024, T-9025, T-9026, T-9031, T-9034, T-9037, T-9041, T-9045, T-9046, T-9049, T-9052, T-9056, T-9057, T-9061, T-9069, T-9073, T-9079, T-9082 and T-9090, are `done`.
 - [x] `make check` and `go test -race ./...` green on Linux, macOS, and Windows CI. The race jobs
       (T-9025) are advisory per PR under DEC-107 but must all be green before the release tag.
 - [x] Coverage thresholds from AGENT.md §9 met.
@@ -126,7 +126,8 @@ when it reaches it and does not start backlog items on its own.
 
 ---
 
-**v1.0.0 was tagged by the owner on 2026-10-02 at d18c06e; release run 36975766756 succeeded (goreleaser, cosign, build attestation).** Verified: CI (macOS, Linux, Windows `make check` and
+**v1.0.0 was tagged by the owner on 2026-10-02 at d18c06e; release run 36975766756 succeeded
+(goreleaser, cosign, build attestation).** Verified: CI (macOS, Linux, Windows `make check` and
 `-race` green on main), the local release check (`make cover` floors, `govulncheck` 0 reachable with
 the 3 module-level findings being T-093's triaged set, `make licenses` with NOTICE unchanged, a
 full-history hostname scan clean), and the owner's macOS checks (a real download completes, resumes
@@ -846,12 +847,13 @@ deferrals stay deferred to Backlog T-9004.
   review of T-9079 (PR #85).
 - `T-9087` Note only: the magnet validator allows non-ASCII and UTF-8 C1 control bytes. Harmless,
   because the display name is replaced. Found in review of T-9079 (PR #85).
-- `T-9088` CI: the actions in use (checkout@v4, setup-go@v5, goreleaser-action@v6,
-  attest-build-provenance) target Node.js 20, which is deprecated and being forced onto Node 24.
-  Bump them to releases that target Node 24, in ci.yml and release.yml.
-- `T-9089` CI: the `ubuntu-latest` label migrates to Ubuntu 26 beginning 2026-10-19. Check the
-  Linux jobs (the C toolchain check, build-all, the race job) against it and pin the version if
-  anything breaks.
+- `T-9091` Ubuntu 26.04: once the Linux CI jobs are green on it, move release.yml from ubuntu-24.04
+  to ubuntu-26.04 so a tag run matches CI, then decide whether to go back to a floating label.
+  GitHub's runner-images README now says `ubuntu-latest` moves to 26.04 in November 2026 (T-9089
+  said 2026-10-19). Found in T-9090.
+- `T-9092` sigstore/cosign-installer has a v4 line (v4.1.2, no floating v4 tag) that installs a
+  newer cosign. v3 is a composite action with no Node runtime, so T-9090 left it. Check the
+  .goreleaser.yaml signing step against the newer cosign before moving. Found in T-9090.
 
 ---
 
@@ -1013,6 +1015,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-149 | 2026-10-01 | T-9061: on a short terminal the `?` overlay flows its bindings as wrapped runs and Downloads scrolls by whole blocks; legends wrap between hints, never truncate |
 | DEC-150 | 2026-10-01 | T-9069: bundled sources are Settings rows tagged built-in and doctor lines; a `disabled_builtin` config list is their off switch (default empty, all on) |
 | DEC-151 | 2026-10-02 | T-9079: a .torrent link that redirects to a magnet adds by the validated magnet in place (same id, destination, name); the magnet replaces the link in resume data and the record |
+| DEC-152 | 2026-10-02 | T-9090: the Linux CI jobs run on ubuntu-26.04 (tried in the PR), the release job is pinned to ubuntu-24.04; matrix job names keep the os key, so no check name changes |
 
 ## Blocked
 
