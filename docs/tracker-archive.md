@@ -5255,3 +5255,38 @@ scheme grammar, so a magnet, a `C:\` path and a name like "1http://x" stay as th
 kept row "http://example.org with spaces is no address" now reduces, because it is an address
 that will not parse (DEC-154). URLSourceName already named an unreadable host "torrent file".
 `http://[::1` passed the hostname scanner as written. Backlog T-9096 to T-9098 from PR #88.
+
+### T-9099 · SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule
+
+```
+status: done
+depends: T-9095
+tier: H
+```
+New work from the PR #89 review (2026-10-02). Three gaps T-9095 left: an address `engine.SafeName`
+still hands back with its key, an untested origin-scheme check, and the httpx redirect options
+honouring a credential that rides on the request instead of in `Config.Credentials`.
+
+**Acceptance:**
+1. `engine.SafeName` names as a torrent file, never containing the key `K`: a leading NUL or C0
+   byte, U+200B or U+FEFF before `https://host.example/x?apikey=K`; a control byte inside the
+   scheme (`https`, 0x01, `://`); and the no-host forms url.Parse accepts (`https:host?apikey=K`,
+   `https:/host/x?apikey=K`, `https:///x?apikey=K`). Each form is a row in
+   `TestSafeNameReducesOnlyWebAddresses`, built with Go string escapes; every existing kept row
+   still passes, and plain titles are not turned into "torrent file". DEC-155 records the rule.
+2. `sameOriginUserinfo` has a function-level row `ftp://alice:s3cret@example.org:2121/a` to
+   `http://alice:s3cret@example.org:2121/b`, want false.
+3. On a client with `FollowSubdomainRedirects` or `MagnetRedirects`, a request that carries its
+   own credential (an Authorization, Cookie or X-Api-Key header, or userinfo) keeps the strict
+   same-host rule. A test shows an X-Api-Key request header is not forwarded across a subdomain
+   hop; DEC-156 records the mechanism.
+4. Each fix reverted fails its new tests (quoted in the PR). `make check`, `make race` for the
+   touched packages and `make cover` are green.
+
+**Notes:** SafeName classifies the name with every control and Cf rune removed, then trimmed, and
+returns the name as given when it is no address; one rule covers the invisible rune before, inside
+or just after the scheme (DEC-155, refining DEC-154). An http(s) scheme is an address with or
+without a host, so a title opening "HTTP:" is now shown as "torrent file". httpx: a lenient client
+judges a chain whose first request has userinfo or any header besides User-Agent by the strict
+rule (DEC-156), since httpx cannot know every credential header's name; the engine's .torrent
+client sends none, so T-9010 and T-9079 are unchanged. Five mutations, each failing its tests.
