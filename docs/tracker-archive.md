@@ -5408,3 +5408,31 @@ Promotes Backlog T-9104, T-9105, T-9107, T-9108, T-9109, T-9110.
 two reads order by what the registry held, not by when a save started. The Search text for an
 enabled source that did not register points at the log file (doctor does not print its path).
 Each fix was mutation-checked; the ordering test uses a gated fake and both delivery orders.
+
+### T-9112 · Downloads remembers its scroll offset; the block snap is tested
+
+```
+status: done
+depends: T-9111
+tier: M
+```
+Promotes Backlog T-9070, T-9071.
+
+**Acceptance:**
+1. The downloads model keeps a scroll offset that Update maintains (cursor moves, `tea.WindowSizeMsg`,
+   torrent-list changes) and `View` only reads (AGENT.md 6.8). Moving down past the bottom scrolls by the
+   least that shows the selected block; moving up past the top scrolls to that block; moving inside the
+   window does not scroll (T-9071).
+2. After moving down to the end and up one step the window has not moved and the selection is above the
+   bottom edge. Moving above the window scrolls by one block.
+3. Shrinking the height with the cursor at the bottom keeps the selection visible. Removing torrents so
+   the list is shorter than the offset leaves nothing blank at the top and fills the window.
+4. After scrolling at 80x24 the first body line under the tab bar is a section title or a torrent name,
+   never the middle of a block (T-9070).
+5. Reverting each rule fails its test (quoted in the PR). `make check`, `make race` and `make cover` are green.
+
+**Notes:** `downloadsModel.scroll` is a line offset that is always a block start (DEC-160). `Update` wraps
+the old switch (now `update`) and, on the Downloads screen, runs `syncDownloadsScroll` on the result, so
+cursor moves, resizes, list changes, expands and pending toggles all re-clamp it. `downloadsLayout` builds
+the lines once for both Update and View. A scroll-down lands on the first block start at or after the
+minimum, as before, so the window may be a line or two short at the bottom. Each rule was mutation-checked.
