@@ -5175,3 +5175,5 @@ and several actions still run on Node.js 20.
 **Notes:** Linux jobs in ci.yml on ubuntu-26.04, release pinned to ubuntu-24.04 (DEC-152). Matrix
 `include` with `os` (display) and `runner`; explicit job names keep the old strings. cosign-installer
 v3 is composite, left. Backlog T-9091, T-9092. actionlint's label list does not know 26.04 yet.
+CI fix: `go install goimports@latest` broke (x/tools v0.50.0 needs Go 1.26); pinned to v0.49.0 as
+GOIMPORTS_VERSION, cached with the other tools and in the key. Backlog T-9093.

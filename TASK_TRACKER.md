@@ -854,6 +854,8 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9092` sigstore/cosign-installer has a v4 line (v4.1.2, no floating v4 tag) that installs a
   newer cosign. v3 is a composite action with no Node runtime, so T-9090 left it. Check the
   .goreleaser.yaml signing step against the newer cosign before moving. Found in T-9090.
+- `T-9093` goimports is pinned to x/tools v0.49.0 (GOIMPORTS_VERSION in ci.yml) because v0.50.0
+  requires Go 1.26. Bump it when the repo moves to Go 1.26. Found in T-9090.
 
 ---
 

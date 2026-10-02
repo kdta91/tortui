@@ -36,6 +36,8 @@ env:
   GOLANGCI_LINT_VERSION: "v2.13.2"
   GOFUMPT_VERSION: "v0.12.0"
   GITLEAKS_VERSION: "v8.30.1"
+  # T-9090: x/tools v0.50.0 needs Go 1.26; v0.49.0 is the newest whose go.mod says go 1.25.
+  GOIMPORTS_VERSION: "v0.49.0"
   GO_LICENSES_VERSION: "v2.0.1"
   # T-949: pinned so the Windows leg no longer depends on Chocolatey's community feed.
   SHELLCHECK_VERSION: "0.11.0"
@@ -77,16 +79,16 @@ jobs:
             ~/go/bin/gofumpt*
             ~/go/bin/golangci-lint*
             ~/go/bin/gitleaks*
-          key: tools-${{ runner.os }}-go${{ env.GO_VERSION }}-gofumpt${{ env.GOFUMPT_VERSION }}-golangci${{ env.GOLANGCI_LINT_VERSION }}-gitleaks${{ env.GITLEAKS_VERSION }}
+            ~/go/bin/goimports*
+          key: tools-${{ runner.os }}-go${{ env.GO_VERSION }}-gofumpt${{ env.GOFUMPT_VERSION }}-golangci${{ env.GOLANGCI_LINT_VERSION }}-gitleaks${{ env.GITLEAKS_VERSION }}-goimports${{ env.GOIMPORTS_VERSION }}
 
       - name: Install gofumpt
         if: steps.tools-cache.outputs.cache-hit != 'true'
         run: go install mvdan.cc/gofumpt@${{ env.GOFUMPT_VERSION }}
 
-      # Unpinned (@latest), so deliberately not cached: it would otherwise freeze at whatever
-      # version the first cache fill saw.
       - name: Install goimports
-        run: go install golang.org/x/tools/cmd/goimports@latest
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: go install golang.org/x/tools/cmd/goimports@${{ env.GOIMPORTS_VERSION }}
 
       - name: Install golangci-lint
         if: steps.tools-cache.outputs.cache-hit != 'true'
