@@ -26,6 +26,40 @@ type fakeBuiltinManager struct {
 	tested    []string
 	testBErr  error
 	onChanged func([]BuiltinSource)
+
+	// bundled, when set, makes SaveSources behave like the real manager: a
+	// bundled source whose id a configured entry carries is left out of
+	// BuiltinSources (T-9072).
+	bundled []BuiltinSource
+}
+
+func (f *fakeBuiltinManager) SaveSources(sources []config.Indexer) error {
+	if err := f.fakeSourceManager.SaveSources(sources); err != nil {
+		return err
+	}
+
+	if f.bundled == nil {
+		return nil
+	}
+
+	f.bmu.Lock()
+	defer f.bmu.Unlock()
+
+	f.builtins = nil
+
+	for _, b := range f.bundled {
+		replaced := false
+
+		for _, s := range sources {
+			replaced = replaced || s.ID == b.ID
+		}
+
+		if !replaced {
+			f.builtins = append(f.builtins, b)
+		}
+	}
+
+	return nil
 }
 
 func (f *fakeBuiltinManager) BuiltinSources() []BuiltinSource {
@@ -384,5 +418,102 @@ func TestSettingsWithoutABuiltinManagerStillWorks(t *testing.T) {
 	plain := settingsModelFor(t, &fakeSourceManager{})
 	if len(plain.builtinSnapshot) != 0 || !strings.Contains(view(plain), "No sources configured") {
 		t.Fatal("a manager without BuiltinManager grew built-in rows")
+	}
+}
+
+func newOverrideFake(configured ...config.Indexer) *fakeBuiltinManager {
+	sm := newBuiltinFake(configured...)
+	sm.bundled = []BuiltinSource{{ID: "archive-src", Name: "Archive Source", Enabled: true}}
+
+	return sm
+}
+
+// TestSavingAnOverrideDropsTheBuiltinRow: an [[indexer]] entry with a bundled
+// id replaces that built-in, so its row goes at once (T-9072).
+func TestSavingAnOverrideDropsTheBuiltinRow(t *testing.T) {
+	sm := newOverrideFake()
+	m := settingsModelFor(t, sm)
+
+	if len(m.builtinSnapshot) != 1 {
+		t.Fatalf("built-in rows at start = %d, want 1", len(m.builtinSnapshot))
+	}
+
+	override := config.Indexer{ID: "archive-src", Name: "My Archive", Type: "torznab", URL: "https://example.org/a", Enabled: true}
+	m.sourcesSnapshot = []config.Indexer{override} // the form's optimistic update
+	m = drive(t, m, saveFormCmd(sm, []config.Indexer{override}, nil)())
+
+	if len(m.builtinSnapshot) != 0 {
+		t.Fatalf("built-in rows after the override = %v, want none", m.builtinSnapshot)
+	}
+
+	if out := view(m); strings.Contains(out, "Archive Source") || !strings.Contains(out, "My Archive") {
+		t.Fatalf("Settings shows the stale built-in row:\n%s", out)
+	}
+}
+
+// TestRemovingAnOverrideBringsTheBuiltinRowBack is the reverse (T-9072).
+func TestRemovingAnOverrideBringsTheBuiltinRowBack(t *testing.T) {
+	override := config.Indexer{ID: "archive-src", Name: "My Archive", Type: "torznab", URL: "https://example.org/a", Enabled: true}
+	sm := newOverrideFake(override)
+	sm.builtins = nil // the registry starts with the override in place
+
+	m := settingsModelFor(t, sm)
+	if len(m.builtinSnapshot) != 0 {
+		t.Fatalf("built-in rows at start = %v, want none", m.builtinSnapshot)
+	}
+
+	m = drive(t, m, keyRune("x"))
+	m = drive(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	m = drive(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(sm.Sources()) != 0 {
+		t.Fatalf("override not removed: %v", sm.Sources())
+	}
+
+	if len(m.builtinSnapshot) != 1 || !strings.Contains(view(m), "Archive Source") {
+		t.Fatalf("built-in row did not come back:\n%s", view(m))
+	}
+}
+
+// TestFailedSaveKeepsTheBuiltinRows: a save that fails changed nothing.
+func TestFailedSaveKeepsTheBuiltinRows(t *testing.T) {
+	sm := newOverrideFake()
+	sm.saveErr = errors.New("disk full")
+	m := settingsModelFor(t, sm)
+
+	override := config.Indexer{ID: "archive-src", Name: "My Archive", Type: "torznab", URL: "https://example.org/a", Enabled: true}
+	m = drive(t, m, saveFormCmd(sm, []config.Indexer{override}, nil)())
+
+	if len(m.builtinSnapshot) != 1 {
+		t.Fatalf("built-in rows after a failed save = %v, want 1", m.builtinSnapshot)
+	}
+}
+
+// TestSearchEmptyStateNamesTheRealCase (T-9077): nothing configured and
+// every source turned off read differently, and neither points at a key that
+// does nothing.
+func TestSearchEmptyStateNamesTheRealCase(t *testing.T) {
+	none := New(newTestEngine(t), testTheme(), WithSourceManager(&fakeSourceManager{}), WithSearcher(&dynamicSearcher{}))
+	none = drive(t, none, tea.WindowSizeMsg{Width: 100, Height: 24})
+
+	if out := view(none); !strings.Contains(out, "No sources configured. Press 'a' to add one.") {
+		t.Fatalf("no-sources text missing:\n%s", out)
+	}
+
+	// 'a' really is the Search key there.
+	none = drive(t, none, keyRune("a"))
+	if none.screen != ScreenSettings || none.settings.form == nil {
+		t.Fatal("'a' did not open the add form from the empty Search screen")
+	}
+
+	sm := newBuiltinFake()
+	sm.builtins[0].Enabled = false
+
+	off := New(newTestEngine(t), testTheme(), WithSourceManager(sm), WithSearcher(&dynamicSearcher{}))
+	off = drive(t, off, tea.WindowSizeMsg{Width: 100, Height: 24})
+
+	out := view(off)
+	if strings.Contains(out, "No sources configured") || !strings.Contains(out, "Every source is turned off. Press 5 for Settings") {
+		t.Fatalf("all-off text wrong:\n%s", out)
 	}
 }

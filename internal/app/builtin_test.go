@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/kdta91/tortui/internal/config"
@@ -200,8 +202,45 @@ func TestTestBuiltinProbesThroughTheTransport(t *testing.T) {
 }
 
 func TestDoctorBuiltinsNamesTheBundledSources(t *testing.T) {
-	got := DoctorBuiltins()
+	got := DoctorBuiltins(t.TempDir())
 	if len(got) == 0 || got[0].ID != bundledID(t) || got[0].URL == "" || got[0].Name == "" {
 		t.Fatalf("DoctorBuiltins = %+v", got)
+	}
+}
+
+// overrideDefinition is a valid definition for the bundled id whose address
+// is an invented host, so it is easy to tell from the embedded one.
+func overrideDefinition(id string) string {
+	return strings.NewReplacer("example-user", id, "https://example.org", "https://override.example.org").Replace(userDefinition)
+}
+
+// TestDoctorAndSettingsTestResolveTheSameDefinition (T-9075): with a
+// definition of a bundled id in the definitions directory, doctor lists its
+// address and Settings `t` sends its request there.
+func TestDoctorAndSettingsTestResolveTheSameDefinition(t *testing.T) {
+	id := bundledID(t)
+	defs := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(defs, id+".yml"), []byte(overrideDefinition(id)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := DoctorBuiltins(defs)
+	if len(got) == 0 || got[0].ID != id || got[0].URL != "https://override.example.org" {
+		t.Fatalf("doctor lists %+v, want the override's address", got)
+	}
+
+	rt := &recordingTransport{}
+	cfg := config.Default(t.TempDir())
+	live := buildSources(cfg, defs, discardLogger(), rt)
+	m := newSettingsManager(filepath.Join(t.TempDir(), "config.toml"), cfg, live, engine.RootAdder(nil), discardLogger())
+
+	_ = m.TestBuiltin(context.Background(), id) // the 404 is the transport's
+
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	if len(rt.urls) == 0 || rt.urls[0] != "override.example.org" {
+		t.Fatalf("Settings test requested %v, want override.example.org", rt.urls)
 	}
 }

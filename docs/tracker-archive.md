@@ -5319,3 +5319,35 @@ now a direct requirement, DEC-157). Audit: every other Truncate/Pad/Width call i
 before styling (table cells, status bar, legends, forms); only Downloads and Details empty-state
 lines were styled first, and now use the new helper. The tab bar falls back to unnumbered labels
 (47 columns), then an ellipsis clip. `sourceWindow` mirrors `destWindow`. Three mutations fail.
+
+### T-9101 · Built-in source rows follow saves; Search empty state; one definition resolver for doctor
+
+```
+status: done
+depends: T-9100
+tier: M
+```
+Promotes Backlog T-9072, T-9077 and T-9075. Settings read the built-in rows once at start, so adding
+or removing an `[[indexer]]` entry with a bundled id left them stale; the Search empty state said "No
+sources configured" when sources existed but were off; `doctor` probed the embedded definition's
+address while Settings `t` follows a definitions-dir override.
+
+**Acceptance:**
+1. Every save that can add or remove an entry (the list's toggle and remove, the add/edit form, the
+   aggregator import) hands the current BuiltinSources back in its result message, read inside the
+   Cmd, and Settings replaces its snapshot from it. A failed save keeps the rows. Adding an override
+   of a bundled id drops the built-in row; removing it brings the row back. Both tested against fakes.
+2. The Search empty state reads "No sources configured. Press 'a' to add one." only when no source of
+   any kind exists, and "Every source is turned off. Press 5 for Settings, then space to turn one
+   on." when some exist and all are off. `a` is a real Search key in that state (tested).
+3. `DoctorBuiltins(defsDir)` resolves definitions through `bundledDefinitions`, the resolver the
+   registry and Settings `t` use. With an override present, doctor lists the override's address and
+   Settings `t` requests that same host (httptest/fake transport only).
+4. Reverting each of the three fixes fails its test (quoted in the PR). `make check`,
+   `make race PKG=` for the touched packages and `make cover` are green.
+
+**Notes:** The result messages carry a `builtinRefresh` (rows plus an ok flag); `applyBuiltins`
+swaps the snapshot and clamps the Settings cursor. T-9077's premise was partly wrong: `a` does open
+the add form from an empty Search screen (root.go), so the real defect was the wording for the
+all-off case, which now names Settings (`5`). `DoctorBuiltins` takes the definitions directory;
+`cmd/tortui/doctor.go` passes the loaded config's path. No DEC: no new design choice.

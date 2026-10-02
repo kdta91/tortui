@@ -14,7 +14,7 @@ import (
 
 // Every runDoctor test runs the real wiring, so the bundled sources are
 // replaced by none: no test may probe a real address (AGENT.md §6.7).
-func init() { doctorBuiltins = func() []doctor.Builtin { return nil } }
+func init() { doctorBuiltins = func(string) []doctor.Builtin { return nil } }
 
 // sandboxHome points TORTUI_HOME at a fresh temp directory so a doctor run
 // never touches the real user config/state/downloads (AGENT.md §15).
@@ -212,7 +212,7 @@ func TestRunDoctorListsAndProbesABuiltinSource(t *testing.T) {
 	defer srv.Close()
 
 	old := doctorBuiltins
-	doctorBuiltins = func() []doctor.Builtin {
+	doctorBuiltins = func(string) []doctor.Builtin {
 		return []doctor.Builtin{{ID: "archive-src", Name: "Archive Source", URL: srv.URL}}
 	}
 

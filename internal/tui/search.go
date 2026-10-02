@@ -754,10 +754,10 @@ func (m Model) renderSearchScreen() string {
 		// T-080's empty-state acceptance: every source disabled or removed
 		// must show an explicit, actionable prompt rather than silently
 		// returning zero results later. root.go's search-screen key block
-		// claims "a" here (jumps straight to the settings add form) —
-		// unreachable on a default install, since the bundled sources
-		// (T-024) start enabled.
-		b.WriteString(th.Muted.Render("  No sources configured. Press 'a' to add one."))
+		// claims "a" here (it opens the settings add form), and 5 jumps to
+		// Settings from anywhere. T-9077: a source that exists but is turned
+		// off is not "no sources configured", so the two cases read apart.
+		b.WriteString(th.Muted.Render("  " + m.noSourcesText()))
 		b.WriteString("\n")
 	}
 
@@ -781,6 +781,16 @@ func (m Model) renderSearchScreen() string {
 	b.WriteString(th.Muted.Render(searchHelpLine(len(s.recent) > 0)))
 
 	return truncateLines(b.String(), m.width)
+}
+
+// noSourcesText is the Search empty state: nothing to search because no
+// source exists at all, or because every one that exists is turned off.
+func (m Model) noSourcesText() string {
+	if len(m.sourceRows())+len(m.builtinSnapshot) == 0 {
+		return "No sources configured. Press 'a' to add one."
+	}
+
+	return "Every source is turned off. Press 5 for Settings, then space to turn one on."
 }
 
 // searchRow prefixes content with the focus cursor ("> ", accented) when

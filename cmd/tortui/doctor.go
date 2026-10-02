@@ -64,7 +64,7 @@ func runDoctor(args []string, out *os.File) int {
 		Paths:      loadResult.Paths,
 		Config:     loadResult.Config,
 		FDLimits:   fdLimits,
-		Builtins:   doctorBuiltins(),
+		Builtins:   doctorBuiltins(loadResult.Paths.DefinitionsDir),
 	})
 
 	if _, err := fmt.Fprint(out, doctor.Format(report)); err != nil {

@@ -1105,12 +1105,57 @@ func (m Model) handleSourceTestDetailOpen() (tea.Model, tea.Cmd) {
 type sourcesSaveResultMsg struct {
 	err      error
 	previous []config.Indexer
+	builtins builtinRefresh
 }
 
 func saveSourcesCmd(sm SourceManager, sources, previous []config.Indexer) tea.Cmd {
 	return func() tea.Msg {
-		return sourcesSaveResultMsg{err: sm.SaveSources(sources), previous: previous}
+		err := sm.SaveSources(sources)
+
+		return sourcesSaveResultMsg{err: err, previous: previous, builtins: refreshBuiltins(sm, err)}
 	}
+}
+
+// builtinRefresh carries the bundled-source rows as they stand after a
+// save (T-9072). A configured [[indexer]] entry with a bundled id hides that
+// built-in row and removing it brings the row back, so every save that can
+// add or remove an entry reads the rows again, inside its Cmd (AGENT.md
+// §6.1), and the result message hands them to Update.
+type builtinRefresh struct {
+	rows []BuiltinSource
+	ok   bool
+}
+
+// refreshBuiltins reads the bundled rows after a save that returned saveErr.
+// A failed save changed nothing, and a manager without built-in support has
+// no rows, so both return the zero value (no refresh).
+func refreshBuiltins(sm SourceManager, saveErr error) builtinRefresh {
+	if saveErr != nil {
+		return builtinRefresh{}
+	}
+
+	bm, ok := sm.(BuiltinManager)
+	if !ok {
+		return builtinRefresh{}
+	}
+
+	return builtinRefresh{rows: bm.BuiltinSources(), ok: true}
+}
+
+// applyBuiltins replaces the built-in snapshot with a save's fresh rows and
+// keeps the Settings cursor on a row that still exists.
+func (m Model) applyBuiltins(r builtinRefresh) Model {
+	if !r.ok {
+		return m
+	}
+
+	m.builtinSnapshot = r.rows
+
+	if n := len(m.sourceRows()) + len(m.builtinSnapshot); m.settings.cursor > n-1 {
+		m.settings.cursor = max(n-1, 0)
+	}
+
+	return m
 }
 
 // formSaveResultMsg reports the add/edit form's own save attempt. applied is
@@ -1122,11 +1167,14 @@ type formSaveResultMsg struct {
 	err      error
 	applied  []config.Indexer
 	previous []config.Indexer
+	builtins builtinRefresh
 }
 
 func saveFormCmd(sm SourceManager, sources, previous []config.Indexer) tea.Cmd {
 	return func() tea.Msg {
-		return formSaveResultMsg{err: sm.SaveSources(sources), applied: sources, previous: previous}
+		err := sm.SaveSources(sources)
+
+		return formSaveResultMsg{err: err, applied: sources, previous: previous, builtins: refreshBuiltins(sm, err)}
 	}
 }
 
@@ -1214,7 +1262,7 @@ func (m Model) handleSourcesSaveResult(msg sourcesSaveResultMsg) (tea.Model, tea
 	// whatever was enabled at startup (T-080 review finding: "reloads the
 	// registry live" must be visible on the search screen too, not just
 	// on disk).
-	m = m.refreshSearchSources()
+	m = m.applyBuiltins(msg.builtins).refreshSearchSources()
 
 	return m.handleSettingsMoveCursor(0)
 }
@@ -1239,7 +1287,7 @@ func (m Model) handleFormSaveResult(msg formSaveResultMsg) (tea.Model, tea.Cmd) 
 		return m.pushStatus(fmt.Sprintf("couldn't save source: %v", msg.err))
 	}
 
-	m = m.refreshSearchSources()
+	m = m.applyBuiltins(msg.builtins).refreshSearchSources()
 
 	if m.settings.form != nil {
 		m.settings.form = nil
