@@ -44,7 +44,7 @@ func resultsColumns() []components.Column {
 		{Key: "sl", Title: "S/L", Width: 9, Align: components.AlignRight, Less: seedersLess, SortMissingLast: seedersSortMissing},
 		{
 			Key: "trust", Title: "Trust", Width: 6, Align: components.AlignLeft, Priority: 3,
-			Less: trustLess, SortMissingLast: trustSortMissing, Accent: true,
+			Less: trustLess, Accent: true,
 		},
 		{Key: "age", Title: "Age", Width: 6, Align: components.AlignRight, Priority: 2, Less: ageLess},
 		{Key: "source", Title: "Source", Width: 16, Align: components.AlignLeft, Priority: 1},
@@ -71,7 +71,49 @@ type resultsModel struct {
 
 // newResultsModel returns a resultsModel with resultsColumns() and no rows.
 func newResultsModel() resultsModel {
-	return resultsModel{table: components.NewTable(resultsColumns())}
+	table := components.NewTable(resultsColumns())
+	table.TieBreak = resultTieBreak
+
+	return resultsModel{table: table}
+}
+
+// resultTieBreak orders rows the sorted column ranks as equal: more seeders
+// first (unknown last), then title without regard to case, then the row id,
+// so the order is total and never changes between renders (T-9106).
+func resultTieBreak(a, b components.Row) bool {
+	sa, sb := tieSeeders(a), tieSeeders(b)
+	if sa != sb {
+		return sa > sb
+	}
+
+	ta, tb := strings.ToLower(cellAt0(a, colTitle)), strings.ToLower(cellAt0(b, colTitle))
+	if ta != tb {
+		return ta < tb
+	}
+
+	return a.ID < b.ID
+}
+
+// tieSeeders is a row's seeder count for resultTieBreak, -1 when unknown.
+func tieSeeders(r components.Row) int {
+	if colSL >= len(r.SortKey) || r.SortKey[colSL] == seedersUnknownKey {
+		return -1
+	}
+
+	n, err := strconv.Atoi(r.SortKey[colSL])
+	if err != nil {
+		return -1
+	}
+
+	return n
+}
+
+func cellAt0(r components.Row, i int) string {
+	if i < len(r.Cells) {
+		return r.Cells[i]
+	}
+
+	return ""
 }
 
 // setResults replaces the table's rows from results and applies mode's
@@ -237,17 +279,10 @@ func parseTrustOrder(cell string) int {
 
 // trustLess orders the trust column by the real indexer.Trust value (least
 // to most trusted — AGENT.md §5's documented enum ordering), not the
-// three-way-ambiguous badge text.
+// three-way-ambiguous badge text. TrustUnknown is the lowest value, so the
+// two blank-badge levels (Unknown, None) always sit together at one end
+// (T-9106, DEC-158).
 func trustLess(a, b string) bool { return parseTrustOrder(a) < parseTrustOrder(b) }
-
-// trustSortMissing reports whether cell represents TrustUnknown — "the
-// source reports no trust information at all" — which components.Table's
-// SortMissingLast pins to the end of the trust column regardless of sort
-// direction (T-062 acceptance: "TrustUnknown sorts last"). TrustNone (the
-// source tracks trust and this upload has none) is a real, known value and
-// sorts normally alongside Verified/Trusted/VIP, even though it renders
-// the same blank badge as Unknown.
-func trustSortMissing(cell string) bool { return parseTrustOrder(cell) == int(indexer.TrustUnknown) }
 
 // trustOrderOf reads a table row's underlying trust order back out of its
 // SortKey, for applyTrustFilter — the same value trustLess/trustSortMissing

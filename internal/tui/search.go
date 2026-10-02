@@ -700,11 +700,18 @@ func (m Model) handleSearchCancel() (tea.Model, tea.Cmd) {
 func (m Model) handleSearchTyping(msg tea.KeyMsg) (handled bool, out tea.Model, cmd tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		// Commits the field without submitting the whole search — enter
-		// outside edit mode is what submits (ActionSelect in root.go's
-		// handleKey); this just stops that same keypress from also being
-		// typed as a character.
+		// T-9106: one enter in the query field commits it and runs the
+		// search (Latest when the query is empty), so the user never has
+		// to press enter twice. The min-seeders field has nothing to run
+		// on its own, so there enter only commits.
+		wasQuery := m.search.editing == editQuery
 		m.search.editing = editNone
+
+		if wasQuery {
+			updated, cmd := m.dispatchSearch(false)
+			return true, updated, cmd
+		}
+
 		return true, m, nil
 	case tea.KeyEsc:
 		// Blurs without discarding what was typed — "esc always cancels"
@@ -808,17 +815,32 @@ func (m Model) searchRow(row int, content string) string {
 // queryDisplay renders the query field: the typed text with a block cursor
 // appended while editing, or — when empty and not being edited — a hint
 // that doubles as T-060's "enter on an empty query runs Latest" acceptance
-// text made visible.
+// text made visible. The hint is shown in every state and says what enter
+// will really do (T-9106): it names Latest only when a selected source can
+// serve it, and says so when none can.
 func (s searchModel) queryDisplay() string {
 	if s.editing == editQuery {
+		if strings.TrimSpace(s.query) == "" {
+			return s.query + "█ " + s.emptyQueryHint()
+		}
+
 		return s.query + "█"
 	}
 
 	if s.query == "" {
-		return "(empty - enter runs Latest)"
+		return s.emptyQueryHint()
 	}
 
 	return s.query
+}
+
+// emptyQueryHint is the text beside an empty query field: what enter does.
+func (s searchModel) emptyQueryHint() string {
+	if len(s.selectedIDs(indexer.ModeLatest)) == 0 {
+		return "(empty - no selected source can list Latest)"
+	}
+
+	return "(empty - enter runs Latest)"
 }
 
 // modeDisplay renders the two-way mode selector with the active choice

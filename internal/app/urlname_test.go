@@ -201,8 +201,7 @@ func addKeyedResult(t *testing.T, s *screens) {
 	s.key(" ")
 	s.key("/")
 	s.key("corpus")
-	s.key("enter") // commit the query field
-	s.key("enter") // submit the search
+	s.key("enter") // one enter submits the search
 	s.waitFor(t, keyedTitle)
 	s.key("enter")
 	s.waitFor(t, "writable")
