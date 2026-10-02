@@ -40,6 +40,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -174,9 +175,10 @@ var (
 	// ErrRedirectLocationInvalid reports a redirect whose Location header
 	// will not parse. net/http fails the request itself, before any redirect
 	// check, with an error that quotes the whole header; httpx replaces that
-	// cause with this one, naming the request host only, because the header
-	// is server-chosen text that can carry userinfo (even the user's own
-	// credentials echoed back), a path and a query (T-9049, DEC-146).
+	// cause with this one, naming only the host of the hop that sent it,
+	// because the header is server-chosen text that can carry userinfo (even
+	// the user's own credentials echoed back), a path and a query (T-9049,
+	// DEC-146).
 	ErrRedirectLocationInvalid = errors.New("redirect Location header will not parse")
 )
 
@@ -415,7 +417,7 @@ func New(cfg Config) *Client {
 	return &Client{
 		http: &http.Client{
 			Transport:     transport,
-			CheckRedirect: redirect,
+			CheckRedirect: trackingHops(redirect),
 		},
 		limiter:        newHostLimiter(cfg.MinHostInterval, cfg.Clock),
 		clock:          cfg.Clock,
@@ -489,6 +491,55 @@ func checkRedirectToSubdomain(req *http.Request, via []*http.Request) error {
 	return checkRedirectHosts(req, via, true)
 }
 
+// hopKey is the context key under which attempt keeps its *hopTracker.
+type hopKey struct{}
+
+// hopTracker remembers the host of the last request net/http issued for one
+// attempt, so an error that arises while reading that hop's response can name
+// the hop and not the host the attempt started at (T-9054). A redirect never
+// runs on a different goroutine from the attempt that started it, but the
+// tracker is read after Do returns, so it is locked anyway.
+type hopTracker struct {
+	mu   sync.Mutex
+	host string
+}
+
+func (h *hopTracker) set(host string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.host = host
+}
+
+func (h *hopTracker) get(fallback string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.host == "" {
+		return fallback
+	}
+
+	return h.host
+}
+
+// trackingHops wraps a redirect rule so each hop it admits is recorded on the
+// attempt's hopTracker. A Location that will not parse never reaches the rule
+// (net/http fails first), so the last admitted request is exactly the hop
+// that sent it.
+func trackingHops(next func(*http.Request, []*http.Request) error) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if err := next(req, via); err != nil {
+			return err
+		}
+
+		if tracker, ok := req.Context().Value(hopKey{}).(*hopTracker); ok {
+			tracker.set(hostOf(req.URL))
+		}
+
+		return nil
+	}
+}
+
 // strictForCredentialedRequests wraps the lenient rule of a credential-free
 // client built with FollowSubdomainRedirects or MagnetRedirects so a chain
 // whose first request carries a credential of its own (carriesCredentials)
@@ -532,24 +583,24 @@ func carriesCredentials(r *http.Request) bool {
 // than either host rule. The scheme rule applies to both.
 func checkRedirectHosts(req *http.Request, via []*http.Request, subdomains bool) error {
 	if len(via) >= maxRedirects {
-		return fmt.Errorf("httpx: %w (%d hops)", ErrTooManyRedirects, len(via))
+		return fmt.Errorf("%w (%d hops)", ErrTooManyRedirects, len(via))
 	}
 
 	origin := via[0].URL
 
 	if req.URL.User != nil {
 		if !sameOriginUserinfo(req, via) {
-			return fmt.Errorf("httpx: %w (at %s)", ErrUserinfoRedirect, hostOf(req.URL))
+			return fmt.Errorf("%w (at %s)", ErrUserinfoRedirect, hostOf(req.URL))
 		}
 	} else {
 		allowed := strings.EqualFold(req.URL.Host, origin.Host) || (subdomains && isSubdomainOf(req.URL, origin))
 		if !allowed {
-			return fmt.Errorf("httpx: %w (%s to %s)", ErrCrossHostRedirect, hostOf(origin), hostOf(req.URL))
+			return fmt.Errorf("%w (%s to %s)", ErrCrossHostRedirect, hostOf(origin), hostOf(req.URL))
 		}
 	}
 
 	if isSchemeDowngrade(origin.Scheme, req.URL.Scheme) {
-		return fmt.Errorf("httpx: %w (at %s)", ErrInsecureRedirect, hostOf(req.URL))
+		return fmt.Errorf("%w (at %s)", ErrInsecureRedirect, hostOf(req.URL))
 	}
 
 	return nil
@@ -724,7 +775,7 @@ func withoutLocationEcho(cause error, host string) error {
 		return cause
 	}
 
-	return fmt.Errorf("httpx: %w (at %s)", ErrRedirectLocationInvalid, host)
+	return fmt.Errorf("%w (at %s)", ErrRedirectLocationInvalid, host)
 }
 
 // Request is one outbound HTTP request.
@@ -922,6 +973,9 @@ func (c *Client) attempt(ctx context.Context, method string, target *url.URL, he
 	attemptCtx, cancel := context.WithTimeout(ctx, c.connectTimeout+c.readTimeout)
 	defer cancel()
 
+	hops := &hopTracker{}
+	attemptCtx = context.WithValue(attemptCtx, hopKey{}, hops)
+
 	hreq, err := http.NewRequestWithContext(attemptCtx, method, target.String(), nil)
 	if err != nil {
 		return nil, nil, c.redactor.safef(unwrapURLError(err), "httpx: %s %s: cannot build request: %v", method, host, unwrapURLError(err))
@@ -935,7 +989,7 @@ func (c *Client) attempt(ctx context.Context, method string, target *url.URL, he
 	}
 
 	if err != nil {
-		cause := withoutLocationEcho(unwrapURLError(err), host)
+		cause := withoutLocationEcho(unwrapURLError(err), hops.get(host))
 
 		return nil, nil, c.redactor.safef(cause, "httpx: %s %s: %v", method, host, cause)
 	}

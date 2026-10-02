@@ -19,6 +19,7 @@ import (
 
 	"github.com/kdta91/tortui/internal/config"
 	"github.com/kdta91/tortui/internal/engine"
+	"github.com/kdta91/tortui/internal/indexer/httpx"
 	"github.com/kdta91/tortui/internal/store"
 	"github.com/kdta91/tortui/internal/tui"
 	"github.com/kdta91/tortui/internal/tui/theme"
@@ -119,22 +120,41 @@ func (ks *keyedServer) fetches() int {
 
 // newKeyedApp starts the composition root over the sandbox with the keyed
 // source configured.
-func newKeyedApp(t *testing.T, ks *keyedServer) *App {
+func newKeyedApp(t *testing.T, ks *keyedServer, tweak ...func(*Options)) *App {
 	t.Helper()
 
-	a, err := New(Options{
+	opts := Options{
 		Capability: theme.Capability{Unicode: true},
 		transport:  labTransport{host: ks.Listener.Addr().String(), lab: ks.Client().Transport},
 		offline:    true,
 		configure: func(c *config.Config) {
 			c.Indexers = append(c.Indexers, labSource(ks.Server))
 		},
-	})
+	}
+
+	for _, f := range tweak {
+		f(&opts)
+	}
+
+	a, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
 	return a
+}
+
+// fastFetch gives the engine a .torrent client whose retry backoff is a
+// millisecond, so a server that keeps answering 500 fails in moments rather
+// than after the real 0.5s and 1s waits (T-9063).
+func fastFetch(o *Options) {
+	o.torrentHTTP = httpx.New(httpx.Config{
+		MinHostInterval:          -1,
+		BaseBackoff:              time.Millisecond,
+		MaxBackoff:               time.Millisecond,
+		FollowSubdomainRedirects: true,
+		MagnetRedirects:          true,
+	})
 }
 
 // screens runs a's model under teatest and keeps every byte it renders, so a
@@ -156,6 +176,19 @@ func (s *screens) waitFor(t *testing.T, sub string) {
 	teatest.WaitFor(t, io.TeeReader(s.tm.Output(), &s.seen), func(bts []byte) bool {
 		return bytes.Contains(bts, []byte(sub))
 	}, teatest.WithCheckInterval(10*time.Millisecond), teatest.WithDuration(5*time.Second))
+}
+
+// waitForRendered is waitFor for text that may already have been drawn: the
+// renderer repaints only changed lines, so a fast outcome can sit in output an
+// earlier wait consumed, and the screen will not draw it again.
+func (s *screens) waitForRendered(t *testing.T, sub string) {
+	t.Helper()
+
+	if bytes.Contains(s.seen.Bytes(), []byte(sub)) {
+		return
+	}
+
+	s.waitFor(t, sub)
 }
 
 func (s *screens) key(k string) {
@@ -341,7 +374,7 @@ func TestKeyedURLAddNeverShowsTheKey(t *testing.T) {
 
 		ks := newKeyedServer(t, fetchFail)
 
-		a := newKeyedApp(t, ks)
+		a := newKeyedApp(t, ks, fastFetch)
 		s := newScreens(t, a)
 		addKeyedResult(t, s)
 
@@ -350,7 +383,7 @@ func TestKeyedURLAddNeverShowsTheKey(t *testing.T) {
 			t.Fatalf("the engine's error holds the api key: %v", failed.Err)
 		}
 
-		s.waitFor(t, "enter to expand")
+		s.waitForRendered(t, "enter to expand")
 		s.key("enter")
 		s.waitFor(t, "HTTP 500")
 
@@ -360,13 +393,13 @@ func TestKeyedURLAddNeverShowsTheKey(t *testing.T) {
 
 		closeKeyedApp(t, a, ks, keyedTitle)
 
-		b := newKeyedApp(t, ks)
+		b := newKeyedApp(t, ks, fastFetch)
 		s = newScreens(t, b)
 		s.key("4")
 		s.waitFor(t, keyedTitle)
 
 		waitForEngine(t, b, "errored", isErrored)
-		s.waitFor(t, "enter to expand")
+		s.waitForRendered(t, "enter to expand")
 		s.key("enter")
 		s.waitFor(t, "HTTP 500")
 

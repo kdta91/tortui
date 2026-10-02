@@ -5464,3 +5464,30 @@ Promotes Backlog T-9050, T-9053, T-9059, T-9076, T-9080, T-9102, T-9103.
 **Notes:** Documentation and formatting only; the single new claim is the T-9050 redirect note.
 The `settingsScreenLegend` string literal stays on one line. PR #95 review notes logged as T-9115
 to T-9117.
+
+### T-9118 · httpx error tidy
+
+```
+status: done
+depends: T-9114
+tier: M
+```
+Promotes Backlog T-9054, T-9055, T-9063, T-9084.
+
+**Acceptance:**
+1. Every redirect refusal carries one `httpx:` prefix, at the front (T-9055). The sentinels still match with
+   the Is function in errors, and each message still names the request and the host. A test pins the whole
+   text of each refusal.
+2. A Location-parse error on a later hop names that hop's host, never the original one, and still repeats no
+   part of the Location (T-9054, DEC-146). Tested with a two-hop chain.
+3. The `internal/app` HTTP-500 subtest no longer waits out real backoff and host spacing, through a seam that
+   config cannot reach (T-9063). Before and after durations are quoted.
+4. Backlog T-937's helper list names httpx's `validInfohash`; T-9084 is removed (no code change).
+
+**Notes:** The sentinel and magnet messages lost their own prefix; the outer wrap adds it once. The hop host
+is the last request net/http issued, recorded through a per-attempt tracker in the request context, not the
+last element of the chain list: a bad Location never reaches the redirect rule, so that list stops one hop
+short. The app seam is an unexported `torrentHTTP` option passed to the engine's existing HTTPClient field.
+The slow part was the per-host spacing as well as the backoff, so the test client sets both. Subtest
+"fetch fails, then restarted and fails again": 9.14s before, 1.14s after. A new waitForRendered covers
+text a fast failure draws before the wait starts. Both httpx fixes were mutation-checked. T-9119 logged.

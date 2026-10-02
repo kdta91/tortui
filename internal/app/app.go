@@ -18,6 +18,7 @@ import (
 	"github.com/kdta91/tortui/internal/engine"
 	"github.com/kdta91/tortui/internal/engine/anacrolix"
 	"github.com/kdta91/tortui/internal/indexer"
+	"github.com/kdta91/tortui/internal/indexer/httpx"
 	"github.com/kdta91/tortui/internal/lifecycle"
 	"github.com/kdta91/tortui/internal/logging"
 	"github.com/kdta91/tortui/internal/platform"
@@ -58,6 +59,11 @@ type Options struct {
 	offline      bool
 	configure    func(*config.Config)
 	beforeResume func(*anacrolix.Engine)
+
+	// torrentHTTP, when set, replaces the engine's .torrent fetch client, so
+	// a test can fetch with a millisecond backoff instead of sleeping out the
+	// real one (T-9063). Unexported and never read from config.
+	torrentHTTP *httpx.Client
 }
 
 // App is one running tortui: the loaded config, the file log, the
@@ -166,7 +172,7 @@ func (a *App) start(opts Options, level string) error {
 	engCfg := cfg
 	engCfg.SavedDestinations = append(append([]string(nil), cfg.SavedDestinations...), st.Destinations()...)
 
-	if a.engine, err = anacrolix.New(anacrolix.Options{Config: engCfg, Logger: logger, Offline: opts.offline}); err != nil {
+	if a.engine, err = anacrolix.New(anacrolix.Options{Config: engCfg, Logger: logger, Offline: opts.offline, HTTPClient: opts.torrentHTTP}); err != nil {
 		return fmt.Errorf("app: start engine: %w", err)
 	}
 

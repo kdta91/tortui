@@ -39,7 +39,8 @@ var ErrMagnetRedirectInvalid = errors.New("refusing a redirect to a magnet link 
 // validated (see validMagnet), through Magnet.
 //
 // Its message names the host that answered and never the magnet, whose
-// tracker addresses can carry a passkey (T-9079, DEC-151).
+// tracker addresses can carry a passkey (T-9079, DEC-151). It carries no
+// "httpx:" prefix of its own: the client's error adds that once (T-9055).
 type MagnetRedirectError struct {
 	// Host is the host:port that answered with the redirect.
 	Host string
@@ -49,7 +50,7 @@ type MagnetRedirectError struct {
 
 // Error names the host and never the magnet.
 func (e *MagnetRedirectError) Error() string {
-	return fmt.Sprintf("httpx: %v (at %s)", ErrMagnetRedirect, e.Host)
+	return fmt.Sprintf("%v (at %s)", ErrMagnetRedirect, e.Host)
 }
 
 // Unwrap makes errors.Is(err, ErrMagnetRedirect) hold.
@@ -77,7 +78,7 @@ func withMagnetRedirects(next func(*http.Request, []*http.Request) error) func(*
 		}
 
 		if !validMagnet(location) {
-			return fmt.Errorf("httpx: %w (at %s)", ErrMagnetRedirectInvalid, host)
+			return fmt.Errorf("%w (at %s)", ErrMagnetRedirectInvalid, host)
 		}
 
 		return &MagnetRedirectError{Host: host, magnet: location}
