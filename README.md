@@ -249,6 +249,10 @@ to the magnet. tortui adds the download by that magnet and keeps the magnet, not
 a restart. Other redirects keep their rules: only the link's own host, or a storage host
 under its domain, is followed.
 
+Every magnet, whether a source published it, you pasted it, or a restart restored it, has its
+`xs=` and `as=` addresses dropped. Those would fetch a `.torrent` from any web host; the
+torrent's details come from its peers instead.
+
 Grab the URL and key from Prowlarr's indexer page or Jackett's *Copy Torznab Feed* button and
 paste the whole thing into the add form — if the URL already has `?apikey=...` on the end,
 tortui splits it into the right fields for you. Or in the file:

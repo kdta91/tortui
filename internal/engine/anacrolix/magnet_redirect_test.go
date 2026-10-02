@@ -340,7 +340,8 @@ func TestMagnetRedirectKeepsQueueRules(t *testing.T) {
 // TestMagnetRedirectDropsMetainfoSources: a redirected magnet's xs= and as=
 // parameters — HTTP addresses the library would fetch a .torrent from — are
 // dropped before the add and from what is persisted, whatever their key's
-// spelling; every other parameter is kept byte for byte.
+// spelling; every other parameter is kept byte for byte. Their host is never
+// asked for anything (T-9094).
 func TestMagnetRedirectDropsMetainfoSources(t *testing.T) {
 	t.Parallel()
 
@@ -364,8 +365,12 @@ func TestMagnetRedirectDropsMetainfoSources(t *testing.T) {
 		t.Errorf("a string with no query was changed: %q", got)
 	}
 
-	e, _ := newRedirectEngine(t, nil)
-	address, _ := serveMagnetRedirect(t, http.StatusFound, cases["exact source"])
+	// The engine half (T-9086): the redirected magnet's xs= and as= name a
+	// loopback host the client would fetch from, and it is asked for
+	// nothing.
+	srv := newSourcesServer(t)
+	e, _ := newRedirectEngine(t, func(o *Options) { o.metainfoSources = true })
+	address, _ := serveMagnetRedirect(t, http.StatusFound, srv.sourced(base, "redirect"))
 
 	id, err := e.Add(context.Background(), engine.AddSource{TorrentURL: address})
 	if err != nil {
@@ -376,12 +381,6 @@ func TestMagnetRedirectDropsMetainfoSources(t *testing.T) {
 		t.Fatalf("hash %q err %v, want %q", st.InfoHash, st.Err, redirectHash)
 	}
 
-	d, err := e.ResumeData(id)
-	if err != nil {
-		t.Fatalf("ResumeData: %v", err)
-	}
-
-	if d.Magnet != base {
-		t.Errorf("persisted magnet = %q, want it without its source", d.Magnet)
-	}
+	srv.assertNeverFetched(t, e)
+	assertResumeMagnet(t, e, id, base)
 }

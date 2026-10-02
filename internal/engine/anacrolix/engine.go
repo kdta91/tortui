@@ -155,11 +155,17 @@ type Options struct {
 	// and peer connections all stay off.
 	webseeds bool
 
+	// metainfoSources, when set together with Offline, leaves the
+	// library's metainfo-source fetcher on, so a test can prove with a
+	// loopback server that no magnet's xs= or as= address reaches it
+	// (T-9094).
+	metainfoSources bool
+
 	// Offline disables every network subsystem of the underlying client:
 	// DHT, trackers, peer dialling, incoming connections, PEX, webseeds,
-	// webtorrent and port forwarding. The engine still accepts sources,
-	// reads metadata it is handed directly, validates paths and tracks
-	// state — it simply never contacts a peer.
+	// webtorrent, metainfo sources and port forwarding. The engine still
+	// accepts sources, reads metadata it is handed directly, validates
+	// paths and tracks state — it simply never contacts a peer.
 	//
 	// It exists so this package's own tests can exercise the real client
 	// end to end while making zero network calls (AGENT.md §6.7). It is a
@@ -535,6 +541,13 @@ func clientConfig(opts Options, downloadDir string, logger *slog.Logger, port in
 		cfg.DialForPeerConns = false
 		cfg.AcceptPeerConnections = false
 
+		// The library fetches a torrent's metainfo sources with its own
+		// HTTP client, which none of the switches above reach. tortui
+		// never hands it one (specFromMagnet), so this only backs that up.
+		if !opts.metainfoSources {
+			cfg.MetainfoSourcesClient = &http.Client{Transport: refuseMetainfoSources{}}
+		}
+
 		if host := opts.listenHost; host != "" {
 			cfg.DisableTCP = false
 			cfg.DisableIPv6 = true
@@ -543,6 +556,23 @@ func clientConfig(opts Options, downloadDir string, logger *slog.Logger, port in
 	}
 
 	return cfg
+}
+
+// errMetainfoSourcesOffline is what the Offline client's metainfo-source
+// fetcher answers every request with.
+var errMetainfoSourcesOffline = errors.New("anacrolix: metainfo sources are off while offline")
+
+// refuseMetainfoSources is the Offline client's metainfo-source transport: it
+// refuses every request before anything is dialled.
+type refuseMetainfoSources struct{}
+
+// RoundTrip implements http.RoundTripper.
+func (refuseMetainfoSources) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_ = req.Body.Close()
+	}
+
+	return nil, errMetainfoSourcesOffline
 }
 
 // rateLimiter builds a byte-per-second limiter, or an unlimited one when
@@ -640,12 +670,12 @@ func (e *Engine) Add(ctx context.Context, src engine.AddSource) (string, error) 
 
 	switch kind {
 	case sourceMagnet:
-		spec, err := specFromMagnet(src.Magnet)
+		spec, magnet, err := specFromMagnet(src.Magnet)
 		if err != nil {
 			return "", err
 		}
 
-		return e.addSpec(spec, dest, provenance{magnet: src.Magnet})
+		return e.addSpec(spec, dest, provenance{magnet: magnet})
 
 	case sourceFile:
 		spec, err := specFromFile(src.FilePath)
@@ -670,17 +700,25 @@ func (e *Engine) Add(ctx context.Context, src engine.AddSource) (string, error) 
 // specFromMagnet parses a magnet URI, refusing one that names no infohash:
 // the library accepts "magnet:?xt=<anything>" with a zero infohash and then
 // panics when that spec is added.
-func specFromMagnet(uri string) (*torrent.TorrentSpec, error) {
+//
+// It is the only place this package turns a magnet into a spec, so every
+// magnet the client is handed — added, restored, queued, or taken from a
+// redirect — has had its xs= and as= dropped first (T-9094, DEC-153). It
+// returns the magnet it parsed, which is what the caller records as the
+// torrent's source, so resume data and the session record lose them too.
+func specFromMagnet(uri string) (*torrent.TorrentSpec, string, error) {
+	uri = withoutMetainfoSources(uri)
+
 	spec, err := torrent.TorrentSpecFromMagnetUri(uri)
 	if err != nil {
-		return nil, fmt.Errorf("anacrolix: parse magnet: %w", err)
+		return nil, "", fmt.Errorf("anacrolix: parse magnet: %w", err)
 	}
 
 	if spec.InfoHash == (metainfo.Hash{}) {
-		return nil, errors.New("anacrolix: parse magnet: no infohash")
+		return nil, "", errors.New("anacrolix: parse magnet: no infohash")
 	}
 
-	return spec, nil
+	return spec, uri, nil
 }
 
 // sourceKind names which of AddSource's three mutually exclusive fields was
@@ -1047,9 +1085,7 @@ var errRedirectMagnetUnusable = errors.New("the magnet link it redirected to is 
 // address is ever logged or put in an error: a magnet's tracker addresses
 // can carry a passkey.
 func (e *Engine) attachRedirectMagnet(tr *tracked, redirect *httpx.MagnetRedirectError, dest string) {
-	magnet := withoutMetainfoSources(redirect.Magnet())
-
-	spec, err := specFromMagnet(magnet)
+	spec, magnet, err := specFromMagnet(redirect.Magnet())
 	if err != nil {
 		e.fail(tr, fmt.Errorf("fetch torrent file: %s: %w", redirect.Host, errRedirectMagnetUnusable))
 		return
@@ -1079,8 +1115,9 @@ func (e *Engine) attachRedirectMagnet(tr *tracked, redirect *httpx.MagnetRedirec
 
 // withoutMetainfoSources drops a magnet's xs= and as= parameters, which make
 // the torrent library fetch the .torrent over HTTP from whatever host they
-// name. A magnet taken from a redirect may lead tortui to no host the
-// .torrent fetch would not have followed (DEC-136, DEC-151); trackers, web
+// name, with its own client: outside httpx, and outside Offline. tortui
+// connects only to its sources and to BitTorrent peers (AGENT.md §2), so no
+// magnet keeps them, whoever wrote it (DEC-151, DEC-153); trackers, web
 // seeds and peers are BitTorrent and stay. Every other parameter is kept
 // byte for byte. A key is compared decoded, as the library reads it.
 func withoutMetainfoSources(magnet string) string {

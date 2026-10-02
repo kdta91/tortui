@@ -5181,3 +5181,38 @@ v2.12.2, and goimports (was @latest) to x/tools v0.49.0 as GOIMPORTS_VERSION. Al
 cache key. Checked on a Go 1.25.14 toolchain: all five tools install, gofumpt and goimports list no
 files, golangci-lint reports 0 issues. gitleaks (go 1.24) and go-licenses (go 1.23) were fine.
 Backlog T-9093.
+
+### T-9094 · Every magnet drops its xs= and as= addresses
+
+```
+status: done
+depends: T-9090
+tier: H
+```
+Promotes Backlog T-9081 and T-9086 (2026-10-02). A magnet's `xs=` and `as=` make the torrent
+library fetch a .torrent with its own HTTP client from any host, outside httpx and outside
+Offline. T-9079 dropped them only from a magnet taken from a redirect (DEC-151).
+
+**Acceptance:**
+1. Every magnet the engine hands the library has `xs=` and `as=` dropped, through one choke
+   point, reusing T-9079's helper: an added magnet (typed, pasted or source-published), a
+   queued one, a restored one, and one taken from a redirect. DEC-153 records the choice.
+2. Resume data holds the magnet without them, so the session record is rewritten on the next
+   save; a record saved with them before this change is stripped on restore, and rewritten,
+   even when the restore fails.
+3. Every other library path that fetches metainfo is found; one Offline does not cover is
+   refused under Offline. No frozen §5 contract changes.
+4. Engine tests point `xs=` and `as=` at a loopback httptest server (127.0.0.1) and assert it
+   gets zero hits after a positive control proves source fetching is live, for the direct add,
+   a queued add, a restore, and the redirect; an app test covers a source-published magnet and
+   a legacy record through a restart. Paths use `filepath.Join`; no network beyond loopback.
+5. With the strip removed at the choke point, the zero-hit tests fail (quoted in the PR).
+   `make check`, `make race` for the touched packages and `make cover` are green.
+
+**Notes:** `specFromMagnet`, the package's only magnet-to-spec call, now runs
+`withoutMetainfoSources` first and returns the stripped magnet, which Add and the redirect
+record; Restore strips the recorded magnet before anything else, so a failed restore is
+rewritten too (DEC-153). The library's only other metainfo fetch is its metainfo-sources client
+(a spec's Sources, set from xs/as alone); under Offline it is now a transport that refuses every
+request. Webseeds were already off under Offline and stay on otherwise. Test switch
+`metainfoSources` keeps the client live under Offline for the loopback tests. README notes it.

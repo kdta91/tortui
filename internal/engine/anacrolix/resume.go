@@ -146,10 +146,13 @@ func (e *Engine) Restore(ctx context.Context, d engine.ResumeData) (string, erro
 		return "", err
 	}
 
+	// A magnet saved before T-9094 may still carry xs= and as=. It is
+	// recorded without them even when it cannot be restored, so the next
+	// save rewrites the record (DEC-153).
 	prov := provenance{
 		id:         d.ID,
 		origin:     d.Origin,
-		magnet:     d.Magnet,
+		magnet:     withoutMetainfoSources(d.Magnet),
 		torrentURL: d.TorrentURL,
 		metainfo:   bytes.Clone(d.Metainfo),
 	}
@@ -168,7 +171,7 @@ func (e *Engine) Restore(ctx context.Context, d engine.ResumeData) (string, erro
 		return e.restoreMetainfo(prov, dest, name)
 
 	case trimmed(d.Magnet) != "":
-		spec, err := specFromMagnet(d.Magnet)
+		spec, _, err := specFromMagnet(prov.magnet)
 		if err != nil {
 			return e.trackFailed(prov, dest, name, err)
 		}
