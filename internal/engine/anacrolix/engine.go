@@ -363,10 +363,14 @@ func New(opts Options) (*Engine, error) {
 		// A source's download address may hand the .torrent off to a
 		// storage host under its own domain (T-9010, DEC-136). This
 		// client injects no credentials, so following that hop sends a
-		// subdomain nothing but the address the source itself chose.
+		// subdomain nothing but the address the source itself chose. A
+		// Torznab aggregator answers a magnet-only result's address with
+		// a redirect to the magnet: that is surfaced, never requested,
+		// and the torrent is added by it instead (T-9079, DEC-151).
 		httpClient = httpx.New(httpx.Config{
 			MaxBodyBytes:             maxTorrentFileBytes,
 			FollowSubdomainRedirects: true,
+			MagnetRedirects:          true,
 			Transport:                opts.torrentTransport,
 		})
 	}
@@ -987,6 +991,13 @@ func (e *Engine) fetchAndAttach(ctx context.Context, tr *tracked, rawURL, dest s
 	}()
 
 	resp, err := e.http.Get(ctx, rawURL, nil)
+
+	var redirect *httpx.MagnetRedirectError
+	if errors.As(err, &redirect) {
+		e.attachRedirectMagnet(tr, redirect, dest)
+		return
+	}
+
 	if err != nil {
 		e.fail(tr, fmt.Errorf("fetch torrent file: %w", err))
 		return
@@ -1008,6 +1019,50 @@ func (e *Engine) fetchAndAttach(ctx context.Context, tr *tracked, rawURL, dest s
 		e.fail(tr, fmt.Errorf("already added as %s", existing))
 		return
 	}
+
+	if e.beforeAttach != nil {
+		e.beforeAttach()
+	}
+
+	if err := e.attach(tr, spec, dest); err != nil {
+		e.fail(tr, err)
+	}
+}
+
+// errRedirectMagnetUnusable reports a magnet a .torrent address redirected to
+// that httpx accepted but the torrent library will not parse. The library's
+// own error quotes the link, so it is not kept (T-9079, DEC-151).
+var errRedirectMagnetUnusable = errors.New("the magnet link it redirected to is not usable")
+
+// attachRedirectMagnet adds, in place of the .torrent it was fetching, the
+// magnet a torrent's address redirected to (T-9079, DEC-151): the same
+// tracked entry, so the id, destination and slot are kept, and the same
+// display name until metadata arrives. A torrent already tracked under its
+// infohash fails this one exactly as a fetched .torrent's would. From here
+// on the torrent's source is the magnet, so ResumeData — and so the session
+// record — holds the magnet instead of the address, and a restart adds by
+// the magnet without fetching the address again. Neither the magnet nor the
+// address is ever logged or put in an error: a magnet's tracker addresses
+// can carry a passkey.
+func (e *Engine) attachRedirectMagnet(tr *tracked, redirect *httpx.MagnetRedirectError, dest string) {
+	spec, err := specFromMagnet(redirect.Magnet())
+	if err != nil {
+		e.fail(tr, fmt.Errorf("fetch torrent file: %s: %w", redirect.Host, errRedirectMagnetUnusable))
+		return
+	}
+
+	if existing, ok := e.findByInfoHash(spec.InfoHash.HexString()); ok && existing != tr.id {
+		e.fail(tr, fmt.Errorf("already added as %s", existing))
+		return
+	}
+
+	e.mu.Lock()
+	spec.DisplayName = tr.name
+	tr.magnet, tr.torrentURL = redirect.Magnet(), ""
+	e.mu.Unlock()
+
+	e.logger.Debug("anacrolix: torrent address redirected to a magnet link; adding by it",
+		"id", tr.id, "host", redirect.Host)
 
 	if e.beforeAttach != nil {
 		e.beforeAttach()

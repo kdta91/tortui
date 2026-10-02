@@ -9,6 +9,9 @@
 //   - A URL-shaped substring anywhere in a string value or the message
 //     text, including a query string or embedded basic-auth credential
 //     (https://user:pass@host/...), is redacted wholesale.
+//   - A udp:// or ws(s):// tracker address, and a magnet URI (whose tr=
+//     tracker addresses are percent-encoded and may carry a passkey), the
+//     same way (T-9079).
 //   - A "key=value"/"key: value" credential pair inside free text.
 //   - A handful of well-known bare secret-token shapes (Stripe-style
 //     sk-/sk_live_/pk_live_ keys, GitHub ghp_/gho_/.../github_pat_ tokens,
@@ -109,7 +112,17 @@ func isSensitiveKey(key string) bool {
 // exactly the shape this guards against. Matching \S+ up to the next
 // whitespace redacts the whole URL rather than just the query string, so a
 // credential in either position is caught the same way.
-var urlPattern = regexp.MustCompile(`https?://\S+`)
+//
+// udp:// and ws(s):// are tracker schemes: the torrent library logs a
+// tracker's announce address, and a private tracker puts its passkey in
+// that address's path (T-9079).
+var urlPattern = regexp.MustCompile(`(?i)(?:https?|udp|wss?)://\S+`)
+
+// magnetPattern matches a magnet URI so it is redacted wholesale. Its tr=
+// tracker addresses are percent-encoded ("https%3A%2F%2F..."), which
+// urlPattern cannot see, and a private tracker's carries its passkey
+// (T-9079).
+var magnetPattern = regexp.MustCompile(`(?i)magnet:\?\S+`)
 
 // credentialPattern matches a "key: value" or "key=value" pair whose key
 // names a credential, so a raw Cookie header or "api_key=..." string logged
@@ -164,6 +177,7 @@ func Redact(s string) string {
 // non-sensitive-keyed string attrs), independent of the key-based masking
 // in maskAttr.
 func maskText(s string) string {
+	s = magnetPattern.ReplaceAllString(s, redacted)
 	s = urlPattern.ReplaceAllString(s, redacted)
 	// bearerPattern runs before credentialPattern: credentialPattern's
 	// "authorization" alternative would otherwise stop at the first
