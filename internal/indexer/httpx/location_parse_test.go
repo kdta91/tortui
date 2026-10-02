@@ -212,7 +212,7 @@ func TestWithoutLocationEcho(t *testing.T) {
 				t.Fatalf("withoutLocationEcho = %v, want ErrRedirectLocationInvalid", got)
 			}
 
-			want := "httpx: " + ErrRedirectLocationInvalid.Error() + " (at example.org)"
+			want := ErrRedirectLocationInvalid.Error() + " (at example.org)"
 			if got.Error() != want {
 				t.Fatalf("withoutLocationEcho = %q, want %q", got, want)
 			}

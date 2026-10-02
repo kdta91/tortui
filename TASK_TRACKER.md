@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test.
 
 ---
 
@@ -370,7 +370,8 @@ deferrals stay deferred to Backlog T-9004.
   than a new substring. Found by QA on T-021 (PR #12), round 2.
 - `T-937` Decide where the infohash helpers live. `normaliseInfoHash`, `isHex`, `isBase32`,
   `infoHashInMagnet`, `magnetFor` and `withoutQuery` now exist in both `internal/indexer/torznab`
-  and `internal/indexer/scraper`, character for character in most cases. AGENT.md §4 forbids one
+  and `internal/indexer/scraper`, character for character in most cases; httpx's `validInfohash`
+  is a third infohash validator beside them (found in review of T-9079, PR #85). AGENT.md §4 forbids one
   adapter importing another, so the duplication is correct today; the alternative is exporting
   them from `internal/indexer`, which grows the package that holds the frozen §5 contracts.
   Deliberately deferred so a third adapter makes the call with three data points rather than
@@ -761,16 +762,9 @@ deferrals stay deferred to Backlog T-9004.
   `TestListedLinksNeverCarryUserinfo` had to move to a clean base_url once a base_url with
   userinfo no longer reaches `New`. The change was justified. Future criteria: "existing tests
   pass; a test changes only where another criterion requires it". Note from review of T-9045 (PR #76).
-- `T-9054` On a multi-hop subdomain chain the Location-parse error names the original host, not the
-  hop that sent the bad Location. The hop host could be captured in CheckRedirect. Non-blocking note
-  from review of T-9049 (PR #78).
-- `T-9055` Redirect refusal errors carry a doubled "httpx:" prefix. If fixed, fix every one in a
-  single follow-up. Non-blocking note from review of T-9049 (PR #78).
 - `T-9060` The "infohash attr" subtest of `TestAddingATwoLinkTorznabResult`
   (`internal/app/addsource_test.go`) could also assert the engine's infohash, and that the
   enclosure was fetched at least once. Non-blocking note from review of T-9056 (PR #80).
-- `T-9063` The `internal/app` HTTP-500 subtests take about 4s each because of real httpx backoff. Add
-  a zero-backoff option or a fake clock.
 - `T-9064` Host-only naming (DEC-148) still shows a secret embedded in a hostname. Note only; no
   change planned.
 - `T-9065` Results rows with wide emoji (U+1F680, U+1F6F0 in the demo) may shift later columns.
@@ -780,8 +774,6 @@ deferrals stay deferred to Backlog T-9004.
   survivor "not observable" is wrong.)
 - `T-9078` `make run` should set TORTUI_HOME so the dev run does not touch real state, lock and
   downloads. Noted in the README by T-9073.
-- `T-9084` Add httpx's `validInfohash` to T-937's scope: it is a third infohash validator beside
-  the two T-937 lists. Found in review of T-9079 (PR #85).
 - `T-9087` Note only: the magnet validator allows non-ASCII and UTF-8 C1 control bytes. Harmless,
   because the display name is replaced. Found in review of T-9079 (PR #85).
 - `T-9091` Ubuntu 26.04: once the Linux CI jobs are green on it, move release.yml from ubuntu-24.04
@@ -808,6 +800,8 @@ deferrals stay deferred to Backlog T-9004.
   a source that fails registration (logged as "app: skipping source") can still show as reachable.
   Consider having `doctor` report build and Register failures. Non-blocking note from review of
   T-9111 (PR #94).
+- `T-9119` The retry-limit errors in httpx ("not retrying, ...") wrap a StatusError, so their text still
+  carries "httpx:" twice. Found while fixing T-9055, which covered redirect refusals only.
 - `T-9115` Downloads builds its layout twice per message, in Update and View, at about 2.4 ms each
   at 1000 torrents. Fine today. If it ever shows up, sync only on messages that can change the
   offset. Non-blocking note from review of T-9112 (PR #95).
