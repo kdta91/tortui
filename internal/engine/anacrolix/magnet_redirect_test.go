@@ -336,3 +336,52 @@ func TestMagnetRedirectKeepsQueueRules(t *testing.T) {
 		t.Errorf("the promoted address was requested %d times, want 1", laterHits.Load())
 	}
 }
+
+// TestMagnetRedirectDropsMetainfoSources: a redirected magnet's xs= and as=
+// parameters — HTTP addresses the library would fetch a .torrent from — are
+// dropped before the add and from what is persisted, whatever their key's
+// spelling; every other parameter is kept byte for byte.
+func TestMagnetRedirectDropsMetainfoSources(t *testing.T) {
+	t.Parallel()
+
+	const tail = "&dn=Synthetic+Magnet+Corpus&tr=https%3A%2F%2Ftracker.example.org%2F" + redirectPasskey + "%2Fannounce"
+
+	base := "magnet:?xt=urn:btih:" + redirectHash + tail
+	cases := map[string]string{
+		"exact source":             "magnet:?xt=urn:btih:" + redirectHash + "&xs=http%3A%2F%2Fother.example.org%2Fx.torrent" + tail,
+		"acceptable source":        "magnet:?as=http%3A%2F%2Fother.example.org%2Fx.torrent&xt=urn:btih:" + redirectHash + tail,
+		"encoded key, two of them": "magnet:?xt=urn:btih:" + redirectHash + "&x%73=http%3A%2F%2Fa.example.org%2F" + "&xs=http%3A%2F%2Fb.example.org%2F" + tail,
+		"none":                     base,
+	}
+
+	for name, magnet := range cases {
+		if got := withoutMetainfoSources(magnet); got != base {
+			t.Errorf("%s: withoutMetainfoSources = %q, want %q", name, got, base)
+		}
+	}
+
+	if got := withoutMetainfoSources("not a magnet"); got != "not a magnet" {
+		t.Errorf("a string with no query was changed: %q", got)
+	}
+
+	e, _ := newRedirectEngine(t, nil)
+	address, _ := serveMagnetRedirect(t, http.StatusFound, cases["exact source"])
+
+	id, err := e.Add(context.Background(), engine.AddSource{TorrentURL: address})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	if st := waitForInfoHash(t, e, id); st.InfoHash != redirectHash {
+		t.Fatalf("hash %q err %v, want %q", st.InfoHash, st.Err, redirectHash)
+	}
+
+	d, err := e.ResumeData(id)
+	if err != nil {
+		t.Fatalf("ResumeData: %v", err)
+	}
+
+	if d.Magnet != base {
+		t.Errorf("persisted magnet = %q, want it without its source", d.Magnet)
+	}
+}

@@ -23,9 +23,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -1045,7 +1047,9 @@ var errRedirectMagnetUnusable = errors.New("the magnet link it redirected to is 
 // address is ever logged or put in an error: a magnet's tracker addresses
 // can carry a passkey.
 func (e *Engine) attachRedirectMagnet(tr *tracked, redirect *httpx.MagnetRedirectError, dest string) {
-	spec, err := specFromMagnet(redirect.Magnet())
+	magnet := withoutMetainfoSources(redirect.Magnet())
+
+	spec, err := specFromMagnet(magnet)
 	if err != nil {
 		e.fail(tr, fmt.Errorf("fetch torrent file: %s: %w", redirect.Host, errRedirectMagnetUnusable))
 		return
@@ -1058,7 +1062,7 @@ func (e *Engine) attachRedirectMagnet(tr *tracked, redirect *httpx.MagnetRedirec
 
 	e.mu.Lock()
 	spec.DisplayName = tr.name
-	tr.magnet, tr.torrentURL = redirect.Magnet(), ""
+	tr.magnet, tr.torrentURL = magnet, ""
 	e.mu.Unlock()
 
 	e.logger.Debug("anacrolix: torrent address redirected to a magnet link; adding by it",
@@ -1071,6 +1075,35 @@ func (e *Engine) attachRedirectMagnet(tr *tracked, redirect *httpx.MagnetRedirec
 	if err := e.attach(tr, spec, dest); err != nil {
 		e.fail(tr, err)
 	}
+}
+
+// withoutMetainfoSources drops a magnet's xs= and as= parameters, which make
+// the torrent library fetch the .torrent over HTTP from whatever host they
+// name. A magnet taken from a redirect may lead tortui to no host the
+// .torrent fetch would not have followed (DEC-136, DEC-151); trackers, web
+// seeds and peers are BitTorrent and stay. Every other parameter is kept
+// byte for byte. A key is compared decoded, as the library reads it.
+func withoutMetainfoSources(magnet string) string {
+	head, query, found := strings.Cut(magnet, "?")
+	if !found {
+		return magnet
+	}
+
+	params := strings.Split(query, "&")
+	kept := params[:0]
+
+	for _, param := range params {
+		raw, _, _ := strings.Cut(param, "=")
+
+		key, err := url.QueryUnescape(raw)
+		if err == nil && (key == "xs" || key == "as") {
+			continue
+		}
+
+		kept = append(kept, param)
+	}
+
+	return head + "?" + strings.Join(kept, "&")
 }
 
 // attach hands a spec to the client with a per-destination storage backend and
