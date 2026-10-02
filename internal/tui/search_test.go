@@ -1021,8 +1021,23 @@ func TestQueryHintIsTruthfulInEveryState(t *testing.T) {
 	searchOnly := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, false), nil))
 	m = editedSearchModel(t, searchOnly, "")
 
-	if got := m.search.queryDisplay(); strings.Contains(got, "enter runs Latest") {
-		t.Errorf("no Latest-capable source: %q, must not promise Latest", got)
+	const noLatest = "no selected source can list Latest"
+
+	if got := m.search.queryDisplay(); !strings.Contains(got, noLatest) || !strings.Contains(got, "█") {
+		t.Errorf("editing, no Latest-capable source: %q, want the caret and %q", got, noLatest)
+	}
+
+	m.search.editing = editNone
+
+	if got := m.search.queryDisplay(); !strings.Contains(got, noLatest) || strings.Contains(got, "enter runs Latest") {
+		t.Errorf("idle, no Latest-capable source: %q, want %q", got, noLatest)
+	}
+
+	// A whitespace-only query is empty to dispatch, so it reads as empty.
+	m.search.query = "  "
+
+	if got := m.search.queryDisplay(); !strings.Contains(got, noLatest) {
+		t.Errorf("idle, whitespace query: %q, want the empty-query hint", got)
 	}
 }
 

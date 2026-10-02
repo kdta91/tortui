@@ -827,7 +827,7 @@ func (s searchModel) queryDisplay() string {
 		return s.query + "█"
 	}
 
-	if s.query == "" {
+	if strings.TrimSpace(s.query) == "" {
 		return s.emptyQueryHint()
 	}
 

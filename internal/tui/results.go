@@ -258,10 +258,10 @@ func resultRow(r indexer.Result, now time.Time) components.Row {
 			resultSource(r),
 		},
 		// SortKey[colTrust] carries the real indexer.Trust order behind
-		// the badge (T-062 acceptance: sortable by trust, TrustUnknown
-		// sorts last) — Badge() renders TrustUnknown and TrustNone as the
-		// identical blank text, so trustLess/trustSortMissing could never
-		// tell them apart from Cells alone. Every other index is left
+		// the badge (T-062: sortable by trust; T-9106: TrustUnknown is the
+		// lowest level) — Badge() renders TrustUnknown and TrustNone as the
+		// identical blank text, so trustLess could never tell them apart
+		// from Cells alone. Every other index is left
 		// empty, falling back to that column's own Cells text.
 		SortKey: []string{"", "", seedersSortKey(r), strconv.Itoa(int(r.Trust)), "", ""},
 	}
@@ -285,8 +285,8 @@ func parseTrustOrder(cell string) int {
 func trustLess(a, b string) bool { return parseTrustOrder(a) < parseTrustOrder(b) }
 
 // trustOrderOf reads a table row's underlying trust order back out of its
-// SortKey, for applyTrustFilter — the same value trustLess/trustSortMissing
-// compare, so filtering and sorting always agree on what a row's trust
+// SortKey, for applyTrustFilter — the same value trustLess
+// compares, so filtering and sorting always agree on what a row's trust
 // actually is.
 func trustOrderOf(r components.Row) int {
 	if colTrust >= len(r.SortKey) {

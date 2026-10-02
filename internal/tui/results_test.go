@@ -304,16 +304,19 @@ func TestTrustSortIsATotalOrder(t *testing.T) {
 		mk("v3", "mid", 7, indexer.TrustVerified),
 		mk("u3", "Zulu", 8, indexer.TrustUnknown),
 		mk("n3", "alpha", 2, indexer.TrustNone),
+		mk("k0", "zero seeders", 0, indexer.TrustTrusted),
+		mk("k?", "unknown seeders", 0, indexer.TrustTrusted),
 	}
+	in[len(in)-1].Extra = map[string]string{indexer.ExtraKeySeedersUnknown: "1"}
 
 	// v1 ("alpha") and v2 ("Alpha") tie on seeders and, case-folded, on
 	// title, so the id decides: v1 before v2.
 	wantDesc := []string{
-		"a|vip", "a|t1", "a|v3", "a|v1", "a|v2", "a|n1", "a|n2", "a|n3", "a|u3", "a|u2", "a|u1",
+		"a|vip", "a|t1", "a|k0", "a|k?", "a|v3", "a|v1", "a|v2", "a|n1", "a|n2", "a|n3", "a|u3", "a|u2", "a|u1",
 	}
 
 	wantAsc := []string{
-		"a|u3", "a|u2", "a|u1", "a|n1", "a|n2", "a|n3", "a|v3", "a|v1", "a|v2", "a|t1", "a|vip",
+		"a|u3", "a|u2", "a|u1", "a|n1", "a|n2", "a|n3", "a|v3", "a|v1", "a|v2", "a|t1", "a|k0", "a|k?", "a|vip",
 	}
 
 	for run := 0; run < 20; run++ {
@@ -419,8 +422,7 @@ func dispatchNonEmptySearch(tm *teatest.TestModel, text string) {
 	for _, r := range text {
 		tm.Send(keyRune(string(r)))
 	}
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // commits the field
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // submits
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // one enter commits the field and runs the search
 }
 
 // TestResultsScreenRendersColumnsAndHeader is T-061's "teatest covers
