@@ -5216,3 +5216,42 @@ rewritten too (DEC-153). The library's only other metainfo fetch is its metainfo
 (a spec's Sources, set from xs/as alone); under Offline it is now a transport that refuses every
 request. Webseeds were already off under Offline and stay on otherwise. Test switch
 `metainfoSources` keeps the client live under Offline for the loopback tests. README notes it.
+
+### T-9095 · Credential hygiene: magnet redirects, userinfo schemes, unparseable names
+
+```
+status: done
+depends: T-9094
+tier: H
+```
+Promotes Backlog T-9083, T-9051 and T-9062 (2026-10-02). Three places where a credential could
+cross a boundary it should not: a credentialed httpx client honouring magnet redirects, the
+same-origin userinfo rule passing a non-web scheme, and `engine.SafeName` handing back an
+unparseable address with its api key.
+
+**Acceptance:**
+1. httpx honours `MagnetRedirects` only on a client with no credentials, gated the way
+   `FollowSubdomainRedirects` is. A client with an api key, a cookie, or both refuses a magnet
+   redirect as a cross-host hop (no magnet surfaced, nothing echoed, one request); a
+   credential-free client surfaces it.
+2. `sameOriginUserinfo` has its own http/https allowlist on both ends. Tested at the function
+   level (ftp and ws on the same host and port refused, http and https followed) and through
+   the client (an http endpoint with userinfo and an explicit port redirecting to ftp on that
+   host and port is refused, and the transport sees one request).
+3. When url.Parse fails, `engine.SafeName` treats a `scheme://` prefix as an address and returns
+   `URLSourceName` of it. `TestSafeNameReducesOnlyWebAddresses` covers a bad path escape
+   (`https://feed.example.org/dl/%zz?apikey=K`), a bad port, an unclosed IPv6 bracket, a bad
+   fragment escape and a trailing control byte: each is named "torrent file", and neither
+   SafeName's nor URLSourceName's output contains `K`. DEC-154 records the choice.
+4. Backlog T-9085 is removed as obsolete (PR #88 rewrote that comment); the PR #88 review notes
+   are Backlog entries.
+5. Each fix reverted fails its new tests (quoted in the PR). `make check`, `make race` for the
+   touched packages and `make cover` are green.
+
+**Notes:** `New` computes one credential-free flag and gates both redirect options on it; the
+engine's .torrent client has no credentials, so T-9079 is unchanged. `isWebScheme` checks the
+original and the target before any byte comparison. `hasSchemePrefix` follows the RFC 3986
+scheme grammar, so a magnet, a `C:\` path and a name like "1http://x" stay as they are; the old
+kept row "http://example.org with spaces is no address" now reduces, because it is an address
+that will not parse (DEC-154). URLSourceName already named an unreadable host "torrent file".
+`http://[::1` passed the hostname scanner as written. Backlog T-9096 to T-9098 from PR #88.
