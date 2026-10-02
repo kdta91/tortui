@@ -15,12 +15,28 @@ import (
 	"github.com/kdta91/tortui/internal/engine"
 )
 
-// sourceFetchGrace is how long a test keeps listening for a stray xs=/as=
-// fetch after its positive control was fetched. The library starts every
-// source's fetch the moment the torrent is added, with no delay, and the
-// torrent under test is always added before the control, so a source left in
-// a magnet is requested well inside this window.
-const sourceFetchGrace = 250 * time.Millisecond
+// How long a test keeps listening for a stray xs=/as= fetch after its
+// positive control was fetched (T-9098). The library starts one goroutine per
+// source with no delay (sources.go in the library: AddSources), but nothing
+// orders those goroutines against another torrent's, and a torrent's sources
+// have no hook a test can wait on, so there is no way to prove from outside
+// that a stray fetch has come and gone. The window is therefore sized by the
+// machine instead: the floor below is what an idle machine needs many times
+// over, and the window grows to sourceFetchGraceFactor times the delay the
+// control itself took from being added to being fetched. A loaded runner
+// that delays the control delays a stray fetch by a similar amount, so the
+// window stretches with it, while a quiet run pays only the floor. A correct
+// engine never fails whatever the load.
+const (
+	sourceFetchGrace       = 250 * time.Millisecond
+	sourceFetchGraceFactor = 20
+	sourceFetchGraceMax    = 10 * time.Second
+)
+
+// graceAfter is the window to listen for after a control that took delay.
+func graceAfter(delay time.Duration) time.Duration {
+	return min(max(sourceFetchGrace, sourceFetchGraceFactor*delay), sourceFetchGraceMax)
+}
 
 // sourcesServer is a loopback host standing in for the arbitrary web host a
 // magnet's xs= or as= address can name (T-9094). It records every path it
@@ -75,8 +91,8 @@ func (s *sourcesServer) sourced(magnet, seed string) string {
 // for nothing. As a positive control it hands the client directly a torrent
 // whose only source is this server, waits until that is fetched — so the
 // client's source fetching is live and a source already given to it has had
-// its turn — then keeps listening for sourceFetchGrace. Any path other than
-// the control's fails the test.
+// its turn — then keeps listening for graceAfter the control's own delay.
+// Any path other than the control's fails the test.
 func (s *sourcesServer) assertNeverFetched(t *testing.T, e *Engine) {
 	t.Helper()
 
@@ -94,6 +110,8 @@ func (s *sourcesServer) assertNeverFetched(t *testing.T, e *Engine) {
 
 	spec.Sources = []string{s.URL + control}
 	spec.Storage = store
+
+	added := time.Now()
 
 	if _, _, err := e.client.AddTorrentSpec(spec); err != nil {
 		t.Fatalf("add control torrent: %v", err)
@@ -118,7 +136,7 @@ func (s *sourcesServer) assertNeverFetched(t *testing.T, e *Engine) {
 		}
 	}
 
-	grace := time.After(sourceFetchGrace)
+	grace := time.After(graceAfter(time.Since(added)))
 
 	for {
 		for _, p := range s.requested() {
@@ -314,6 +332,22 @@ func TestOfflineRefusesMetainfoSources(t *testing.T) {
 	} {
 		if c := clientConfig(opts, dir, discardLogger(), 0); c.MetainfoSourcesClient != nil {
 			t.Errorf("%s: metainfo-source client replaced; want the library's", name)
+		}
+	}
+}
+
+// TestGraceFollowsTheControlsDelay pins the window: the floor on a quiet
+// machine, twenty times the control's delay under load, and a cap.
+func TestGraceFollowsTheControlsDelay(t *testing.T) {
+	t.Parallel()
+
+	for delay, want := range map[time.Duration]time.Duration{
+		time.Millisecond:      sourceFetchGrace,
+		50 * time.Millisecond: sourceFetchGraceFactor * 50 * time.Millisecond,
+		time.Minute:           sourceFetchGraceMax,
+	} {
+		if got := graceAfter(delay); got != want {
+			t.Errorf("graceAfter(%s) = %s, want %s", delay, got, want)
 		}
 	}
 }
