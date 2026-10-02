@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews.
 
 ---
 
@@ -831,20 +831,6 @@ deferrals stay deferred to Backlog T-9004.
   (`internal/engine/displayname.go`, about line 42), the `dropInvisible` condition, a comment in
   `displayname_test.go`, and the first Notes line of T-9099 in `docs/tracker-archive.md`. Rewrap.
   Non-blocking note from review of T-9099 (PR #90).
-- `T-9104` The defensive clamp inside `sourceWindow` (`internal/tui/settings.go`) has no test of its
-  own. Non-blocking note from review of T-9100 (PR #91).
-- `T-9105` `sourceWindow(0, n)` returns first > last, harmless only because the caller returns
-  early. Make it return an empty window explicitly. Non-blocking note from review of T-9100 (PR #91).
-- `T-9107` The aggregator import's built-in refresh (`internal/tui/aggregator_import.go`, about lines
-  134-136 and 422) has no test. Non-blocking note from review of T-9101 (PR #92).
-- `T-9108` After a built-in refresh, `applyBuiltins` clamps the Settings cursor by index. Keep it on
-  the same source id instead. Non-blocking note from review of T-9101 (PR #92).
-- `T-9109` A configured-source save in flight can replace the snapshot with a stale on/off value while
-  a built-in `space` toggle is still saving: `builtinToggleResultMsg` carries no refresh and its
-  failure handler reverts to an older `previous` copy. Have the toggle result carry a
-  `builtinRefresh` too. Non-blocking note from review of T-9101 (PR #92).
-- `T-9110` Search shows "Every source is turned off" even when an enabled source failed to register.
-  Non-blocking note from review of T-9101 (PR #92).
 
 ---
 
@@ -1013,6 +999,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-156 | 2026-10-02 | T-9099: a lenient httpx redirect rule (subdomain, magnet) applies only when the chain's first request carries no userinfo and no header besides User-Agent; otherwise the strict rule |
 | DEC-157 | 2026-10-02 | T-9100: styled lines are truncated with `charmbracelet/x/ansi` (already in the module graph, MIT), promoted to a direct dependency behind `theme.TruncateStyled`; no new module. The tab bar degrades in steps: full, no `[n]` hints, then an ellipsis clip. |
 | DEC-158 | 2026-10-02 | T-9106: the Trust sort treats Unknown as the lowest level (Unknown < None < Verified < Trusted < VIP) and breaks ties by seeders, title, id, in one fixed direction. Supersedes T-062's "Unknown pinned last". |
+| DEC-159 | 2026-10-02 | T-9111: `BuiltinSources` returns a manager-side version with the rows; the TUI drops older refreshes by it. |
 
 ## Blocked
 

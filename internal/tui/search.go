@@ -791,13 +791,38 @@ func (m Model) renderSearchScreen() string {
 }
 
 // noSourcesText is the Search empty state: nothing to search because no
-// source exists at all, or because every one that exists is turned off.
+// source exists at all, because every one that exists is turned off, or
+// because an enabled one failed to register.
 func (m Model) noSourcesText() string {
 	if len(m.sourceRows())+len(m.builtinSnapshot) == 0 {
 		return "No sources configured. Press 'a' to add one."
 	}
 
+	// An enabled row with nothing to search means it failed to register
+	// (T-9110): "turned off" would be untrue, so point at the reason.
+	if m.anySourceEnabled() {
+		return "An enabled source could not be started. Press 5 for Settings, or check the log file for the reason."
+	}
+
 	return "Every source is turned off. Press 5 for Settings, then space to turn one on."
+}
+
+// anySourceEnabled reports whether any Settings row, configured or built-in,
+// is switched on.
+func (m Model) anySourceEnabled() bool {
+	for _, s := range m.sourceRows() {
+		if s.Enabled {
+			return true
+		}
+	}
+
+	for _, b := range m.builtinSnapshot {
+		if b.Enabled {
+			return true
+		}
+	}
+
+	return false
 }
 
 // searchRow prefixes content with the focus cursor ("> ", accented) when

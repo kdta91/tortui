@@ -104,8 +104,10 @@ type BuiltinSource struct {
 // the bundled sources. A SourceManager that also implements it gets built-in
 // rows; one that does not (a fake, the demo) shows none.
 type BuiltinManager interface {
-	// BuiltinSources lists the bundled sources and whether each is on.
-	BuiltinSources() []BuiltinSource
+	// BuiltinSources lists the bundled sources and whether each is on, with a
+	// version the manager bumps, under its own lock, on every successful save
+	// of sources or built-in state. Two reads are ordered by it (T-9111).
+	BuiltinSources() ([]BuiltinSource, uint64)
 
 	// SetBuiltinEnabled persists the on/off state and re-syncs the live
 	// registry, so the Search screen offers or drops the source at once.
@@ -761,16 +763,24 @@ func builtinLockedMsg(verb string) string {
 	return "built-in sources are compiled in and can't be " + verb + " - space turns one off"
 }
 
-// builtinToggleResultMsg reports SetBuiltinEnabled's outcome; previous is
-// the built-in snapshot before the optimistic flip, restored on failure.
+// builtinToggleResultMsg reports SetBuiltinEnabled's outcome. id and enabled
+// name the row and the value the save tried to set; a failure puts back only
+// that row's flag (T-9109), never a whole older snapshot, which could undo
+// a newer save's result or bring back a row a configured entry had hidden.
+// builtins is read inside the Cmd after a successful save, like every other
+// save that can change the rows.
 type builtinToggleResultMsg struct {
 	err      error
-	previous []BuiltinSource
+	id       string
+	enabled  bool
+	builtins builtinRefresh
 }
 
-func setBuiltinCmd(bm BuiltinManager, id string, enabled bool, previous []BuiltinSource) tea.Cmd {
+func setBuiltinCmd(sm SourceManager, bm BuiltinManager, id string, enabled bool) tea.Cmd {
 	return func() tea.Msg {
-		return builtinToggleResultMsg{err: bm.SetBuiltinEnabled(id, enabled), previous: previous}
+		err := bm.SetBuiltinEnabled(id, enabled)
+
+		return builtinToggleResultMsg{err: err, id: id, enabled: enabled, builtins: refreshBuiltins(sm, err)}
 	}
 }
 
@@ -782,8 +792,7 @@ func (m Model) toggleBuiltin(b BuiltinSource) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	previous := append([]BuiltinSource(nil), m.builtinSnapshot...)
-	next := append([]BuiltinSource(nil), previous...)
+	next := append([]BuiltinSource(nil), m.builtinSnapshot...)
 
 	for i := range next {
 		if next[i].ID == b.ID {
@@ -793,7 +802,7 @@ func (m Model) toggleBuiltin(b BuiltinSource) (tea.Model, tea.Cmd) {
 
 	m.builtinSnapshot = next
 
-	return m, setBuiltinCmd(bm, b.ID, !b.Enabled, previous)
+	return m, setBuiltinCmd(m.sources, bm, b.ID, !b.Enabled)
 }
 
 // handleBuiltinToggleResult applies a built-in toggle's outcome: a failed
@@ -801,12 +810,20 @@ func (m Model) toggleBuiltin(b BuiltinSource) (tea.Model, tea.Cmd) {
 // list from the registry, so both screens show the same state.
 func (m Model) handleBuiltinToggleResult(msg builtinToggleResultMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.builtinSnapshot = msg.previous
+		next := append([]BuiltinSource(nil), m.builtinSnapshot...)
+
+		for i := range next {
+			if next[i].ID == msg.id {
+				next[i].Enabled = !msg.enabled
+			}
+		}
+
+		m.builtinSnapshot = next
 
 		return m.pushStatus(fmt.Sprintf("couldn't save built-in source: %v", msg.err))
 	}
 
-	return m.refreshSearchSources(), nil
+	return m.applyBuiltins(msg.builtins).refreshSearchSources(), nil
 }
 
 // handleSourceRemoveConfirmAction routes a key while ContextSourceRemoveConfirm
@@ -1124,6 +1141,9 @@ func saveSourcesCmd(sm SourceManager, sources, previous []config.Indexer) tea.Cm
 type builtinRefresh struct {
 	rows []BuiltinSource
 	ok   bool
+	// seq is the manager's version read with the rows: a larger seq saw a
+	// state at least as new (T-9109).
+	seq uint64
 }
 
 // refreshBuiltins reads the bundled rows after a save that returned saveErr.
@@ -1139,17 +1159,40 @@ func refreshBuiltins(sm SourceManager, saveErr error) builtinRefresh {
 		return builtinRefresh{}
 	}
 
-	return builtinRefresh{rows: bm.BuiltinSources(), ok: true}
+	rows, seq := bm.BuiltinSources()
+
+	return builtinRefresh{rows: rows, ok: true, seq: seq}
 }
 
 // applyBuiltins replaces the built-in snapshot with a save's fresh rows and
-// keeps the Settings cursor on a row that still exists.
+// keeps the Settings cursor on the same source id, or clamps it when that
+// source is gone (T-9108). A refresh read before one already applied is
+// dropped, so a slow older save never overwrites a newer result (T-9109).
 func (m Model) applyBuiltins(r builtinRefresh) Model {
-	if !r.ok {
+	if !r.ok || r.seq < m.builtinSeq {
 		return m
 	}
 
+	id, _, had := m.selectedRow()
+
+	m.builtinSeq = r.seq
 	m.builtinSnapshot = r.rows
+
+	if had {
+		for i, row := range m.sourceRows() {
+			if row.ID == id {
+				m.settings.cursor = i
+				return m
+			}
+		}
+
+		for i, b := range m.builtinSnapshot {
+			if b.ID == id {
+				m.settings.cursor = len(m.sourceRows()) + i
+				return m
+			}
+		}
+	}
 
 	if n := len(m.sourceRows()) + len(m.builtinSnapshot); m.settings.cursor > n-1 {
 		m.settings.cursor = max(n-1, 0)
@@ -1753,6 +1796,10 @@ func (m Model) renderSettingsScreen() string {
 // as destWindow) so the legend below the list and the status bar stay on
 // screen. legendLines is how many lines the wrapped legend takes.
 func (m Model) sourceWindow(total, legendLines int) (int, int) {
+	if total <= 0 {
+		return 0, 0
+	}
+
 	visible := total
 
 	if m.height > 0 {

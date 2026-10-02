@@ -5381,3 +5381,30 @@ first, and equal rows had no tie-break.
 hook is no longer used for Trust (still used by S/L). Existing tests that pressed Enter twice, or
 used Enter to commit a field without searching, now send one Enter or Esc. Backlog T-9107 to T-9110
 from the PR #92 review.
+
+### T-9111 · Settings and Search follow-ups from the T-9101 and T-9100 reviews
+
+```
+status: done
+depends: T-9106
+tier: M
+```
+Promotes Backlog T-9104, T-9105, T-9107, T-9108, T-9109, T-9110.
+
+**Acceptance:**
+1. A built-in toggle result carries a `builtinRefresh` read inside its Cmd; a success applies it, and a
+   failure puts back only that row's enabled flag, never an older whole snapshot. A refresh read
+   before one already applied is dropped. Tested by delivering hand-built messages out of order (T-9109).
+2. After a refresh the Settings cursor stays on the same source id; when that source is gone it
+   clamps to a real row (T-9108).
+3. An aggregator import that adds an entry with a bundled id drops the built-in row (T-9107).
+4. With an enabled source that is not registered, Search says so and points at Settings and `doctor`
+   instead of "Every source is turned off" (T-9110).
+5. `sourceWindow(0, n)` is the empty range 0..0 (T-9105), and its cursor clamp has its own test (T-9104).
+6. Reverting each fix fails its test (quoted in the PR). `make check`, `make race` and `make cover` are green.
+
+**Notes:** `BuiltinSources` now returns the rows and a version the manager bumps under its own lock
+(DEC-159); `builtinRefresh.seq` carries it and `Model.builtinSeq` holds the newest applied, so
+two reads order by what the registry held, not by when a save started. The Search text for an
+enabled source that did not register points at the log file (doctor does not print its path).
+Each fix was mutation-checked; the ordering test uses a gated fake and both delivery orders.

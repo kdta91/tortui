@@ -41,10 +41,14 @@ var errNoAggregatorURL = errors.New("aggregator address is empty")
 // Nothing here logs a URL, an API key, or a session value. Sources are
 // logged by id and type only.
 type settingsManager struct {
-	mu   sync.Mutex
-	path string
-	cfg  config.Config
-	live *liveSources
+	mu sync.Mutex
+	// builtinVersion counts successful changes to the configured sources or
+	// the disabled built-ins, under mu (T-9111). BuiltinSources returns it with
+	// the rows, so the TUI can order two reads by what the manager saw.
+	builtinVersion uint64
+	path           string
+	cfg            config.Config
+	live           *liveSources
 
 	// roots is the engine's root set, or nil for an engine that does not
 	// check destinations against roots.
@@ -99,6 +103,7 @@ func (s *settingsManager) SaveSources(sources []config.Indexer) error {
 	}
 
 	s.cfg = next
+	s.builtinVersion++
 
 	if err := s.live.sync(next, false); err != nil {
 		s.logger.Warn("settings: re-sync sources", "error", err)
@@ -156,15 +161,16 @@ func probeSearch(ctx context.Context, a indexer.Indexer) error {
 // BuiltinSources implements tui.BuiltinManager: every bundled source, in
 // definition order, with whether it is on (T-9069). A bundled id that an
 // [[indexer]] entry replaces is left out: that entry is the source the user
-// sees and edits.
-func (s *settingsManager) BuiltinSources() []tui.BuiltinSource {
+// sees and edits. The second result is a version that rises with every
+// successful save of sources or built-in state, read under the same lock.
+func (s *settingsManager) BuiltinSources() ([]tui.BuiltinSource, uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	defs, err := builtin.Definitions()
 	if err != nil {
 		s.logger.Error("settings: load bundled definitions", "error", err)
-		return nil
+		return nil, s.builtinVersion
 	}
 
 	replaced := make(map[string]bool, len(s.cfg.Indexers))
@@ -182,7 +188,7 @@ func (s *settingsManager) BuiltinSources() []tui.BuiltinSource {
 		}
 	}
 
-	return out
+	return out, s.builtinVersion
 }
 
 // SetBuiltinEnabled implements tui.BuiltinManager: it writes the new
@@ -213,6 +219,7 @@ func (s *settingsManager) SetBuiltinEnabled(id string, enabled bool) error {
 	}
 
 	s.cfg = next
+	s.builtinVersion++
 
 	if err := s.live.sync(next, false); err != nil {
 		s.logger.Warn("settings: re-sync sources", "error", err)

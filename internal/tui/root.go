@@ -252,6 +252,8 @@ type Model struct {
 	// builtinSnapshot is the same cache for the bundled sources (T-9069),
 	// empty unless the source manager is also a BuiltinManager.
 	builtinSnapshot []BuiltinSource
+	// builtinSeq is the newest builtinRefresh applied (T-9109).
+	builtinSeq uint64
 	// settings is the settings screen's own state: the list cursor, an
 	// open add/edit form, and the remove confirmation.
 	settings settingsModel
@@ -421,7 +423,7 @@ func New(eng engine.Engine, th theme.Theme, opts ...Option) Model {
 	if m.sources != nil {
 		m.sourcesSnapshot = m.sources.Sources()
 		if bm, ok := m.sources.(BuiltinManager); ok {
-			m.builtinSnapshot = bm.BuiltinSources()
+			m.builtinSnapshot, m.builtinSeq = bm.BuiltinSources()
 		}
 	}
 
