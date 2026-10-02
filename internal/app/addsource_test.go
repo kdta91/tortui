@@ -196,6 +196,14 @@ func TestAddingATwoLinkTorznabResult(t *testing.T) {
 			rec := recs[0]
 
 			if tc.wantURL {
+				if !strings.EqualFold(list[0].InfoHash, hash) {
+					t.Errorf("engine infohash = %q, want %q", list[0].InfoHash, hash)
+				}
+
+				if n := srv.torrentFetches(); n < 1 {
+					t.Errorf("the enclosure was fetched %d time(s) for an enclosure add, want at least 1", n)
+				}
+
 				if d.Magnet != "" || d.TorrentURL != enclosure {
 					t.Errorf("engine resume source: Magnet %q, TorrentURL %q; want the enclosure only", d.Magnet, d.TorrentURL)
 				}
