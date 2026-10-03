@@ -5061,8 +5061,8 @@ works, and such an id shows as that entry, not a built-in row (DEC-150). tui get
 `BuiltinManager` interface that `settingsManager` implements, so fakes and the demo are unchanged;
 `doctor.Options.Builtins` is supplied by `app.DoctorBuiltins` (doctor imports no adapter) and the cmd
 tests stub it so no test probes a real address. 8 of 9 mutations killed; the survivor (slice
-aliasing in `cloneConfig`) was first called not observable; review showed a failed save mutates
-in-memory state without the clone (Backlog T-9074).
+aliasing in `cloneConfig`) was first called not observable, which was wrong: a failed save mutates
+in-memory state without the clone (tested by T-9120).
 
 ### T-9073 · README audit fixes
 
@@ -5491,3 +5491,39 @@ short. The app seam is an unexported `torrentHTTP` option passed to the engine's
 The slow part was the per-host spacing as well as the backoff, so the test client sets both. Subtest
 "fetch fails, then restarted and fails again": 9.14s before, 1.14s after. A new waitForRendered covers
 text a fast failure draws before the wait starts. Both httpx fixes were mutation-checked. T-9119 logged.
+
+### T-9120 · Test hardening
+
+```
+status: done
+depends: T-9118
+tier: M
+```
+Promotes Backlog T-9060, T-9074, T-9096, T-9098, T-9116, T-9117, T-9119, and the PR #97 review notes.
+
+**Acceptance:**
+1. The "infohash attr" subtest of `TestAddingATwoLinkTorznabResult` asserts the engine's infohash and that
+   the enclosure was fetched at least once (T-9060).
+2. A test covers the `cloneConfig` copy of DisabledBuiltins: a failed save leaves the in-memory list
+   untouched. T-9069's archived note no longer calls the survivor not observable (T-9074).
+3. The vacuous app-level zero-hit check in `internal/app/metainfosources_test.go` is dropped, and the test's
+   comment says it pins the record only (T-9096).
+4. The zero-hit tests in the anacrolix package no longer rest on a fixed 250 ms: either detection is
+   independent of timing, or the reason it cannot be is written down and the window is sized by load.
+   With the strip removed the tests fail 50 runs out of 50 (T-9098).
+5. `TestDownloadsScrollSnapsToBlockBoundary` asserts `scroll > 0` after its loop (T-9116).
+6. Permanent Downloads tests for returning from another screen after the list changed, a Completed-only
+   list, and the two-section title rule (T-9117).
+7. The "not retrying" errors carry one `httpx:` prefix and still match a StatusError with errors.As and
+   errors.Is; the whole text is pinned (T-9119).
+8. A test pins the hop tracker as per-attempt; the `hopTracker` comment says the lock is defence in depth;
+   Backlog is back in numeric order (PR #97 review).
+9. Every new assertion is mutation-checked.
+
+**Notes:** Nothing here changes behaviour except the two "not retrying" messages, now a small
+`notRetryingError` type that wraps the StatusError and drops its inner prefix. T-9098: the library starts one
+goroutine per source and orders nothing across torrents, with no hook to wait on, so no deterministic proof
+exists; the window is instead max(250 ms, 20x the control's own add-to-fetch delay), capped at 10 s, so a
+loaded runner stretches it and a quiet run pays the floor. With only the fetch path unstripped, 50 of 50 runs
+fail by the fetch check. T-9096: dropped (the record is what the app test pins). No DEC: no design choice
+beyond the above.

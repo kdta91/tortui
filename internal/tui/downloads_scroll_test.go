@@ -220,4 +220,10 @@ func TestDownloadsScrollSnapsToBlockBoundary(t *testing.T) {
 			t.Fatalf("after %d moves the first body line is %q, want a section title or torrent name", i+1, first)
 		}
 	}
+
+	// Without a scroll the first line is the Active title and the loop above
+	// proves nothing (T-9116).
+	if m.downloads.scroll == 0 {
+		t.Fatalf("scroll = 0 at the last row of an overflowing list; the snap was never exercised")
+	}
 }

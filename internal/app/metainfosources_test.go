@@ -2,12 +2,9 @@ package app
 
 import (
 	"html"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/kdta91/tortui/internal/config"
@@ -62,26 +59,21 @@ func closeWithMagnet(t *testing.T, a *App, want string) store.TorrentRecord {
 // flow hands it to the engine as published, and the session record, written
 // from the engine's resume data, holds it without them. A record saved with
 // them before T-9094 is rewritten without them by the restart that restores
-// it. Their host is asked for nothing; under Offline that is also the
-// engine's metainfo-source refusal, so the record is what this pins, and the
-// engine package's loopback tests are what pin the fetch itself.
+// it. The engine runs Offline here and so refuses every metainfo-source
+// request, with or without the strip: no request is observable at this level,
+// so this test pins the record only (T-9096), and the engine package's
+// loopback tests pin the fetch itself.
 func TestPublishedMagnetSourcesAreDropped(t *testing.T) {
 	guardDefaultTransport(t)
 	sandbox(t)
 
-	var hits atomic.Int32
-
-	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(host.Close)
+	const host = "https://sources.example.org"
 
 	torrent, hash := syntheticTorrent(t)
 	plain := "magnet:?xt=urn:btih:" + hash + "&dn=Synthetic+Two+Link+Corpus"
 	published := plain +
-		"&xs=" + url.QueryEscape(host.URL+"/xs.torrent") +
-		"&as=" + url.QueryEscape(host.URL+"/as.torrent")
+		"&xs=" + url.QueryEscape(host+"/xs.torrent") +
+		"&as=" + url.QueryEscape(host+"/as.torrent")
 
 	srv, _ := newTwoLinkServer(t, torrent,
 		`<torznab:attr name="magneturl" value="`+html.EscapeString(published)+`"/>`)
@@ -119,10 +111,6 @@ func TestPublishedMagnetSourcesAreDropped(t *testing.T) {
 	}
 
 	closeWithMagnet(t, b, plain)
-
-	if n := hits.Load(); n != 0 {
-		t.Errorf("the magnet's source host was asked %d time(s), want 0", n)
-	}
 
 	if n := srv.torrentFetches(); n != 0 {
 		t.Errorf("the enclosure was fetched %d time(s) for a magnet add, want 0", n)

@@ -256,6 +256,39 @@ func TestSettingsEntryOverBundledIDTurnsTheDefaultOffAndBack(t *testing.T) {
 	}
 }
 
+// TestSettingsFailedBuiltinSaveLeavesMemoryAlone: a toggle whose write to
+// disk fails changes nothing in memory. Without the clone of the disabled
+// list, the removal edits the shared backing array before the save is even
+// tried, so Config() would show the half-applied list (T-9074).
+func TestSettingsFailedBuiltinSaveLeavesMemoryAlone(t *testing.T) {
+	srv := newTorznabServer(t, nil, nil)
+	a := newSettingsApp(t, srv.Server)
+	sm := a.settings
+	id := bundledID(t)
+
+	// A regular file where the config directory should be: the write fails
+	// on every platform.
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sm.mu.Lock()
+	sm.path = filepath.Join(blocker, "config.toml")
+	sm.cfg.DisabledBuiltins = []string{"first-other", id, "last-other"}
+	sm.mu.Unlock()
+
+	want := []string{"first-other", id, "last-other"}
+
+	if err := sm.SetBuiltinEnabled(id, true); err == nil {
+		t.Fatal("SetBuiltinEnabled saved to an unwritable path; the failure this test needs did not happen")
+	}
+
+	if got := sm.Config().DisabledBuiltins; !slices.Equal(got, want) {
+		t.Errorf("DisabledBuiltins after a failed save = %q, want %q", got, want)
+	}
+}
+
 // Duck-typed the same way internal/tui's classifyProbeError reads them.
 type (
 	authFailure interface{ AuthFailed() bool }

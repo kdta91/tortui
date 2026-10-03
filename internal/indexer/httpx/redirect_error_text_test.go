@@ -156,3 +156,46 @@ func TestLocationParseErrorNamesTheHopThatSentIt(t *testing.T) {
 		}
 	}
 }
+
+// TestHopTrackerIsPerAttempt: attempt 1 hops to a subdomain that answers 500,
+// then attempt 2 gets a bad Location straight from the origin. The error names
+// the origin; a tracker shared between attempts would still hold the
+// subdomain from attempt 1 and name that instead (T-9120).
+func TestHopTrackerIsPerAttempt(t *testing.T) {
+	t.Parallel()
+
+	var origin int
+
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		status, header := http.StatusInternalServerError, http.Header{}
+
+		if r.URL.Host == "example.org" {
+			origin++
+
+			status, header = http.StatusFound, http.Header{"Location": []string{"https://sub.example.org/next"}}
+			if origin == 2 {
+				header = http.Header{"Location": []string{"/x%zz"}}
+			}
+		}
+
+		return &http.Response{
+			StatusCode: status,
+			Status:     http.StatusText(status),
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    r,
+		}, nil
+	})
+
+	_, err := New(Config{
+		MinHostInterval: -1, MaxAttempts: 2, FollowSubdomainRedirects: true,
+		Clock: newFakeClock(), Transport: transport,
+	}).Get(testContext(t), "https://example.org/start", nil)
+	if !errors.Is(err, ErrRedirectLocationInvalid) {
+		t.Fatalf("Get = %v, want ErrRedirectLocationInvalid", err)
+	}
+
+	if want := "(at example.org)"; !strings.HasSuffix(err.Error(), want) {
+		t.Fatalf("error %q does not end %q, the origin that sent the bad Location", err, want)
+	}
+}
