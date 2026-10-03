@@ -170,7 +170,8 @@ func (s *fileStore) openHandles() int64 { return s.open.Load() }
 // for every such call before it closes the table. So a handle evicted after
 // mu is released is closed before Close returns, and nothing is created once
 // Close has begun: an open checks closed before it creates a file, and one
-// that created a file as Close began closes it and removes what it created.
+// that created a file as Close began closes it and removes what it created,
+// unless another caller has since used it (see discard).
 type fileTorrent struct {
 	store    *fileStore
 	infoHash metainfo.Hash
@@ -289,7 +290,7 @@ func (t *fileTorrent) withOpenFile(i int, write bool, op func(*os.File) error, e
 // another caller installed first is kept and this one closed. Every handle
 // taken out of the table is closed after mu is released, before install
 // returns. When Close began while the file was being opened, the handle is
-// closed and anything the open created is removed.
+// closed and what the open created is removed, as discard allows.
 func (t *fileTorrent) install(i int, write bool) error {
 	f, created, err := t.openData(i, write)
 	if err != nil {
@@ -305,9 +306,10 @@ func (t *fileTorrent) install(i int, write bool) error {
 
 	switch h, ok := t.handles[i]; {
 	case t.closed.Load():
+		inUse := t.pathsInUseLocked()
 		t.mu.Unlock()
 
-		return errors.Join(errStorageClosed, t.discard(i, f, created))
+		return errors.Join(errStorageClosed, t.discard(i, f, created, inUse))
 
 	case ok && (h.writable || !write):
 		// Another caller opened it first.
@@ -341,12 +343,26 @@ func (t *fileTorrent) install(i int, write bool) error {
 // discard closes f, opened for file i after Close began, and removes what
 // opening it created — the file, then each directory, deepest first — so a
 // write landing as the torrent's storage closes leaves nothing behind for a
-// remove-with-data to miss. A directory something else has filled since is
-// left alone.
-func (t *fileTorrent) discard(i int, f *os.File, created []string) error {
+// remove-with-data to miss.
+//
+// It never removes what another caller may have put data in (T-9127): the
+// file is kept when a handle in the table is for it (inUse, read under mu as
+// Close began, after which the table only shrinks), or when it is no longer
+// empty, as when another caller opened it, wrote, and lost its handle to an
+// eviction; a directory is kept when it holds a kept or in-use file. A
+// directory something else has filled is left alone too, as os.Remove never
+// removes a directory that is not empty.
+func (t *fileTorrent) discard(i int, f *os.File, created, inUse []string) error {
 	err := t.store.closeFile(f)
 
+	keep := inUse
+
 	for _, path := range created {
+		if holdsAny(path, keep) || (path == t.files[i].path && written(path)) {
+			keep = append(keep, path)
+			continue
+		}
+
 		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
 			t.store.logger.Warn("anacrolix: remove a data path created as storage closed",
 				"file", t.files[i].path, "path", path, "error", rmErr)
@@ -358,6 +374,39 @@ func (t *fileTorrent) discard(i int, f *os.File, created []string) error {
 	}
 
 	return nil
+}
+
+// pathsInUseLocked lists the file of every handle in the table. mu must be
+// held.
+func (t *fileTorrent) pathsInUseLocked() []string {
+	out := make([]string, 0, len(t.handles))
+	for i := range t.handles {
+		out = append(out, t.files[i].path)
+	}
+
+	return out
+}
+
+// holdsAny reports whether path is one of paths or a directory above one.
+func holdsAny(path string, paths []string) bool {
+	for _, p := range paths {
+		if insideDir(path, p) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// written reports whether the file at path may hold data: it is there and
+// not an empty regular file, or it cannot be checked.
+func written(path string) bool {
+	fi, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+
+	return err != nil || !fi.Mode().IsRegular() || fi.Size() > 0
 }
 
 // closeHandles closes handles already taken out of the table; files[i] names
