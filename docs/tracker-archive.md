@@ -5600,3 +5600,38 @@ record, one count for the rest. T-9126 (DEC-163): `refuse` records the validated
 (`leftName`); the claim takes the add's destination and returns ErrLeftData; Remove deletes by `leftName`. Review fix
 (PR #100): SafeName on dropped names; both messages lead with path and remedy within 80 columns; the delete re-checks
 the name; no data name shared with another tracked entry. Backlog T-9128 to T-9132.
+
+### T-9133 · A user's pause survives a restart; failed restores keep their name and infohash; kept data is reported
+
+```
+status: done
+depends: T-9127
+tier: H
+```
+Promotes Backlog T-952, T-9128, T-9129 and review note b of PR #100.
+
+**Acceptance:**
+1. A torrent the user paused is saved paused and, restored into a fresh engine, comes back paused with its
+   download gate closed, no queue slot taken and nothing downloaded; Resume starts it. A space-paused,
+   seed-stopped, queued or running torrent is not saved paused. A record with no pause field (an older build's)
+   loads and restores running, as before (T-952).
+2. Shutdown's own pause of every torrent never counts as the user's: pause one torrent, leave one running, shut
+   down, and the next session brings back only the paused one paused.
+3. A restored entry tracked as failed (e.g. not enough free space) carries the infohash its saved metainfo or
+   magnet names and, at a known destination root only, the validated name of its data on disk, unless another
+   tracked entry keeps data under that name there. Remove with data deletes that data; a re-add to the same
+   destination starts over; one elsewhere is refused with ErrLeftData, as for T-9127's refused entries (T-9128).
+4. The claim re-checks that a refused entry's left data is still on disk; after the user deletes it by hand, an
+   add elsewhere untracks the entry and starts over, by file, address or redirect (T-9129).
+5. A remove with data whose shared-name guard keeps the data still removes the entry, logs a Warn, and returns a
+   DataKeptError (its own file in internal/engine; Remove's signature unchanged). The TUI shows "data kept:
+   another download uses <path>" within 80 columns, never "deleted its data" (review note b).
+6. Each fix is mutation-checked; `make race` on the touched packages is green; goleak stays clean.
+
+**Notes:** All four were real at 021c8a0. DEC-165: a `userPaused` flag separate from `paused`, reported as
+ResumeData.Paused and stored as an omitempty JSON field (no schema bump); Shutdown pauses through the optional
+ShutdownPauser, whose pause is never the user's; a restored paused torrent never queues and awaitInfo holds its
+transfers under the lock (DEC-102). The TUI saves the session after a pause or resume. DEC-166: a failed
+restore is a refused entry (`trackErrored`); a name another entry uses is kept as `sharedName`, for the message
+only; `goneLeftData` reads the disk before the claim takes the lock. Thirteen mutations, all killed (PR body).
+Backlog T-9134.
