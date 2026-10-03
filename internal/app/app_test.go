@@ -459,10 +459,8 @@ func TestStartupNoticesNameWhatStartupFound(t *testing.T) {
 		"store was unreadable; moved aside",
 		"1 resumed download with missing data on disk — see Downloads",
 		"2 resumed downloads could not be restored — see Downloads",
-		"dropped a duplicate record of elsewhere; its data in " + filepath.Join("data", "old") +
-			" is no longer managed — tortui deleted nothing",
-		"dropped a duplicate record of an-4; its data in " + filepath.Join("data", "other") +
-			" is no longer managed — tortui deleted nothing",
+		"unmanaged data in " + filepath.Join("data", "old") + ": dropped duplicate record of elsewhere",
+		"unmanaged data in " + filepath.Join("data", "other") + ": dropped duplicate record of an-4",
 		"dropped 1 duplicate record of downloads already resumed",
 	}
 

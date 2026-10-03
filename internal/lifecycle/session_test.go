@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -484,9 +485,17 @@ func TestSessionResumeReportsADroppedDuplicate(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		elsewhere bool
+		recorded  string // the dropped record's saved name
+		shown     string // the name the report gives it
 	}{
-		{name: "same destination"},
-		{name: "another destination", elsewhere: true},
+		{name: "same destination", recorded: "second", shown: "second"},
+		{name: "another destination", elsewhere: true, recorded: "second", shown: "second"},
+		// A session saved before T-9057 named a torrent added by address
+		// with that address, api key and all.
+		{
+			name: "address-shaped name", elsewhere: true,
+			recorded: "https://feed.example.org/dl?apikey=K", shown: "torrent file from feed.example.org",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -514,7 +523,7 @@ func TestSessionResumeReportsADroppedDuplicate(t *testing.T) {
 					ID: "an-1", Name: "first", Magnet: "magnet:?xt=urn:btih:" + hash, AddedAt: base, SavePath: dir,
 				},
 				store.TorrentRecord{
-					ID: "an-2", Name: "second", Magnet: "magnet:?xt=urn:btih:" + hash,
+					ID: "an-2", Name: tc.recorded, Magnet: "magnet:?xt=urn:btih:" + hash,
 					AddedAt: base.Add(time.Hour), SavePath: secondDir,
 				})
 
@@ -535,10 +544,14 @@ func TestSessionResumeReportsADroppedDuplicate(t *testing.T) {
 			}
 
 			want := []DroppedRecord{{
-				ID: "an-2", Name: "second", SavePath: secondDir, KeptAs: "an-1", Elsewhere: tc.elsewhere,
+				ID: "an-2", Name: tc.shown, SavePath: secondDir, KeptAs: "an-1", Elsewhere: tc.elsewhere,
 			}}
 			if !reflect.DeepEqual(report.Dropped, want) {
 				t.Errorf("report.Dropped = %+v, want %+v", report.Dropped, want)
+			}
+
+			if got := fmt.Sprintf("%+v", report.Dropped); strings.Contains(got, "apikey") || strings.Contains(got, "=K") {
+				t.Errorf("report.Dropped carries the address's api key: %s", got)
 			}
 
 			if _, err := os.Stat(leftover); err != nil {

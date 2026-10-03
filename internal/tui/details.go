@@ -10,6 +10,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -339,8 +340,17 @@ func (m Model) downloadIndexOf(id string) int {
 // and pushes a confirmation naming what was added.
 func (m Model) handleAddResult(msg addResultMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
+		text := fmt.Sprintf("couldn't add torrent: %v", msg.err)
+
+		// It already says what to do and where; the prefix would push
+		// both past an 80-column status bar (T-9127).
+		var leftData *engine.LeftDataError
+		if errors.As(msg.err, &leftData) {
+			text = leftData.Error()
+		}
+
 		var cmd tea.Cmd
-		m.statusBar, cmd = m.statusBar.Push(fmt.Sprintf("couldn't add torrent: %v", msg.err))
+		m.statusBar, cmd = m.statusBar.Push(text)
 
 		return m, cmd
 	}

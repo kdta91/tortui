@@ -18,7 +18,6 @@
 package anacrolix
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -80,12 +79,12 @@ var ErrNotFound = errors.New("anacrolix: torrent not found")
 // within the configured metadata timeout.
 var ErrMetadataTimeout = errors.New("anacrolix: metadata fetch timed out")
 
-// ErrLeftData refuses an add of a torrent to one destination while an entry
-// for the same torrent, refused earlier, still has data at another (T-9127,
-// DEC-163). Starting over elsewhere would leave that data with nothing
-// tracking it; the user removes the errored entry first, keeping or deleting
-// its data.
-var ErrLeftData = errors.New("anacrolix: a failed earlier add of this torrent left data in another folder")
+// ErrLeftData is engine.ErrLeftData: an add refused while an entry for the
+// same torrent, refused earlier, still has data at another destination
+// (T-9127, DEC-163). The error returned is an *engine.LeftDataError naming
+// that data. It is re-exported here so callers of this package can test for
+// it without a second import.
+var ErrLeftData = engine.ErrLeftData
 
 // Options configures an Engine. The zero value is not usable; every field has
 // a documented default, but Config.DownloadDir must name a directory.
@@ -1422,9 +1421,40 @@ func (e *Engine) refuse(tr *tracked, t *torrent.Torrent, info *metainfo.Info, er
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// Another torrent's data under the same name at the same destination
+	// is not this entry's to delete or to name (T-9127).
+	if left != "" && e.dataNameTakenLocked(tr, left) {
+		left = ""
+	}
+
 	e.failLocked(tr, err)
 	tr.refused = true
 	tr.leftName = left
+}
+
+// dataNameTakenLocked reports whether a tracked entry other than self keeps
+// its data under name at self's destination. Engine.mu must be held.
+func (e *Engine) dataNameTakenLocked(self *tracked, name string) bool {
+	for _, tr := range e.torrents {
+		if tr != self && tr.savePath == self.savePath && dataNameLocked(tr) == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// dataNameLocked is the name tr's data has under its destination: the
+// torrent's own name once the library has its info dictionary, else the name
+// a refused entry kept, else "". Engine.mu must be held.
+func dataNameLocked(tr *tracked) string {
+	if tr.t != nil {
+		if info := tr.t.Info(); info != nil {
+			return info.BestName()
+		}
+	}
+
+	return tr.leftName
 }
 
 // leftData returns the name info gives its data under dest when that name is
@@ -1481,8 +1511,7 @@ func (e *Engine) claimInfoHashLocked(hex string, self *tracked, dest string) (st
 
 	for _, tr := range refused {
 		if tr.leftName != "" && tr.savePath != dest {
-			return "", false, fmt.Errorf("%w: %s, at %s — remove it from Downloads first, keeping or deleting that data",
-				ErrLeftData, cmp.Or(tr.name, tr.id), filepath.Join(tr.savePath, tr.leftName))
+			return "", false, &engine.LeftDataError{Path: filepath.Join(tr.savePath, tr.leftName)}
 		}
 	}
 
@@ -1869,10 +1898,12 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 	savePath := tr.savePath
 
 	// A refused entry the library holds no info for deletes by the name
-	// its data had when it was refused (T-9127).
-	name := tr.leftName
-	if t != nil && t.Info() != nil {
-		name = t.Info().BestName()
+	// its data had when it was refused. A refused entry deletes nothing
+	// another tracked entry keeps its data under, at the same destination
+	// (T-9127).
+	name := dataNameLocked(tr)
+	if tr.refused && name != "" && e.dataNameTakenLocked(tr, name) {
+		name = ""
 	}
 
 	tr.removed = true
@@ -1951,6 +1982,15 @@ func (e *Engine) deleteTorrentData(id, savePath, name string, roots []string) er
 			"id", id, "target", target, "roots", roots, "error", lastErr)
 
 		return refusal
+	}
+
+	// The name is as hostile as any path a torrent declares, and a check
+	// where it was recorded is not a check here (AGENT.md §6.11): with ".."
+	// the target is savePath's parent, which can still sit inside a root.
+	if err := checkComponent(name); err != nil {
+		e.logger.Warn("anacrolix: refused to delete torrent data under an unsafe name", "id", id, "error", err)
+
+		return fmt.Errorf("anacrolix: refusing to delete data for torrent %s: %w", id, err)
 	}
 
 	resolvedTarget, err := resolveSymlinks(target)

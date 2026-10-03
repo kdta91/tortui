@@ -40,8 +40,9 @@ func startupNotices(loaded config.LoadResult, storeRecovered string, report life
 }
 
 // droppedNotices tells the user about duplicate records Resume dropped
-// (T-9127): one line per record whose data sat elsewhere, naming where it is
-// left unmanaged, and one count for the rest.
+// (T-9127): one line per record whose data sat elsewhere, leading with where
+// that data is left unmanaged so it fits an 80-column status bar, and one
+// count for the rest.
 func droppedNotices(dropped []lifecycle.DroppedRecord) []string {
 	var (
 		notices []string
@@ -59,8 +60,7 @@ func droppedNotices(dropped []lifecycle.DroppedRecord) []string {
 			name = d.ID
 		}
 
-		notices = append(notices, fmt.Sprintf(
-			"dropped a duplicate record of %s; its data in %s is no longer managed — tortui deleted nothing", name, d.SavePath))
+		notices = append(notices, fmt.Sprintf("unmanaged data in %s: dropped duplicate record of %s", d.SavePath, name))
 	}
 
 	if same > 0 {

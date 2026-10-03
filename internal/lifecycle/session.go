@@ -95,7 +95,8 @@ type ResumeReport struct {
 
 // DroppedRecord is a duplicate record Resume dropped.
 type DroppedRecord struct {
-	// ID, Name and SavePath are the dropped record's own.
+	// ID, Name and SavePath are the dropped record's own; Name is safe to
+	// show (engine.SafeName), never an address.
 	ID       string
 	Name     string
 	SavePath string
@@ -174,8 +175,11 @@ func (s *Session) Resume(ctx context.Context) (ResumeReport, error) {
 			s.logger.Warn("lifecycle: dropped a record naming a torrent already restored",
 				"id", rec.ID, "restored_as", id, "save_path", rec.SavePath)
 
+			// A session saved before T-9057 may name a torrent added by
+			// address with that address, api key and all; it is shown by
+			// host only, as the engine shows it.
 			report.Dropped = append(report.Dropped, DroppedRecord{
-				ID: rec.ID, Name: rec.Name, SavePath: rec.SavePath, KeptAs: id,
+				ID: rec.ID, Name: engine.SafeName(rec.Name), SavePath: rec.SavePath, KeptAs: id,
 			})
 
 			continue
