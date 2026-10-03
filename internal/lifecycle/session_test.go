@@ -412,3 +412,64 @@ func TestPerTorrentDestinationSurvivesRestart(t *testing.T) {
 		t.Fatalf("after restart List = %+v, want torrents at %s and %s", e2.List(), chosen, unrecorded)
 	}
 }
+
+// TestSessionResumeDropsADuplicateInfohashRecord is T-953. Two records name
+// one infohash under different IDs; the engine dedups the second onto the
+// first's torrent and hands back the first's ID. Resume keeps the first
+// record as it was and drops the second, instead of re-keying the second onto
+// the first's ID and overwriting it.
+func TestSessionResumeDropsADuplicateInfohashRecord(t *testing.T) {
+	dir := t.TempDir()
+	st := openStore(t, filepath.Join(t.TempDir(), "tortui.db"))
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+
+	const hash = "3123456789abcdef0123456789abcdef01234567"
+
+	first := store.TorrentRecord{
+		ID: "an-1", Name: "first", Magnet: "magnet:?xt=urn:btih:" + hash + "&dn=first",
+		AddedAt: base, IndexerID: "first-src", SourceURL: "https://example.org/t/1",
+	}
+	second := store.TorrentRecord{
+		ID: "an-2", Name: "second", Magnet: "magnet:?xt=urn:btih:" + hash + "&dn=second",
+		AddedAt: base.Add(time.Hour), IndexerID: "second-src", SourceURL: "https://example.org/t/2",
+	}
+	setRecords(t, st, first, second)
+
+	e, err := anacrolix.New(anacrolix.Options{
+		Config:  config.Config{DownloadDir: dir},
+		Logger:  quietLogger(),
+		Offline: true,
+	})
+	if err != nil {
+		t.Fatalf("anacrolix.New: %v", err)
+	}
+
+	t.Cleanup(func() { _ = e.Close() })
+
+	report, err := NewSession(e, st, quietLogger()).Resume(context.Background())
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	if list := e.List(); len(list) != 1 || list[0].ID != first.ID {
+		t.Fatalf("engine tracks %+v, want only %s", list, first.ID)
+	}
+
+	if report.Restored != 1 {
+		t.Errorf("report.Restored = %d, want 1: the duplicate put nothing back", report.Restored)
+	}
+
+	got, ok := st.GetTorrent(first.ID)
+	if !ok || got.Name != first.Name || got.Magnet != first.Magnet || got.IndexerID != first.IndexerID ||
+		got.SourceURL != first.SourceURL || !got.AddedAt.Equal(first.AddedAt) {
+		t.Errorf("%s record = %+v, %v; want the first record unchanged", first.ID, got, ok)
+	}
+
+	if rec, ok := st.GetTorrent(second.ID); ok {
+		t.Errorf("duplicate record %s still in store: %+v", second.ID, rec)
+	}
+
+	if n := len(st.ListTorrents()); n != 1 {
+		t.Errorf("store holds %d records, want 1", n)
+	}
+}

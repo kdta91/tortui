@@ -23,11 +23,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -125,6 +123,12 @@ type Options struct {
 	// remediation).
 	beforeAttach func()
 
+	// afterInfo, when set, is called by awaitInfo with the torrent's ID
+	// right after it releases Engine.mu, once the info dictionary has
+	// arrived and a pause's transfer gate has been decided. It exists so a
+	// package test can land a Resume in exactly that window (T-946).
+	afterInfo func(id string)
+
 	// SpaceCheckInterval is how often downloading torrents' destinations
 	// are re-checked for free space. Zero uses DefaultSpaceCheckInterval.
 	// It is measured against sample-tick times, so a test driving the
@@ -192,7 +196,7 @@ type tracked struct {
 	// known: at track time for addSpec (a magnet or a local .torrent file
 	// both already carry it before tracking begins), or set by attach
 	// once a fetched .torrent's metainfo is parsed for a URL source.
-	// findOrTrack and findByInfoHash match against this field rather than
+	// findOrTrack and claimInfoHash match against this field rather than
 	// tr.t.InfoHash() precisely so a torrent that is tracked but not yet
 	// attach()ed to the underlying client — the exact window a concurrent
 	// Add for the same infohash can land in — is still found (T-944).
@@ -270,6 +274,13 @@ type tracked struct {
 	// untracked swarm nothing will ever manage or close.
 	removed bool
 
+	// refused is set, with the torrent errored, once nothing of it is left
+	// in the client: awaitInfo refused it and dropped it, or the queue's
+	// start of it failed before it was ever attached. A later Add of the
+	// same infohash untracks a refused entry and starts over rather than
+	// handing it back (T-948).
+	refused bool
+
 	down rateMeter
 	up   rateMeter
 }
@@ -293,6 +304,7 @@ type Engine struct {
 	roots           []string
 	http            *httpx.Client
 	beforeAttach    func()
+	afterInfo       func(id string)
 
 	done      chan struct{}
 	wg        sync.WaitGroup
@@ -398,6 +410,7 @@ func New(opts Options) (*Engine, error) {
 		roots:           destinationRoots(downloadDir, opts.Config.SavedDestinations),
 		http:            httpClient,
 		beforeAttach:    opts.beforeAttach,
+		afterInfo:       opts.afterInfo,
 		done:            make(chan struct{}),
 		torrents:        make(map[string]*tracked),
 		storages:        make(map[string]safeStorage),
@@ -707,7 +720,7 @@ func (e *Engine) Add(ctx context.Context, src engine.AddSource) (string, error) 
 // returns the magnet it parsed, which is what the caller records as the
 // torrent's source, so resume data and the session record lose them too.
 func specFromMagnet(uri string) (*torrent.TorrentSpec, string, error) {
-	uri = withoutMetainfoSources(uri)
+	uri = engine.WithoutMetainfoSources(uri)
 
 	spec, err := torrent.TorrentSpecFromMagnetUri(uri)
 	if err != nil {
@@ -905,7 +918,14 @@ func (e *Engine) untrackFailedSpec(tr *tracked) {
 		return
 	}
 
+	e.untrackLocked(tr)
+}
+
+// untrackLocked removes tr from e.torrents, e.order and the queue.
+// Engine.mu must be held.
+func (e *Engine) untrackLocked(tr *tracked) {
 	delete(e.torrents, tr.id)
+	e.dequeueLocked(tr.id)
 
 	for i, id := range e.order {
 		if id == tr.id {
@@ -941,12 +961,8 @@ func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string, prov proven
 		return nil, "", false, ErrClosed
 	}
 
-	if hex != "" {
-		for _, id := range e.order {
-			if e.torrents[id].infoHash == hex {
-				return nil, id, false, nil
-			}
-		}
+	if id, ok := e.claimInfoHashLocked(hex, nil); ok {
+		return nil, id, false, nil
 	}
 
 	t := prov.newTracked(e.mintIDLocked(prov.id), dest, name)
@@ -1055,7 +1071,7 @@ func (e *Engine) fetchAndAttach(ctx context.Context, tr *tracked, rawURL, dest s
 		return
 	}
 
-	if existing, ok := e.findByInfoHash(spec.InfoHash.HexString()); ok && existing != tr.id {
+	if existing, ok := e.claimInfoHash(spec.InfoHash.HexString(), tr); ok {
 		e.fail(tr, fmt.Errorf("already added as %s", existing))
 		return
 	}
@@ -1091,7 +1107,7 @@ func (e *Engine) attachRedirectMagnet(tr *tracked, redirect *httpx.MagnetRedirec
 		return
 	}
 
-	if existing, ok := e.findByInfoHash(spec.InfoHash.HexString()); ok && existing != tr.id {
+	if existing, ok := e.claimInfoHash(spec.InfoHash.HexString(), tr); ok {
 		e.fail(tr, fmt.Errorf("already added as %s", existing))
 		return
 	}
@@ -1111,36 +1127,6 @@ func (e *Engine) attachRedirectMagnet(tr *tracked, redirect *httpx.MagnetRedirec
 	if err := e.attach(tr, spec, dest); err != nil {
 		e.fail(tr, err)
 	}
-}
-
-// withoutMetainfoSources drops a magnet's xs= and as= parameters, which make
-// the torrent library fetch the .torrent over HTTP from whatever host they
-// name, with its own client: outside httpx, and outside Offline. tortui
-// connects only to its sources and to BitTorrent peers (AGENT.md §2), so no
-// magnet keeps them, whoever wrote it (DEC-151, DEC-153); trackers, web
-// seeds and peers are BitTorrent and stay. Every other parameter is kept
-// byte for byte. A key is compared decoded, as the library reads it.
-func withoutMetainfoSources(magnet string) string {
-	head, query, found := strings.Cut(magnet, "?")
-	if !found {
-		return magnet
-	}
-
-	params := strings.Split(query, "&")
-	kept := params[:0]
-
-	for _, param := range params {
-		raw, _, _ := strings.Cut(param, "=")
-
-		key, err := url.QueryUnescape(raw)
-		if err == nil && (key == "xs" || key == "as") {
-			continue
-		}
-
-		kept = append(kept, param)
-	}
-
-	return head + "?" + strings.Join(kept, "&")
 }
 
 // attach hands a spec to the client with a per-destination storage backend and
@@ -1237,9 +1223,8 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 		return
 
 	case <-time.After(e.metadataTimeout):
-		e.fail(tr, fmt.Errorf("%w after %s: no peer supplied the torrent's info dictionary",
+		e.refuse(tr, t, fmt.Errorf("%w after %s: no peer supplied the torrent's info dictionary",
 			ErrMetadataTimeout, e.metadataTimeout))
-		t.Drop()
 
 		return
 
@@ -1248,15 +1233,13 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 
 	info := t.Info()
 	if info == nil {
-		e.fail(tr, errors.New("info dictionary arrived empty"))
-		t.Drop()
+		e.refuse(tr, t, errors.New("info dictionary arrived empty"))
 
 		return
 	}
 
 	if err := validateInfoPaths(info, dest); err != nil {
-		e.fail(tr, err)
-		t.Drop()
+		e.refuse(tr, t, err)
 		e.logger.Warn("anacrolix: refused a torrent declaring an unsafe path",
 			"id", tr.id, "destination", dest, "error", err)
 
@@ -1267,8 +1250,7 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 	// free-space precheck. (A .torrent's already ran in addSpec/attach, and
 	// passes again here trivially unless the disk filled in between.)
 	if err := e.checkSpace(dest, bytesNeeded(info, dest)); err != nil {
-		e.fail(tr, err)
-		t.Drop()
+		e.refuse(tr, t, err)
 		e.logger.Warn("anacrolix: refused a torrent for lack of free space",
 			"id", tr.id, "destination", dest, "error", err)
 
@@ -1292,18 +1274,26 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 	case tr.state == engine.StateChecking:
 		tr.state = engine.StateDownloading
 	}
-	e.mu.Unlock()
 
-	// Register the torrent's data as wanted regardless of pause state —
-	// priorities and file wantedness are independent of the transfer
-	// gate below — then apply the gate a pause requested before metadata
-	// ever arrived (DEC-102).
-	t.DownloadAll()
-
+	// Apply the gate a pause requested before metadata ever arrived
+	// (DEC-102) under the same lock that read the pause, as Pause does: a
+	// Resume or promote that lifts it can then only run after it, never
+	// between the read and the gate, which left a torrent showing
+	// StateDownloading with its transfers held (T-946).
 	if paused {
 		t.DisallowDataDownload()
 		t.DisallowDataUpload()
 	}
+	e.mu.Unlock()
+
+	if e.afterInfo != nil {
+		e.afterInfo(tr.id)
+	}
+
+	// Register the torrent's data as wanted regardless of pause state:
+	// priorities and file wantedness are independent of the transfer
+	// gate above.
+	t.DownloadAll()
 }
 
 // specInfo decodes the info dictionary a spec already carries, or returns nil
@@ -1376,6 +1366,11 @@ func (e *Engine) fail(tr *tracked, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	e.failLocked(tr, err)
+}
+
+// failLocked is fail's body. Engine.mu must be held.
+func (e *Engine) failLocked(tr *tracked, err error) {
 	if tr.state == engine.StateErrored {
 		return
 	}
@@ -1386,21 +1381,59 @@ func (e *Engine) fail(tr *tracked, err error) {
 	tr.up.reset()
 }
 
-// findByInfoHash returns the ID of a tracked torrent with the given
-// infohash, matching whether or not that torrent has been attach()ed to the
-// underlying client yet (see tracked.infoHash).
-func (e *Engine) findByInfoHash(hex string) (string, bool) {
-	if hex == "" {
-		return "", false
+// refuse drops t, when there is one, from the client, then fails tr with err
+// and marks it refused, in one critical section: by the time the torrent
+// shows StateErrored nothing of it is left in the client, so a re-Add of its
+// infohash can start over without the client handing back the torrent being
+// dropped (T-948).
+func (e *Engine) refuse(tr *tracked, t *torrent.Torrent, err error) {
+	if t != nil {
+		t.Drop()
 	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	e.failLocked(tr, err)
+	tr.refused = true
+}
+
+// claimInfoHash is claimInfoHashLocked under Engine.mu.
+func (e *Engine) claimInfoHash(hex string, self *tracked) (string, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.claimInfoHashLocked(hex, self)
+}
+
+// claimInfoHashLocked returns the ID of a tracked torrent other than self
+// with the given infohash, matching whether or not that torrent has been
+// attach()ed to the underlying client yet (see tracked.infoHash). A refused
+// entry for hex is not a match: it is untracked on the way, so adding a
+// refused torrent again evaluates it afresh instead of handing back the
+// stale, errored entry (T-948). Engine.mu must be held.
+func (e *Engine) claimInfoHashLocked(hex string, self *tracked) (string, bool) {
+	if hex == "" {
+		return "", false
+	}
+
+	var refused []*tracked
+
 	for _, id := range e.order {
-		if e.torrents[id].infoHash == hex {
+		tr := e.torrents[id]
+		if tr == self || tr.infoHash != hex {
+			continue
+		}
+
+		if !tr.refused {
 			return id, true
 		}
+
+		refused = append(refused, tr)
+	}
+
+	for _, tr := range refused {
+		e.untrackLocked(tr)
 	}
 
 	return "", false

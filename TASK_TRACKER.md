@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet.
 
 ---
 
@@ -426,19 +426,10 @@ deferrals stay deferred to Backlog T-9004.
   page path, and building that path today would mean hand-formatting a string no response field
   actually carries, which AGENT.md §16 treats as inference rather than verification. Found while
   building T-024; see `docs/bundled-sources.md`.
-- `T-946` `awaitInfo` reads `paused`/queued under `Engine.mu`, then calls
-  `DisallowDataDownload`/`DisallowDataUpload` after unlocking, so a concurrent `promote` or `Resume`
-  in that window can leave a torrent showing `StateDownloading` with its transfers disallowed.
-  Apply the gate under the lock, or re-check after it. Found in review of T-034 (PR #36).
 - `T-947` The free-space checks (add-time and the periodic re-check) are per torrent and ignore the
   remaining need of other active downloads on the same destination/filesystem, so several
   downloads can together overcommit a disk each one fits alone. Sum the remaining need per
   destination (ideally per filesystem). Found in review of T-034 (PR #36).
-- `T-948` A magnet refused in `awaitInfo` (unsafe path or not enough space) stays tracked as
-  `StateErrored`, so a re-`Add` of the same infohash returns that stale id with a nil error instead
-  of refusing again; a queued spec whose promote-time `attach` fails stays tracked via `e.fail` the
-  same way. Untrack (or re-evaluate) refused entries on re-`Add`, as `untrackFailedSpec` does for
-  `addSpec`. Found in review of T-034 (PR #36).
 - `T-950` *(resolved by T-095)* Wire `lifecycle.Session` into the composition root when one exists: `NewSession` after
   `OpenStore` and the engine, `Resume` before the TUI starts (show `ResumeReport.Missing` on
   first render), `Save` after every add/remove, and `ShutdownOptions.Session`. The add flow
@@ -453,11 +444,6 @@ deferrals stay deferred to Backlog T-9004.
 - `T-952` A user-paused torrent comes back running after a restart. `Shutdown` pauses everything
   before `Session.Save`, so pause state cannot be read from `State` there; needs a
   user-pause flag in `engine.ResumeData` read before the shutdown pause. From T-041.
-- `T-953` `Session.Resume` re-keys a record onto whatever ID `Restore` returns. Two store records
-  sharing an infohash make `Restore` return the first's ID for the second, and the
-  `DeleteTorrent`/`SetTorrent` pair then overwrites the first record's data (and the re-key can
-  delete a record already re-keyed onto that ID; the next `Save` repairs it). Detect an ID already
-  restored this pass and drop the duplicate record instead. Found in review of T-041 (PR #38).
 - `T-954` *(resolved by T-097)* `make check (windows-latest)`, advisory: `internal/engine`
   `TestProbeListenPortFallsBackWhenTaken` and `TestProbeListenPortPrefersTheConfiguredPort` fail
   with "no random port was free on both TCP and UDP" (PR #38 run 36134477067). This is T-034's
@@ -653,10 +639,6 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9002` T-097 review: on Unix, a data file deleted outside tortui mid-download keeps receiving
   writes through `fileStore`'s cached handle until `Completion` re-checks it — the same behaviour
   the old mmap-based storage had. Found in review of T-097 (PR #58), non-blocking.
-- `T-9003` T-097 review: `fileTorrent.withFile` (`internal/engine/anacrolix/filestore.go`) does
-  file I/O while holding that torrent's exclusive lock whenever the handle is not already open,
-  serialising unrelated file reads/writes on the same torrent behind one open-and-I/O. Performance
-  only. Found in review of T-097 (PR #58), non-blocking.
 - `T-9005` *(owner decision)* `docs/platforms.md`'s tier table still says macOS and Windows are
   "verified by hand ... before release", but DEC-132 waives the manual Windows (and Linux) pass
   for v1.0. It needs an explicit note pointing at DEC-132 / Backlog `T-9004`; editing
@@ -780,9 +762,6 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9093` Three CI tools are pinned below their latest because those need Go 1.26 and CI builds
   with Go 1.25: gofumpt v0.11.0 (v0.12.0), golangci-lint v2.12.2 (v2.13.0 and later), goimports
   from x/tools v0.49.0 (v0.50.0). Bump all three when the repo moves to Go 1.26. Found in T-9090.
-- `T-9097` The add flow's record keeps a magnet's `xs=`/`as=` on disk until the next session save
-  rewrites it from the engine's stripped magnet. Strip them in that first write too. Non-blocking
-  note from review of T-9094 (PR #88).
 - `T-9113` `doctor` checks only whether each enabled source is reachable. It never builds the adapter, so
   a source that fails registration (logged as "app: skipping source") can still show as reachable.
   Consider having `doctor` report build and Register failures. Non-blocking note from review of
@@ -790,6 +769,20 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9115` Downloads builds its layout twice per message, in Update and View, at about 2.4 ms each
   at 1000 torrents. Fine today. If it ever shows up, sync only on messages that can change the
   offset. Non-blocking note from review of T-9112 (PR #95).
+- `T-9122` `TestGraceFollowsTheControlsDelay` (`internal/engine/anacrolix`) builds its expected values
+  from the constants it tests, so a change to a constant's value still passes. Assert literal values.
+  Non-blocking note from review of T-9120 (PR #98).
+- `T-9123` The doc comment on `TestPublishedMagnetSourcesAreDropped`
+  (`internal/app/metainfosources_test.go`) still says the xs= and as= addresses "name a loopback host";
+  they now name sources.example.org. Non-blocking note from review of T-9120 (PR #98).
+- `T-9124` The top of the Backlog is out of numeric order (T-9004, then T-991 down to T-982). Sort it.
+  Non-blocking note from review of T-9120 (PR #98).
+- `T-9125` T-9121's Resume drops the newer of two records sharing an infohash with only a log line. Surface it
+  in `ResumeReport` so the user sees it, and note that data the dropped record had at a different SavePath
+  stays on disk, unmanaged. Non-blocking note from review of T-9121 (PR #99).
+- `T-9126` T-948 (T-9121): a restored torrent whose queued start failed, re-added to a different destination,
+  leaves its partial data at the old SavePath with nothing tracking it. Non-blocking note from review of
+  T-9121 (PR #99).
 
 ---
 
@@ -960,6 +953,8 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-158 | 2026-10-02 | T-9106: the Trust sort treats Unknown as the lowest level (Unknown < None < Verified < Trusted < VIP) and breaks ties by seeders, title, id, in one fixed direction. Supersedes T-062's "Unknown pinned last". |
 | DEC-159 | 2026-10-02 | T-9111: `BuiltinSources` returns a manager-side version with the rows; the TUI drops older refreshes by it. |
 | DEC-160 | 2026-10-02 | T-9112: the Downloads scroll offset is a block start kept by Update; a stale one snaps down, a downward scroll snaps up. |
+| DEC-161 | 2026-10-03 | T-9121: the magnet strip helper is exported from the engine package; the add flow's first record write runs it too, beside the engine's choke point (DEC-153) |
+| DEC-162 | 2026-10-03 | T-9121: a torrent refused after metadata, or whose queued start failed, is untracked when its infohash is added again, which starts over under a new ID |
 
 ## Blocked
 

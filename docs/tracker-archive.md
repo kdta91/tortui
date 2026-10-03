@@ -5527,3 +5527,39 @@ exists; the window is instead max(250 ms, 20x the control's own add-to-fetch del
 loaded runner stretches it and a quiet run pays the floor. With only the fetch path unstripped, 50 of 50 runs
 fail by the fetch check. T-9096: dropped (the record is what the app test pins). No DEC: no design choice
 beyond the above.
+
+### T-9121 · Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet
+
+```
+status: done
+depends: T-9120
+tier: H
+```
+Promotes Backlog T-946, T-948, T-953, T-9003, T-9097.
+
+**Acceptance:**
+1. `awaitInfo` applies a pause's transfer gate in the critical section that reads the pause, so a Resume or
+   promote landing right after it leaves the torrent showing `StateDownloading` with downloads allowed. A
+   deterministic test resumes in exactly that window (T-946).
+2. A torrent refused after its metadata arrived (unsafe path, free space, metadata timeout, empty info), or whose
+   queued start failed, is untracked when its infohash is added again, by magnet, file, or address, and the add
+   starts over under a new ID; a live entry with that infohash is still handed back (T-948).
+3. Session Resume drops a record the engine restores onto an ID already restored in the same pass, leaving the
+   older record as it was and not counting the duplicate (T-953).
+4. A torrent's data file is opened, and its I/O runs, without that torrent's exclusive storage lock; a test holds
+   one file's open, then its I/O, and I/O on another file of the torrent still finishes. A `-race` churn test over
+   twice the handle cap keeps every byte (T-9003).
+5. The add flow's first record write drops a magnet's xs= and as= through the one strip helper, now exported from
+   the engine package (T-9097).
+6. Each fix has a test that fails without it (mutation-checked); goleak stays clean.
+
+**Notes:** All five were still real at f8af3d6. T-946: the gate moved under the engine lock (Pause already calls the
+library gate there, so no new lock order); an `afterInfo` package-test hook lands the Resume, and the library's own
+reader is the probe (a read fails at once while downloads are disallowed). T-948 (DEC-162): `refuse` drops the
+torrent, then errors and marks the entry in one critical section; `claimInfoHashLocked` replaces `findByInfoHash`
+and untracks refused entries, so an address add no longer fails as "already added as" a dead entry. T-953: the
+duplicate is dropped, not counted. T-9003: open with no lock, install under it, close displaced handles after it;
+if an eviction takes the new handle first, the call falls back to the old locked path, so it always finishes.
+T-9097 (DEC-161). Review fix: a call that must open a file is counted under the shared lock and Close waits for it,
+no file is created once Close has begun (one created as it begins is closed and removed), and evicted handles close
+before Close returns. PR #98 review notes logged as T-9122 to T-9124; PR #99 review notes as T-9125 and T-9126.

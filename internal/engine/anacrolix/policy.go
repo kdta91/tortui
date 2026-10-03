@@ -255,8 +255,10 @@ func (e *Engine) promoteOneLocked() (*tracked, func()) {
 		tr.spec = nil
 
 		return tr, func() {
+			// attach failed before handing the spec to the client, so
+			// there is nothing to drop; a re-Add starts over (T-948).
 			if err := e.attach(tr, spec, tr.savePath); err != nil {
-				e.fail(tr, err)
+				e.refuse(tr, nil, err)
 			}
 		}
 	}

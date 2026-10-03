@@ -929,6 +929,35 @@ func TestHandleAddResultPersistsOriginViaTheStore(t *testing.T) {
 	}
 }
 
+// TestHandleAddResultRecordsTheMagnetWithoutMetainfoSources is T-9097: the
+// add flow's first record write drops a magnet's xs= and as= (DEC-153), so
+// the record never holds them, not even until the next session save rewrites
+// it from the engine. Every other parameter is kept.
+func TestHandleAddResultRecordsTheMagnetWithoutMetainfoSources(t *testing.T) {
+	eng := newTestEngine(t)
+	t.Cleanup(func() { _ = eng.Close() })
+
+	ts := &stubTorrentStore{}
+	m := New(eng, testTheme(), WithTorrentStore(ts))
+
+	const plain = "magnet:?xt=urn:btih:aaaa1111&dn=sources.iso&tr=https%3A%2F%2Ftracker.example.org%2Fannounce"
+
+	published := "magnet:?xt=urn:btih:aaaa1111&xs=https%3A%2F%2Fsources.example.org%2Fx.torrent" +
+		"&dn=sources.iso&as=https%3A%2F%2Fsources.example.org%2Fa.torrent" +
+		"&tr=https%3A%2F%2Ftracker.example.org%2Fannounce"
+
+	updated, _ := m.Update(addResultMsg{id: "fake-1", name: "sources.iso", indexerID: "src-a", magnet: published})
+	_ = updated.(Model)
+
+	if len(ts.records) != 1 {
+		t.Fatalf("len(records) = %d, want 1", len(ts.records))
+	}
+
+	if got := ts.records[0].Magnet; got != plain {
+		t.Errorf("recorded magnet = %q, want %q", got, plain)
+	}
+}
+
 // TestHandleAddResultReportsAPersistFailureWithoutUndoingTheAdd confirms a
 // broken TorrentStore is surfaced as a status-bar message but never blocks
 // or reverses the already-successful engine.Add.

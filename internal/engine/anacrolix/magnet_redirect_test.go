@@ -356,12 +356,12 @@ func TestMagnetRedirectDropsMetainfoSources(t *testing.T) {
 	}
 
 	for name, magnet := range cases {
-		if got := withoutMetainfoSources(magnet); got != base {
-			t.Errorf("%s: withoutMetainfoSources = %q, want %q", name, got, base)
+		if got := engine.WithoutMetainfoSources(magnet); got != base {
+			t.Errorf("%s: WithoutMetainfoSources = %q, want %q", name, got, base)
 		}
 	}
 
-	if got := withoutMetainfoSources("not a magnet"); got != "not a magnet" {
+	if got := engine.WithoutMetainfoSources("not a magnet"); got != "not a magnet" {
 		t.Errorf("a string with no query was changed: %q", got)
 	}
 

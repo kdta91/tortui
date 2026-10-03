@@ -348,6 +348,9 @@ func (m Model) handleAddResult(msg addResultMsg) (tea.Model, tea.Cmd) {
 	var persistErrCmd tea.Cmd
 
 	if m.torrentStore != nil {
+		// The engine records a magnet without its xs= and as= (DEC-153);
+		// this first write drops them too, so the record never holds them
+		// until the next session save (T-9097, DEC-161).
 		rec := store.TorrentRecord{
 			ID:         msg.id,
 			IndexerID:  msg.indexerID,
@@ -355,7 +358,7 @@ func (m Model) handleAddResult(msg addResultMsg) (tea.Model, tea.Cmd) {
 			AddedAt:    time.Now(),
 			SavePath:   msg.savePath,
 			Name:       msg.name,
-			Magnet:     msg.magnet,
+			Magnet:     engine.WithoutMetainfoSources(msg.magnet),
 			TorrentURL: msg.torrentURL,
 		}
 
