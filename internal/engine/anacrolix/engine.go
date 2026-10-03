@@ -664,12 +664,22 @@ func (refuseMetainfoSources) RoundTrip(req *http.Request) (*http.Response, error
 	return nil, errMetainfoSourcesOffline
 }
 
+// unlimitedBurst is the burst of an unlimited rate limiter: the library's
+// own minimum download burst.
+const unlimitedBurst = 1 << 20
+
 // rateLimiter builds a byte-per-second limiter, or an unlimited one when
 // bytesPerSecond is zero or negative — which is what config.Config documents
 // zero to mean.
+//
+// The unlimited one carries an explicit burst. Given a zero burst, the
+// library fills one in by converting rate.Inf to an int, which overflows: on
+// amd64 the burst comes out negative, the download limiter then never has a
+// token, and the client opens no peer connection at all, so nothing ever
+// downloads from or uploads to a peer (T-9135, DEC-171).
 func rateLimiter(bytesPerSecond int64) *rate.Limiter {
 	if bytesPerSecond <= 0 {
-		return rate.NewLimiter(rate.Inf, 0)
+		return rate.NewLimiter(rate.Inf, unlimitedBurst)
 	}
 
 	// The burst has to be at least one chunk or a transfer can deadlock

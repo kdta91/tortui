@@ -131,8 +131,16 @@ func TestRateLimiterTreatsZeroAsUnlimited(t *testing.T) {
 	t.Parallel()
 
 	for _, bps := range []int64{0, -1} {
-		if got := rateLimiter(bps).Limit(); got != rate.Inf {
+		l := rateLimiter(bps)
+		if got := l.Limit(); got != rate.Inf {
 			t.Errorf("rateLimiter(%d) limit = %v, want rate.Inf", bps, got)
+		}
+
+		// T-9135: the library opens no peer connection while its download
+		// limiter has no token, and fills in a zero burst with one that is
+		// negative on amd64.
+		if l.Burst() <= 0 || l.Tokens() <= 0 {
+			t.Errorf("rateLimiter(%d) burst %d, tokens %v; want both positive", bps, l.Burst(), l.Tokens())
 		}
 	}
 
