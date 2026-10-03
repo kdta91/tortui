@@ -225,3 +225,55 @@ func TestReAddOfATorrentWhoseQueuedStartFailedIsEvaluatedAgain(t *testing.T) {
 
 	waitForState(t, e, again, engine.StateDownloading)
 }
+
+// TestReAddOfASpacePausedTorrentHandsBackTheSameEntry is the other side of
+// DEC-162: a torrent the free-space re-check paused shows StateErrored but is
+// still attached, with its data, so it is not refused. Adding its infohash
+// again hands back the same ID, and the client still holds one torrent.
+func TestReAddOfASpacePausedTorrentHandsBackTheSameEntry(t *testing.T) {
+	t.Parallel()
+
+	var free atomic.Uint64
+	free.Store(1 << 40)
+
+	e := newTestEngine(t, func(o *Options) {
+		o.Config.MinFreeSpace = "1MB"
+		o.SpaceCheckInterval = time.Millisecond
+		o.MetadataTimeout = time.Hour
+		o.freeSpace = func(string) (uint64, error) { return free.Load(), nil }
+	})
+
+	infoBytes, magnet := refusedFixture(t, "space-paused")
+
+	id, err := e.Add(context.Background(), engine.AddSource{Magnet: magnet})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	supplyInfo(t, e, id, infoBytes)
+	waitForState(t, e, id, engine.StateDownloading)
+
+	free.Store(512 << 10) // under the 1 MiB margin alone
+
+	if st := waitForState(t, e, id, engine.StateErrored); !errors.Is(st.Err, ErrInsufficientSpace) {
+		t.Fatalf("err %v, want the space pause's ErrInsufficientSpace", st.Err)
+	}
+
+	// A magnet carries no size, so the re-add is not refused up front.
+	again, err := e.Add(context.Background(), engine.AddSource{Magnet: magnet})
+	if err != nil {
+		t.Fatalf("re-Add: %v", err)
+	}
+
+	if again != id {
+		t.Errorf("re-Add of a space-paused torrent = %s, want the same entry %s", again, id)
+	}
+
+	if n := len(e.List()); n != 1 {
+		t.Errorf("List has %d entries, want 1", n)
+	}
+
+	if n := len(e.client.Torrents()); n != 1 {
+		t.Errorf("client holds %d torrents, want 1", n)
+	}
+}

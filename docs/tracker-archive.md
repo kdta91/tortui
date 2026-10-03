@@ -5560,4 +5560,6 @@ torrent, then errors and marks the entry in one critical section; `claimInfoHash
 and untracks refused entries, so an address add no longer fails as "already added as" a dead entry. T-953: the
 duplicate is dropped, not counted. T-9003: open with no lock, install under it, close displaced handles after it;
 if an eviction takes the new handle first, the call falls back to the old locked path, so it always finishes.
-T-9097 (DEC-161). PR #98 review notes logged as T-9122 to T-9124.
+T-9097 (DEC-161). Review fix: a call that must open a file is counted under the shared lock and Close waits for it,
+no file is created once Close has begun (one created as it begins is closed and removed), and evicted handles close
+before Close returns. PR #98 review notes logged as T-9122 to T-9124; PR #99 review notes as T-9125 and T-9126.

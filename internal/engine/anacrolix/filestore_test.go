@@ -415,10 +415,14 @@ func TestFileStoreOpeningOneFileNeverStallsAnother(t *testing.T) {
 			entered, release := make(chan struct{}), make(chan struct{})
 
 			if stuck == "open" {
+				var once sync.Once
+
 				s.openFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
 					if name == second {
-						close(entered)
-						<-release
+						once.Do(func() {
+							close(entered)
+							<-release
+						})
 					}
 
 					return os.OpenFile(name, flag, perm)

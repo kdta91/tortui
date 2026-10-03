@@ -777,6 +777,12 @@ deferrals stay deferred to Backlog T-9004.
   they now name sources.example.org. Non-blocking note from review of T-9120 (PR #98).
 - `T-9124` The top of the Backlog is out of numeric order (T-9004, then T-991 down to T-982). Sort it.
   Non-blocking note from review of T-9120 (PR #98).
+- `T-9125` T-9121's Resume drops the newer of two records sharing an infohash with only a log line. Surface it
+  in `ResumeReport` so the user sees it, and note that data the dropped record had at a different SavePath
+  stays on disk, unmanaged. Non-blocking note from review of T-9121 (PR #99).
+- `T-9126` T-948 (T-9121): a restored torrent whose queued start failed, re-added to a different destination,
+  leaves its partial data at the old SavePath with nothing tracking it. Non-blocking note from review of
+  T-9121 (PR #99).
 
 ---
 
