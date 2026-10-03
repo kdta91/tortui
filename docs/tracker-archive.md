@@ -5597,6 +5597,6 @@ table's paths under the lock as Close begins (after that the table only shrinks)
 no longer empty; the emptiness check, beyond the review's rule, covers a writer whose handle was evicted before Close.
 T-9125: a `Dropped` list in ResumeReport, `Elsewhere` set against the kept torrent's SavePath; one notice per elsewhere
 record, one count for the rest. T-9126 (DEC-163): `refuse` records the validated name of data found on disk
-(`leftName`); `claimInfoHashLocked` takes the add's destination and returns ErrLeftData instead of untracking; Remove
-deletes by `leftName` when the library has no info; README troubleshooting entry. Backlog T-9128 (restored entries
-tracked as failed keep no data name).
+(`leftName`); the claim takes the add's destination and returns ErrLeftData; Remove deletes by `leftName`. Review fix
+(PR #100): SafeName on dropped names; both messages lead with path and remedy within 80 columns; the delete re-checks
+the name; no data name shared with another tracked entry. Backlog T-9128 to T-9132.
