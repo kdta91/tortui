@@ -137,6 +137,13 @@ type Options struct {
 	// package test can land a Resume in exactly that window (T-946).
 	afterInfo func(id string)
 
+	// afterClientAdd, when set, is called by attach with the library's
+	// torrent as soon as it is in the client with any info dictionary it
+	// was handed, before Engine.mu is taken to publish it. It exists so a
+	// package test can read the transfer gate a paused torrent joined with
+	// (T-9134).
+	afterClientAdd func(*torrent.Torrent)
+
 	// SpaceCheckInterval is how often downloading torrents' destinations
 	// are re-checked for free space. Zero uses DefaultSpaceCheckInterval.
 	// It is measured against sample-tick times, so a test driving the
@@ -151,6 +158,12 @@ type Options struct {
 	// that host (loopback in tests) so the listen-port fallback can be
 	// exercised while still never dialling or announcing anywhere.
 	listenHost string
+
+	// peers, when set together with Offline and listenHost, also accepts
+	// incoming peer connections and dials the peers a test hands a
+	// torrent, so two engines can trade data over loopback while DHT,
+	// trackers and PEX stay off and nothing is announced (T-9135).
+	peers bool
 
 	// HTTPClient fetches a .torrent named by AddSource.TorrentURL. A nil
 	// HTTPClient builds one with tortui's shared defaults, which also
@@ -333,6 +346,7 @@ type Engine struct {
 	http            *httpx.Client
 	beforeAttach    func()
 	afterInfo       func(id string)
+	afterClientAdd  func(*torrent.Torrent)
 
 	done      chan struct{}
 	wg        sync.WaitGroup
@@ -439,6 +453,7 @@ func New(opts Options) (*Engine, error) {
 		http:            httpClient,
 		beforeAttach:    opts.beforeAttach,
 		afterInfo:       opts.afterInfo,
+		afterClientAdd:  opts.afterClientAdd,
 		done:            make(chan struct{}),
 		torrents:        make(map[string]*tracked),
 		storages:        make(map[string]safeStorage),
@@ -570,6 +585,15 @@ func clientConfig(opts Options, downloadDir string, logger *slog.Logger, port in
 	cfg.DownloadRateLimiter = rateLimiter(opts.Config.MaxDownloadRate)
 	cfg.UploadRateLimiter = rateLimiter(opts.Config.MaxUploadRate)
 
+	// The library uploads a completed torrent only with Seed set: without
+	// it a torrent that wants nothing never uploads, and the seed policy
+	// had nothing to stop (T-9135, DEC-168). Under "off" it stays unset,
+	// so nothing is uploaded once a download completes. Upload while
+	// downloading stays the library's reciprocal kind, as before: the
+	// seed policy is about what happens after completion.
+	cfg.Seed = seedsAfterCompletion(opts.Config)
+	cfg.DisableAggressiveUpload = true
+
 	if opts.Offline {
 		cfg.NoDHT = true
 		cfg.DisableTrackers = true
@@ -593,10 +617,21 @@ func clientConfig(opts Options, downloadDir string, logger *slog.Logger, port in
 			cfg.DisableTCP = false
 			cfg.DisableIPv6 = true
 			cfg.ListenHost = func(string) string { return host }
+			cfg.AcceptPeerConnections = opts.peers
+			cfg.DialForPeerConns = opts.peers
 		}
 	}
 
 	return cfg
+}
+
+// seedsAfterCompletion reports whether cfg's seed policy keeps a completed
+// torrent uploading for a while: any policy but "off". New has already
+// refused a policy that does not parse.
+func seedsAfterCompletion(cfg config.Config) bool {
+	settings, err := resolvePolicy(cfg)
+
+	return err == nil && settings.seed.Mode != engine.SeedOff
 }
 
 // errMetainfoSourcesOffline is what the Offline client's metainfo-source
@@ -1191,13 +1226,13 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 
 	spec.Storage = store
 
-	t, isNew, err := e.client.AddTorrentSpec(spec)
+	t, held, err := e.addToClient(tr, spec)
 	if err != nil {
-		return fmt.Errorf("anacrolix: add torrent: %w", err)
+		return err
 	}
 
-	if !isNew {
-		e.logger.Debug("anacrolix: torrent already present in client", "id", tr.id)
+	if e.afterClientAdd != nil {
+		e.afterClientAdd(t)
 	}
 
 	e.mu.Lock()
@@ -1232,6 +1267,14 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 		tr.name = t.Name()
 	}
 
+	// A Resume that ran since addToClient held the transfers found tr.t
+	// nil and could not lift the gate: lift it here, under the lock that
+	// now publishes tr.t. (A Pause in that window is held by awaitInfo.)
+	if held && !tr.paused && tr.state != engine.StateQueued {
+		t.AllowDataDownload()
+		t.AllowDataUpload()
+	}
+
 	// Counted under the same lock that saw the engine open, so it can
 	// never race Close's wg.Wait.
 	e.wg.Add(1)
@@ -1243,6 +1286,51 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 	}()
 
 	return nil
+}
+
+// addToClient hands spec to the client. A torrent paused before it joins —
+// restored paused (T-952), or paused while its .torrent was fetched — joins
+// with its transfers held (held true) before its info dictionary is set:
+// until then it has no data to offer, so no peer is sent a byte of it before
+// the gate is shut (T-9134, DEC-169). The library's own add-time options for
+// this are declared but never read in v1.61.0.
+func (e *Engine) addToClient(tr *tracked, spec *torrent.TorrentSpec) (*torrent.Torrent, bool, error) {
+	e.mu.Lock()
+	held := tr.paused
+	e.mu.Unlock()
+
+	add := *spec
+	if held {
+		add.InfoBytes = nil
+	}
+
+	t, isNew, err := e.client.AddTorrentSpec(&add)
+	if err != nil {
+		return nil, false, fmt.Errorf("anacrolix: add torrent: %w", err)
+	}
+
+	if !isNew {
+		e.logger.Debug("anacrolix: torrent already present in client", "id", tr.id)
+	}
+
+	if !held {
+		return t, false, nil
+	}
+
+	t.DisallowDataDownload()
+	t.DisallowDataUpload()
+
+	if spec.InfoBytes != nil {
+		if err := t.SetInfoBytes(spec.InfoBytes); err != nil {
+			if isNew {
+				t.Drop()
+			}
+
+			return nil, false, fmt.Errorf("anacrolix: add torrent: %w", err)
+		}
+	}
+
+	return t, true, nil
 }
 
 // awaitInfo waits for the torrent's info dictionary, then validates every path
@@ -1453,7 +1541,11 @@ func (e *Engine) refuse(tr *tracked, t *torrent.Torrent, info *metainfo.Info, er
 func (e *Engine) keepLeftLocked(tr *tracked, left string) {
 	tr.leftName, tr.sharedName = "", ""
 
-	if left != "" && e.dataNameTakenLocked(tr, left) {
+	if left == "" {
+		return
+	}
+
+	if taken, _ := e.dataNameUsedLocked(tr, left); taken {
 		tr.sharedName = left
 		return
 	}
@@ -1461,29 +1553,60 @@ func (e *Engine) keepLeftLocked(tr *tracked, left string) {
 	tr.leftName = left
 }
 
-// dataNameTakenLocked reports whether a tracked entry other than self keeps
-// its data under name at self's destination. Engine.mu must be held.
-func (e *Engine) dataNameTakenLocked(self *tracked, name string) bool {
+// dataNameUsedLocked reports whether a tracked entry other than self, at
+// self's destination, keeps its data under name (taken), or has not named its
+// data there yet and so may come to (pending) — a magnet still waiting for its
+// info dictionary, a .torrent still queued or being fetched, a torrent still
+// joining the client (T-9135, DEC-167). Engine.mu must be held.
+func (e *Engine) dataNameUsedLocked(self *tracked, name string) (taken, pending bool) {
 	for _, tr := range e.torrents {
-		if tr != self && tr.savePath == self.savePath && dataNameLocked(tr) == name {
-			return true
+		if tr == self || tr.savePath != self.savePath {
+			continue
+		}
+
+		n, known := dataNameLocked(tr)
+		if !known {
+			pending = true
+			continue
+		}
+
+		if n != "" && n == name {
+			return true, false
 		}
 	}
 
-	return false
+	return false, pending
 }
 
-// dataNameLocked is the name tr's data has under its destination: the
-// torrent's own name once the library has its info dictionary, else the name
-// a refused entry kept, else "". Engine.mu must be held.
-func dataNameLocked(tr *tracked) string {
-	if tr.t != nil {
+// dataNameLocked is the name tr's data has, or will have, under its
+// destination, and whether that is known yet: a refused entry's left name
+// (it has nothing in the client); else the torrent's own name once the
+// library or a queued spec holds its info dictionary; "" for an entry that
+// failed before it ever joined the client. A magnet waiting for its info
+// dictionary, a .torrent still queued or being fetched, and a torrent still
+// joining the client have not named their data yet (known false). Engine.mu
+// must be held.
+func dataNameLocked(tr *tracked) (name string, known bool) {
+	switch {
+	case tr.refused:
+		return tr.leftName, true
+	case tr.t != nil:
 		if info := tr.t.Info(); info != nil {
-			return info.BestName()
+			return info.BestName(), true
 		}
-	}
 
-	return tr.leftName
+		return "", false
+	case tr.spec != nil:
+		if info, err := specInfo(tr.spec); err == nil && info != nil {
+			return info.BestName(), true
+		}
+
+		return "", false
+	case tr.state == engine.StateErrored:
+		return "", true
+	default:
+		return "", false
+	}
 }
 
 // leftData returns the name info gives its data under dest when that name is
@@ -1993,21 +2116,7 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 
 	t := tr.t
 	savePath := tr.savePath
-
-	// A refused entry the library holds no info for deletes by the name
-	// its data had when it was refused. A refused entry deletes nothing
-	// another tracked entry keeps its data under, at the same destination
-	// (T-9127), and says so rather than reporting a delete it skipped
-	// (T-9133).
-	name, kept := dataNameLocked(tr), ""
-
-	switch {
-	case !tr.refused || !deleteData:
-	case name != "" && e.dataNameTakenLocked(tr, name):
-		kept, name = name, ""
-	case name == "" && tr.sharedName != "" && e.dataNameTakenLocked(tr, tr.sharedName):
-		kept = tr.sharedName
-	}
+	name, kept, maybe := e.removeTargetLocked(tr, deleteData)
 
 	tr.removed = true
 	close(tr.done)
@@ -2038,13 +2147,60 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 
 	if kept != "" {
 		path := filepath.Join(savePath, kept)
-		e.logger.Warn("anacrolix: removed a torrent but kept its data: another download uses it",
-			"id", id, "path", path)
 
-		return &engine.DataKeptError{Path: path}
+		// Nothing there any more: nothing was kept, and nothing of this
+		// entry is left on disk.
+		if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+
+		e.logger.Warn("anacrolix: removed a torrent but kept its data: another download uses or may use it",
+			"id", id, "path", path, "maybe", maybe)
+
+		return &engine.DataKeptError{Path: path, Maybe: maybe}
 	}
 
 	return e.deleteTorrentData(id, savePath, name, roots)
+}
+
+// removeTargetLocked decides what a Remove of tr deletes when deleteData is
+// set: name, the data's name under tr's destination ("" for nothing), or
+// kept, the name of data it keeps because it is not tr's to delete — maybe
+// set when no tracked entry is known to keep data there, but one might
+// (T-9133, T-9135, DEC-167).
+//
+// An entry that is not refused deletes its torrent's own data, once the
+// library knows its name. A refused entry deletes the data it left, unless
+// another tracked entry at the destination keeps data under that name or has
+// not named its data yet. Data whose name another entry used when this one
+// was refused (sharedName) was never this entry's: it is kept even after that
+// entry is gone, which may have kept it on purpose. Engine.mu must be held.
+func (e *Engine) removeTargetLocked(tr *tracked, deleteData bool) (name, kept string, maybe bool) {
+	switch {
+	case !deleteData:
+		return "", "", false
+	case !tr.refused:
+		if tr.t != nil {
+			if info := tr.t.Info(); info != nil {
+				return info.BestName(), "", false
+			}
+		}
+
+		return "", "", false
+	case tr.leftName != "":
+		taken, pending := e.dataNameUsedLocked(tr, tr.leftName)
+		if taken || pending {
+			return "", tr.leftName, !taken
+		}
+
+		return tr.leftName, "", false
+	case tr.sharedName != "":
+		taken, _ := e.dataNameUsedLocked(tr, tr.sharedName)
+
+		return "", tr.sharedName, !taken
+	default:
+		return "", "", false
+	}
 }
 
 // deleteTorrentData removes a torrent's own file or directory — savePath

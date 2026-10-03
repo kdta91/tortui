@@ -20,4 +20,10 @@ func TestDataKeptErrorLeadsWithWhatHappenedAndThePath(t *testing.T) {
 	if got := (&DataKeptError{Path: "/data/shared/name"}).Error(); got != want {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
+
+	// T-9135: a download that may use the data is not said to use it.
+	want = "data kept: another download may use /data/shared/name"
+	if got := (&DataKeptError{Path: "/data/shared/name", Maybe: true}).Error(); got != want {
+		t.Errorf("Error() with Maybe = %q, want %q", got, want)
+	}
 }

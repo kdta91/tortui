@@ -19,10 +19,20 @@ type DataKeptError struct {
 	// Path is the data that was kept: the destination joined with the
 	// name both downloads use.
 	Path string
+
+	// Maybe is set when no tracked download is known to keep its data at
+	// Path, but one might: a download at the same destination has not
+	// named its data yet, or the data was another download's that has
+	// since been removed with its data kept (T-9135, DEC-167).
+	Maybe bool
 }
 
 // Error implements error.
 func (e *DataKeptError) Error() string {
+	if e.Maybe {
+		return "data kept: another download may use " + e.Path
+	}
+
 	return "data kept: another download uses " + e.Path
 }
 
