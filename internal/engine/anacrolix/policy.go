@@ -258,7 +258,12 @@ func (e *Engine) promoteOneLocked() (*tracked, func()) {
 			// attach failed before handing the spec to the client, so
 			// there is nothing to drop; a re-Add starts over (T-948).
 			if err := e.attach(tr, spec, tr.savePath); err != nil {
-				e.refuse(tr, nil, err)
+				info, infoErr := specInfo(spec)
+				if infoErr != nil {
+					e.logger.Warn("anacrolix: read a refused torrent's info dictionary", "id", tr.id, "error", infoErr)
+				}
+
+				e.refuse(tr, nil, info, err)
 			}
 		}
 	}

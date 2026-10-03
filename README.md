@@ -490,6 +490,12 @@ paused, not left to fill the disk, if free space drops below the margin partway 
 space at that destination (or lower `min_free_space` in Settings' preferences panel) and resume it
 with `p`.
 
+**Adding a torrent again says an earlier add "left data in another folder"**
+An earlier add of the same torrent failed and is still listed in Downloads, errored, with data at
+another destination. tortui never deletes data on its own: remove that entry first (`x`, keeping
+or deleting its data), then add the torrent where you want it. Adding it to the same destination
+picks up the data already there.
+
 **I changed a setting in the preferences panel and nothing happened**
 Most fields need a restart to take effect — the save confirmation names exactly which ones
 ("restart to apply: ..."), and the panel marks them "(restart required)". Only the download

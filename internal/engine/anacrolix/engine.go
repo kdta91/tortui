@@ -18,9 +18,11 @@
 package anacrolix
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -77,6 +79,13 @@ var ErrNotFound = errors.New("anacrolix: torrent not found")
 // ErrMetadataTimeout reports a torrent whose info dictionary did not arrive
 // within the configured metadata timeout.
 var ErrMetadataTimeout = errors.New("anacrolix: metadata fetch timed out")
+
+// ErrLeftData refuses an add of a torrent to one destination while an entry
+// for the same torrent, refused earlier, still has data at another (T-9127,
+// DEC-163). Starting over elsewhere would leave that data with nothing
+// tracking it; the user removes the errored entry first, keeping or deleting
+// its data.
+var ErrLeftData = errors.New("anacrolix: a failed earlier add of this torrent left data in another folder")
 
 // Options configures an Engine. The zero value is not usable; every field has
 // a documented default, but Config.DownloadDir must name a directory.
@@ -278,8 +287,16 @@ type tracked struct {
 	// in the client: awaitInfo refused it and dropped it, or the queue's
 	// start of it failed before it was ever attached. A later Add of the
 	// same infohash untracks a refused entry and starts over rather than
-	// handing it back (T-948).
+	// handing it back (T-948), unless the add is to another destination and
+	// the entry left data (leftName below).
 	refused bool
+
+	// leftName is set on a refused entry whose data was on disk when it
+	// was refused: that data's validated name under savePath. Remove
+	// deletes by it when the library holds no info dictionary for the
+	// entry, and an add of the same infohash to another destination is
+	// refused with ErrLeftData while the entry is tracked (T-9127).
+	leftName string
 
 	down rateMeter
 	up   rateMeter
@@ -961,7 +978,9 @@ func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string, prov proven
 		return nil, "", false, ErrClosed
 	}
 
-	if id, ok := e.claimInfoHashLocked(hex, nil); ok {
+	if id, ok, err := e.claimInfoHashLocked(hex, nil, dest); err != nil {
+		return nil, "", false, err
+	} else if ok {
 		return nil, id, false, nil
 	}
 
@@ -1071,7 +1090,10 @@ func (e *Engine) fetchAndAttach(ctx context.Context, tr *tracked, rawURL, dest s
 		return
 	}
 
-	if existing, ok := e.claimInfoHash(spec.InfoHash.HexString(), tr); ok {
+	if existing, ok, err := e.claimInfoHash(spec.InfoHash.HexString(), tr, dest); err != nil {
+		e.fail(tr, err)
+		return
+	} else if ok {
 		e.fail(tr, fmt.Errorf("already added as %s", existing))
 		return
 	}
@@ -1107,7 +1129,10 @@ func (e *Engine) attachRedirectMagnet(tr *tracked, redirect *httpx.MagnetRedirec
 		return
 	}
 
-	if existing, ok := e.claimInfoHash(spec.InfoHash.HexString(), tr); ok {
+	if existing, ok, err := e.claimInfoHash(spec.InfoHash.HexString(), tr, dest); err != nil {
+		e.fail(tr, err)
+		return
+	} else if ok {
 		e.fail(tr, fmt.Errorf("already added as %s", existing))
 		return
 	}
@@ -1223,7 +1248,7 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 		return
 
 	case <-time.After(e.metadataTimeout):
-		e.refuse(tr, t, fmt.Errorf("%w after %s: no peer supplied the torrent's info dictionary",
+		e.refuse(tr, t, nil, fmt.Errorf("%w after %s: no peer supplied the torrent's info dictionary",
 			ErrMetadataTimeout, e.metadataTimeout))
 
 		return
@@ -1233,13 +1258,13 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 
 	info := t.Info()
 	if info == nil {
-		e.refuse(tr, t, errors.New("info dictionary arrived empty"))
+		e.refuse(tr, t, nil, errors.New("info dictionary arrived empty"))
 
 		return
 	}
 
 	if err := validateInfoPaths(info, dest); err != nil {
-		e.refuse(tr, t, err)
+		e.refuse(tr, t, info, err)
 		e.logger.Warn("anacrolix: refused a torrent declaring an unsafe path",
 			"id", tr.id, "destination", dest, "error", err)
 
@@ -1250,7 +1275,7 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 	// free-space precheck. (A .torrent's already ran in addSpec/attach, and
 	// passes again here trivially unless the disk filled in between.)
 	if err := e.checkSpace(dest, bytesNeeded(info, dest)); err != nil {
-		e.refuse(tr, t, err)
+		e.refuse(tr, t, info, err)
 		e.logger.Warn("anacrolix: refused a torrent for lack of free space",
 			"id", tr.id, "destination", dest, "error", err)
 
@@ -1385,25 +1410,45 @@ func (e *Engine) failLocked(tr *tracked, err error) {
 // and marks it refused, in one critical section: by the time the torrent
 // shows StateErrored nothing of it is left in the client, so a re-Add of its
 // infohash can start over without the client handing back the torrent being
-// dropped (T-948).
-func (e *Engine) refuse(tr *tracked, t *torrent.Torrent, err error) {
+// dropped (T-948). info, when known, is the torrent's info dictionary: if its
+// data is on disk at tr's destination, the entry keeps its name (leftName).
+func (e *Engine) refuse(tr *tracked, t *torrent.Torrent, info *metainfo.Info, err error) {
 	if t != nil {
 		t.Drop()
 	}
+
+	left := leftData(info, tr.savePath)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	e.failLocked(tr, err)
 	tr.refused = true
+	tr.leftName = left
+}
+
+// leftData returns the name info gives its data under dest when that name is
+// safe there (AGENT.md §6.11) and something is on disk at it, and "" when
+// info is nil or nothing is there.
+func leftData(info *metainfo.Info, dest string) string {
+	if info == nil || validateInfoPaths(info, dest) != nil {
+		return ""
+	}
+
+	name := info.BestName()
+	if _, err := os.Lstat(filepath.Join(dest, name)); errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+
+	return name
 }
 
 // claimInfoHash is claimInfoHashLocked under Engine.mu.
-func (e *Engine) claimInfoHash(hex string, self *tracked) (string, bool) {
+func (e *Engine) claimInfoHash(hex string, self *tracked, dest string) (string, bool, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	return e.claimInfoHashLocked(hex, self)
+	return e.claimInfoHashLocked(hex, self, dest)
 }
 
 // claimInfoHashLocked returns the ID of a tracked torrent other than self
@@ -1411,10 +1456,12 @@ func (e *Engine) claimInfoHash(hex string, self *tracked) (string, bool) {
 // attach()ed to the underlying client yet (see tracked.infoHash). A refused
 // entry for hex is not a match: it is untracked on the way, so adding a
 // refused torrent again evaluates it afresh instead of handing back the
-// stale, errored entry (T-948). Engine.mu must be held.
-func (e *Engine) claimInfoHashLocked(hex string, self *tracked) (string, bool) {
+// stale, errored entry (T-948) — unless that entry left data on disk at a
+// destination other than dest, when the claim fails with ErrLeftData and
+// nothing is untracked (T-9127, DEC-163). Engine.mu must be held.
+func (e *Engine) claimInfoHashLocked(hex string, self *tracked, dest string) (string, bool, error) {
 	if hex == "" {
-		return "", false
+		return "", false, nil
 	}
 
 	var refused []*tracked
@@ -1426,17 +1473,24 @@ func (e *Engine) claimInfoHashLocked(hex string, self *tracked) (string, bool) {
 		}
 
 		if !tr.refused {
-			return id, true
+			return id, true, nil
 		}
 
 		refused = append(refused, tr)
 	}
 
 	for _, tr := range refused {
+		if tr.leftName != "" && tr.savePath != dest {
+			return "", false, fmt.Errorf("%w: %s, at %s — remove it from Downloads first, keeping or deleting that data",
+				ErrLeftData, cmp.Or(tr.name, tr.id), filepath.Join(tr.savePath, tr.leftName))
+		}
+	}
+
+	for _, tr := range refused {
 		e.untrackLocked(tr)
 	}
 
-	return "", false
+	return "", false, nil
 }
 
 // List returns a snapshot of every tracked torrent. It reads counters the
@@ -1814,7 +1868,9 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 	t := tr.t
 	savePath := tr.savePath
 
-	var name string
+	// A refused entry the library holds no info for deletes by the name
+	// its data had when it was refused (T-9127).
+	name := tr.leftName
 	if t != nil && t.Info() != nil {
 		name = t.Info().BestName()
 	}
