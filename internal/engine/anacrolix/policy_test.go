@@ -608,6 +608,11 @@ func TestCompletedTorrentStopsUploadingUnderTheOffPolicyAndResumeOverrides(t *te
 		t.Fatalf("stopped torrent: progress %v err %v, want complete and no error", st.Progress, st.Err)
 	}
 
+	// The seed policy's stop is not the user's pause (T-952).
+	if pausedOf(t, e, id) {
+		t.Error("ResumeData.Paused of a torrent the seed policy stopped = true, want false")
+	}
+
 	// The user explicitly asking to keep seeding wins, and the policy
 	// does not stop it again on the next tick.
 	if err := e.Resume(id); err != nil {

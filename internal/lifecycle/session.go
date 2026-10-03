@@ -385,6 +385,7 @@ func resumeDataFrom(rec store.TorrentRecord) engine.ResumeData {
 		TorrentURL: rec.TorrentURL,
 		Metainfo:   rec.Metainfo,
 		SavePath:   rec.SavePath,
+		Paused:     rec.Paused,
 		Origin: engine.Origin{
 			IndexerID: rec.IndexerID,
 			SourceURL: rec.SourceURL,
@@ -421,6 +422,7 @@ func mergeRecord(rec store.TorrentRecord, d engine.ResumeData, now time.Time) st
 	rec.SavePath = d.SavePath
 	rec.Magnet = d.Magnet
 	rec.TorrentURL = d.TorrentURL
+	rec.Paused = d.Paused
 
 	if len(d.Metainfo) > 0 {
 		rec.Metainfo = d.Metainfo

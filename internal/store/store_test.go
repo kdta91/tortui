@@ -291,3 +291,54 @@ func TestClearHistoryOnClosedStore(t *testing.T) {
 		t.Fatalf("ClearHistory after Close = %v, want ErrClosed", err)
 	}
 }
+
+// TestTorrentPausedSurvivesReopen is T-952: the user's pause is stored with
+// the record. A record written before the field existed — the same schema
+// version, no "paused" key — still loads, unpaused, with its other fields
+// intact, so no migration is needed.
+func TestTorrentPausedSurvivesReopen(t *testing.T) {
+	s, path := openTest(t, time.Hour)
+
+	if err := s.SetTorrent(TorrentRecord{ID: "t1", SavePath: "/downloads", Paused: true}); err != nil {
+		t.Fatalf("SetTorrent: %v", err)
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// An older build's record, written straight into the bucket.
+	db, err := bolt.Open(path, 0o600, nil)
+	if err != nil {
+		t.Fatalf("bolt.Open: %v", err)
+	}
+
+	legacy := `{"id":"old","added_at":"2026-01-02T03:04:05Z","save_path":"/downloads","name":"older"}`
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketTorrents).Put([]byte("old"), []byte(legacy))
+	})
+	if err != nil {
+		t.Fatalf("write legacy record: %v", err)
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seed db: %v", err)
+	}
+
+	reopened, err := open(path, time.Hour)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	if got, ok := reopened.GetTorrent("t1"); !ok || !got.Paused {
+		t.Errorf("reopened paused record = %+v (found %v), want Paused", got, ok)
+	}
+
+	got, ok := reopened.GetTorrent("old")
+	if !ok || got.Paused || got.Name != "older" || got.SavePath != "/downloads" ||
+		!got.AddedAt.Equal(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)) {
+		t.Errorf("legacy record = %+v (found %v), want it loaded unpaused with its fields", got, ok)
+	}
+}

@@ -165,8 +165,16 @@ func TestRemoveWithDataOfARefusedEntrySparesATorrentSharingItsName(t *testing.T)
 				addOther()
 			}
 
-			if err := e.Remove(refused, true); err != nil {
-				t.Fatalf("Remove(refused, with data): %v", err)
+			// It says it kept the data, and where (T-9133).
+			err = e.Remove(refused, true)
+
+			var keptErr *engine.DataKeptError
+			if !errors.As(err, &keptErr) || keptErr.Path != shared {
+				t.Fatalf("Remove(refused, with data) = %v, want a DataKeptError naming %s", err, shared)
+			}
+
+			if listed(e, refused) {
+				t.Error("the refused entry is still listed after a kept-data remove")
 			}
 
 			if _, err := os.Stat(kept); err != nil {
