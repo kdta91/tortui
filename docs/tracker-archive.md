@@ -5563,3 +5563,40 @@ if an eviction takes the new handle first, the call falls back to the old locked
 T-9097 (DEC-161). Review fix: a call that must open a file is counted under the shared lock and Close waits for it,
 no file is created once Close has begun (one created as it begins is closed and removed), and evicted handles close
 before Close returns. PR #98 review notes logged as T-9122 to T-9124; PR #99 review notes as T-9125 and T-9126.
+
+### T-9127 · Storage discard keeps others' data; dropped resume records and refused re-adds tell the user
+
+```
+status: done
+depends: T-9121
+tier: H
+```
+Promotes Backlog T-9125, T-9126, and three PR #99 review notes on `internal/engine/anacrolix/filestore.go`.
+
+**Acceptance:**
+1. A test holds a create while a sibling file appears in the directory it made, then closes the storage: the
+   created file is removed, the sibling and the directory stay. Swapping discard's `Remove` for `RemoveAll`
+   fails it (review note A).
+2. A test has two writers create the same missing file at once, ordered by the openFile hook so one exclusive
+   create loses: both writes succeed, into one file holding bytes from both. Dropping the loser's reopen fails it
+   (review note B).
+3. A create that finds the storage closed never removes a file another caller has opened (its handle is in the
+   table) or written (no longer empty, as when that handle was since evicted), nor a directory it created that holds
+   such a file. A deterministic test covers each case (review note C).
+4. Resume lists every record it drops as a duplicate (T-953) in ResumeReport, flagging one saved at a destination
+   other than the kept torrent's, and startup tells the user where that data is left unmanaged. Nothing is deleted
+   (T-9125).
+5. An add to one destination while a refused entry for the same infohash still has data at another is refused with
+   a readable error naming that data; the errored entry stays, and removing it with data deletes that data even when
+   the library never held the torrent. An add to the same destination, or one whose refused entry left nothing,
+   starts over as before (DEC-162). Data is never deleted unasked (T-9126).
+6. Each fix is mutation-checked; the filestore tests pass `-race -count=50`; goleak stays clean.
+
+**Notes:** All three review notes were real at e167778; C lost the other caller's chunks. DEC-164: discard reads the
+table's paths under the lock as Close begins (after that the table only shrinks) and keeps a file that is in use or
+no longer empty; the emptiness check, beyond the review's rule, covers a writer whose handle was evicted before Close.
+T-9125: a `Dropped` list in ResumeReport, `Elsewhere` set against the kept torrent's SavePath; one notice per elsewhere
+record, one count for the rest. T-9126 (DEC-163): `refuse` records the validated name of data found on disk
+(`leftName`); `claimInfoHashLocked` takes the add's destination and returns ErrLeftData instead of untracking; Remove
+deletes by `leftName` when the library has no info; README troubleshooting entry. Backlog T-9128 (restored entries
+tracked as failed keep no data name).
