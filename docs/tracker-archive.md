@@ -5635,3 +5635,36 @@ transfers under the lock (DEC-102). The TUI saves the session after a pause or r
 restore is a refused entry (`trackErrored`); a name another entry uses is kept as `sharedName`, for the message
 only; `goneLeftData` reads the disk before the claim takes the lock. Thirteen mutations, all killed (PR body).
 Backlog T-9134.
+
+### T-9135 · Seeding works; a refused entry's remove spares data another download may use; a restored pause holds from the start
+
+```
+status: done
+depends: T-9133
+tier: H
+```
+Promotes Backlog T-9134 and review notes 2 to 5 of PR #101.
+
+**Acceptance:**
+1. A completed torrent uploads under the seed policy: in a loopback-only test (two engines on 127.0.0.1; DHT,
+   trackers and PEX off) one engine downloads a whole torrent from another that holds it complete. Under
+   seed_policy "off" the client does not seed; a completed torrent the user paused uploads nothing (note 2).
+2. A refused or failed-restore entry's remove with data deletes nothing at its destination that another tracked
+   entry has, or may come to have, under the same name: attached, queued with its .torrent, or not yet named
+   (a magnet waiting for metadata, an address queued or being fetched, a torrent joining the client). A queued
+   same-name torrent and a restoring same-name torrent each keep their data (note 3).
+3. Data whose name another download used when the entry was refused is never deleted, even once that download
+   is removed: the remove returns a DataKeptError, saying "may use" when no tracked download is known to use it,
+   never that the data was deleted; with nothing left on disk it returns nil (note 4).
+4. A torrent restored paused joins the client with its transfers held before its info dictionary is set; a test
+   reads the gate at that point. A Resume in that window lifts the gate (T-9134).
+5. Resume of a torrent restored paused, with a slot free, opens its gate: downloads for one missing data,
+   seeding for one complete (note 5).
+6. Each fix is mutation-checked; `make race` on the touched packages is green; goleak stays clean.
+
+**Notes:** Note 2 was real: Seed was never set, so a completed torrent wanted nothing and uploaded nothing (the
+loopback test sat at 0 bytes for 20 s). DEC-168: Seed for every policy but "off", upload while downloading kept
+reciprocal. DEC-169: the library's add-time disallow options are declared but never read (v1.61.0), so a
+paused torrent joins without its info, is gated, then handed the info. DEC-167: entries with no data name yet
+block a refused entry's delete; sharedName data is always kept; DataKeptError gains Maybe ("may use").
+Refused entries now delete by leftName only. Eleven mutations, all killed (PR body). Backlog T-9136.
