@@ -783,10 +783,17 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9132` `TestProbeListenPortLetsUDPPickWhenTCPPicksKeepLandingOnReservedUDPPorts`
   (`internal/engine/listen_test.go:100`) failed once on the advisory `go test -race (windows-latest)` job and passed
   on rerun (run 37101913567). Flaky; find what it races on. Logged during review of T-9127 (PR #100).
-- `T-9136` A peer that connected while a seeder was paused can stall partway after the seeder resumes
-  (`TestRestoredPausedSeedUploadsNothingUntilResumed`, `internal/engine/anacrolix/seed_test.go`, stalled at half
-  in 2 of 30 race runs before the test switched to a fresh peer after Resume). Seen with the library's own peer
-  state; find out whether the engine can help a reconnect. From T-9135.
+- `T-9136` The loopback seed tests hand a fresh peer to a seeder after a Resume. The first peer's connection is
+  closed while the seeder is paused, and an offline engine has no peer rediscovery (no DHT, trackers or PEX), so
+  nothing re-dials it. In production rediscovery re-finds the peer; check whether a resumed torrent should re-dial
+  the peers it dropped while paused. The intermittent stall at half the data seen in T-9135 was the library's lost
+  writer wake-up (T-9137), not the pause. From T-9135.
+- `T-9137` The library's peer-connection writer (anacrolix/torrent v1.61.0, `peer-conn-msg-writer.go` lines 84 to 97)
+  takes its wake-up channel only after filling its write buffer, so a wake-up that lands in between is lost and a
+  ready piece waits for the keep-alive timeout: a minute by default, so a real connection can stall for up to 60 s.
+  Test engines shorten the timeout (T-9135); production keeps the default. Possible mitigations: a shorter
+  production KeepAliveTimeout (a few seconds; keep-alives are cheap), or an upstream fix that takes the signal
+  before filling the buffer. From the review of T-9135 (PR #102).
 
 ---
 
@@ -966,6 +973,8 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-167 | 2026-10-03 | T-9135 (PR #101 notes 3, 4): a refused entry keeps its data when another entry at the destination uses its name or has not named its data yet; sharedName data is never deleted; DataKeptError.Maybe says "may use" |
 | DEC-168 | 2026-10-03 | T-9135 (PR #101 note 2): the library's Seed is set for every seed policy but "off"; upload while downloading stays reciprocal (DisableAggressiveUpload) |
 | DEC-169 | 2026-10-03 | T-9135 (T-9134): a torrent paused before it joins the client is added without its info, gated, then handed the info; the library's add-time disallow options are never read |
+| DEC-170 | 2026-10-03 | T-9135 (PR #102 review 3): the seed-policy stop, uploads over every session and first completion time are omitempty record fields; a stopped torrent restores held; an older record counts afresh |
+| DEC-171 | 2026-10-03 | T-9135 (PR #102 review 0): the unlimited rate limiter carries an explicit 1 MiB burst; the library's zero-burst default overflows to a negative burst on amd64 and blocks every peer connection |
 
 ## Blocked
 
