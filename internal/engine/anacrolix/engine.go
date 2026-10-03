@@ -1191,16 +1191,6 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 
 	spec.Storage = store
 
-	// A torrent paused before it was attached (restored paused, T-952, or
-	// paused while its .torrent was fetched) joins the client with its
-	// transfers already held; the gate is settled again under the lock
-	// below, in case a Resume ran meanwhile.
-	e.mu.Lock()
-	held := tr.paused
-	e.mu.Unlock()
-
-	spec.DisallowDataDownload, spec.DisallowDataUpload = held, held
-
 	t, isNew, err := e.client.AddTorrentSpec(spec)
 	if err != nil {
 		return fmt.Errorf("anacrolix: add torrent: %w", err)
@@ -1240,15 +1230,6 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 	tr.t = t
 	if tr.state == engine.StateChecking {
 		tr.name = t.Name()
-	}
-
-	switch {
-	case tr.paused:
-		t.DisallowDataDownload()
-		t.DisallowDataUpload()
-	case held:
-		t.AllowDataDownload()
-		t.AllowDataUpload()
 	}
 
 	// Counted under the same lock that saw the engine open, so it can
