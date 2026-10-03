@@ -434,7 +434,8 @@ func TestGlyphCapability(t *testing.T) {
 
 // TestStartupNoticesNameWhatStartupFound: the first render's notices say
 // where a first run wrote config, count config problems, pass on a store
-// recovery, and count resumed torrents with missing data or that failed.
+// recovery, count resumed torrents with missing data or that failed, and name
+// where a dropped duplicate record's data is left unmanaged (T-9127).
 func TestStartupNoticesNameWhatStartupFound(t *testing.T) {
 	loaded := config.LoadResult{
 		FirstRun: true,
@@ -444,6 +445,11 @@ func TestStartupNoticesNameWhatStartupFound(t *testing.T) {
 	report := lifecycle.ResumeReport{
 		Missing: []engine.TorrentStatus{{ID: "m"}},
 		Failed:  []engine.TorrentStatus{{ID: "f1"}, {ID: "f2"}},
+		Dropped: []lifecycle.DroppedRecord{
+			{ID: "an-2", Name: "elsewhere", SavePath: filepath.Join("data", "old"), KeptAs: "an-1", Elsewhere: true},
+			{ID: "an-4", SavePath: filepath.Join("data", "other"), KeptAs: "an-3", Elsewhere: true},
+			{ID: "an-6", Name: "same", SavePath: filepath.Join("data", "new"), KeptAs: "an-5"},
+		},
 	}
 
 	got := startupNotices(loaded, "store was unreadable; moved aside", report)
@@ -453,6 +459,9 @@ func TestStartupNoticesNameWhatStartupFound(t *testing.T) {
 		"store was unreadable; moved aside",
 		"1 resumed download with missing data on disk — see Downloads",
 		"2 resumed downloads could not be restored — see Downloads",
+		"unmanaged data in " + filepath.Join("data", "old") + ": dropped duplicate record of elsewhere",
+		"unmanaged data in " + filepath.Join("data", "other") + ": dropped duplicate record of an-4",
+		"dropped 1 duplicate record of downloads already resumed",
 	}
 
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {

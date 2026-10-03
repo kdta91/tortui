@@ -490,6 +490,17 @@ paused, not left to fill the disk, if free space drops below the margin partway 
 space at that destination (or lower `min_free_space` in Settings' preferences panel) and resume it
 with `p`.
 
+**Adding a torrent says "remove its errored row (x) first: left data in <folder>"**
+An earlier add of the same torrent failed and is still listed in Downloads, errored, and it left
+data in another folder. tortui never deletes data on its own: remove that row first (`x`, keeping
+or deleting its data), then add the torrent where you want it. Adding it to the same destination
+picks up the data already there.
+
+**Startup says "unmanaged data in <folder>: dropped duplicate record of ..."**
+Two saved records named the same torrent, at different destinations. tortui kept the older one
+and dropped the other; the data the dropped one had in that folder stays on disk and nothing
+tracks it any more. Delete it by hand if you don't want it.
+
 **I changed a setting in the preferences panel and nothing happened**
 Most fields need a restart to take effect — the save confirmation names exactly which ones
 ("restart to apply: ..."), and the panel marks them "(restart required)". Only the download

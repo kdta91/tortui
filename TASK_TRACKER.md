@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet · `T-9127` Storage discard keeps others' data; dropped resume records and refused re-adds tell the user.
 
 ---
 
@@ -777,12 +777,21 @@ deferrals stay deferred to Backlog T-9004.
   they now name sources.example.org. Non-blocking note from review of T-9120 (PR #98).
 - `T-9124` The top of the Backlog is out of numeric order (T-9004, then T-991 down to T-982). Sort it.
   Non-blocking note from review of T-9120 (PR #98).
-- `T-9125` T-9121's Resume drops the newer of two records sharing an infohash with only a log line. Surface it
-  in `ResumeReport` so the user sees it, and note that data the dropped record had at a different SavePath
-  stays on disk, unmanaged. Non-blocking note from review of T-9121 (PR #99).
-- `T-9126` T-948 (T-9121): a restored torrent whose queued start failed, re-added to a different destination,
-  leaves its partial data at the old SavePath with nothing tracking it. Non-blocking note from review of
-  T-9121 (PR #99).
+- `T-9128` A restored torrent tracked as failed by `trackFailed` (`internal/engine/anacrolix/resume.go`), such as not
+  enough free space at restore, keeps no data name and no infohash: remove-with-data deletes nothing even when its
+  metainfo names data on disk, and a re-add is not matched to it. Found while doing T-9127.
+- `T-9129` The infohash claim (`claimInfoHashLocked`, `internal/engine/anacrolix`) never re-checks that a refused
+  entry's left data still exists, so after the user deletes it by hand an add elsewhere keeps failing with
+  ErrLeftData until the errored row is removed. Non-blocking note N2 from review of T-9127 (PR #100).
+- `T-9130` The claim's "same destination" test is string equality, so a case-insensitive file system or a
+  symlinked alias of the destination gets ErrLeftData for what is the same folder. Non-blocking note N3 from
+  review of T-9127 (PR #100).
+- `T-9131` Storage `discard` only sees its own torrent's handle table, so a different torrent with the same name at
+  the same destination can lose an empty file it opened; the same root cause as two live torrents sharing a name
+  and destination (remove-with-data of one deletes the other's files). Note N4 from review of T-9127 (PR #100).
+- `T-9132` `TestProbeListenPortLetsUDPPickWhenTCPPicksKeepLandingOnReservedUDPPorts`
+  (`internal/engine/listen_test.go:100`) failed once on the advisory `go test -race (windows-latest)` job and passed
+  on rerun (run 37101913567). Flaky; find what it races on. Logged during review of T-9127 (PR #100).
 
 ---
 
@@ -955,6 +964,8 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-160 | 2026-10-02 | T-9112: the Downloads scroll offset is a block start kept by Update; a stale one snaps down, a downward scroll snaps up. |
 | DEC-161 | 2026-10-03 | T-9121: the magnet strip helper is exported from the engine package; the add flow's first record write runs it too, beside the engine's choke point (DEC-153) |
 | DEC-162 | 2026-10-03 | T-9121: a torrent refused after metadata, or whose queued start failed, is untracked when its infohash is added again, which starts over under a new ID |
+| DEC-163 | 2026-10-03 | T-9127: refines DEC-162; an add to another destination is refused (ErrLeftData, remedy and path first) while a refused entry for the infohash left data on disk that no other entry keeps; the user removes that entry, keeping or deleting the data |
+| DEC-164 | 2026-10-03 | T-9127: a create that finds the storage closed keeps the file when a handle in the table is for it or it is no longer empty, and keeps any created directory holding a kept or in-use file |
 
 ## Blocked
 

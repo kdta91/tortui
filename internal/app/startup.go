@@ -11,7 +11,8 @@ import (
 
 // startupNotices is what the first render tells the user about startup, in
 // order: where a first run wrote its config, config problems, a store that
-// had to be set aside, and resumed torrents that came back errored.
+// had to be set aside, resumed torrents that came back errored, and
+// duplicate records Resume dropped.
 func startupNotices(loaded config.LoadResult, storeRecovered string, report lifecycle.ResumeReport) []string {
 	var notices []string
 
@@ -33,6 +34,37 @@ func startupNotices(loaded config.LoadResult, storeRecovered string, report life
 
 	if n := len(report.Failed); n > 0 {
 		notices = append(notices, fmt.Sprintf("%s could not be restored — see Downloads", plural(n, "resumed download")))
+	}
+
+	return append(notices, droppedNotices(report.Dropped)...)
+}
+
+// droppedNotices tells the user about duplicate records Resume dropped
+// (T-9127): one line per record whose data sat elsewhere, leading with where
+// that data is left unmanaged so it fits an 80-column status bar, and one
+// count for the rest.
+func droppedNotices(dropped []lifecycle.DroppedRecord) []string {
+	var (
+		notices []string
+		same    int
+	)
+
+	for _, d := range dropped {
+		if !d.Elsewhere {
+			same++
+			continue
+		}
+
+		name := d.Name
+		if name == "" {
+			name = d.ID
+		}
+
+		notices = append(notices, fmt.Sprintf("unmanaged data in %s: dropped duplicate record of %s", d.SavePath, name))
+	}
+
+	if same > 0 {
+		notices = append(notices, fmt.Sprintf("dropped %s of downloads already resumed", plural(same, "duplicate record")))
 	}
 
 	return notices

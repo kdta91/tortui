@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -471,5 +474,89 @@ func TestSessionResumeDropsADuplicateInfohashRecord(t *testing.T) {
 
 	if n := len(st.ListTorrents()); n != 1 {
 		t.Errorf("store holds %d records, want 1", n)
+	}
+}
+
+// TestSessionResumeReportsADroppedDuplicate is T-9127 (Backlog T-9125): the
+// record T-953 drops is listed in the ResumeReport, and when it was saved at a
+// different destination from the torrent kept, the report says its data there
+// is left unmanaged. Nothing is deleted.
+func TestSessionResumeReportsADroppedDuplicate(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		elsewhere bool
+		recorded  string // the dropped record's saved name
+		shown     string // the name the report gives it
+	}{
+		{name: "same destination", recorded: "second", shown: "second"},
+		{name: "another destination", elsewhere: true, recorded: "second", shown: "second"},
+		// A session saved before T-9057 named a torrent added by address
+		// with that address, api key and all.
+		{
+			name: "address-shaped name", elsewhere: true,
+			recorded: "https://feed.example.org/dl?apikey=K", shown: "torrent file from feed.example.org",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			st := openStore(t, filepath.Join(t.TempDir(), "tortui.db"))
+			base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+
+			const hash = "4123456789abcdef0123456789abcdef01234567"
+
+			secondDir := dir
+			if tc.elsewhere {
+				secondDir = filepath.Join(dir, "other")
+			}
+
+			leftover := filepath.Join(secondDir, "partial.bin")
+			if err := os.MkdirAll(secondDir, 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+
+			if err := os.WriteFile(leftover, []byte("partial"), 0o600); err != nil {
+				t.Fatalf("write leftover: %v", err)
+			}
+
+			setRecords(t, st,
+				store.TorrentRecord{
+					ID: "an-1", Name: "first", Magnet: "magnet:?xt=urn:btih:" + hash, AddedAt: base, SavePath: dir,
+				},
+				store.TorrentRecord{
+					ID: "an-2", Name: tc.recorded, Magnet: "magnet:?xt=urn:btih:" + hash,
+					AddedAt: base.Add(time.Hour), SavePath: secondDir,
+				})
+
+			e, err := anacrolix.New(anacrolix.Options{
+				Config:  config.Config{DownloadDir: dir},
+				Logger:  quietLogger(),
+				Offline: true,
+			})
+			if err != nil {
+				t.Fatalf("anacrolix.New: %v", err)
+			}
+
+			t.Cleanup(func() { _ = e.Close() })
+
+			report, err := NewSession(e, st, quietLogger()).Resume(context.Background())
+			if err != nil {
+				t.Fatalf("Resume: %v", err)
+			}
+
+			want := []DroppedRecord{{
+				ID: "an-2", Name: tc.shown, SavePath: secondDir, KeptAs: "an-1", Elsewhere: tc.elsewhere,
+			}}
+			if !reflect.DeepEqual(report.Dropped, want) {
+				t.Errorf("report.Dropped = %+v, want %+v", report.Dropped, want)
+			}
+
+			if got := fmt.Sprintf("%+v", report.Dropped); strings.Contains(got, "apikey") || strings.Contains(got, "=K") {
+				t.Errorf("report.Dropped carries the address's api key: %s", got)
+			}
+
+			if _, err := os.Stat(leftover); err != nil {
+				t.Errorf("the dropped record's data was touched: %v", err)
+			}
+		})
 	}
 }

@@ -3,6 +3,11 @@ package anacrolix
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -275,5 +280,184 @@ func TestReAddOfASpacePausedTorrentHandsBackTheSameEntry(t *testing.T) {
 
 	if n := len(e.client.Torrents()); n != 1 {
 		t.Errorf("client holds %d torrents, want 1", n)
+	}
+}
+
+// TestReAddElsewhereOfARefusedTorrentWithDataIsRefused is T-9127 (Backlog
+// T-9126, DEC-163). A restored torrent whose queued start fails is refused
+// with its partial data still at its destination. Adding it again to another
+// destination would leave that data with nothing tracking it, so that add is
+// refused, naming the data, and the errored entry stays for the user to
+// remove, with or without its data. An add to the same destination, or one
+// whose refused entry left nothing on disk, starts over as before (DEC-162).
+func TestReAddElsewhereOfARefusedTorrentWithDataIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		data      bool   // partial data from an earlier session is on disk
+		elsewhere bool   // the re-add picks another destination
+		via       string // how the re-add names the torrent: "" a file, or an address
+		// that serves it ("address") or redirects to its magnet ("redirect"),
+		// which fail after Add returns
+	}{
+		{name: "data, another destination", data: true, elsewhere: true},
+		{name: "data, another destination, by address", data: true, elsewhere: true, via: "address"},
+		{name: "data, another destination, by redirect", data: true, elsewhere: true, via: "redirect"},
+		{name: "data, same destination", data: true},
+		{name: "no data, another destination", elsewhere: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var free atomic.Uint64
+			free.Store(1 << 40)
+
+			e := newTestEngine(t, func(o *Options) {
+				o.Config.MaxActiveDownloads = 1
+				o.MetadataTimeout = time.Hour
+				o.freeSpace = func(string) (uint64, error) { return free.Load(), nil }
+			})
+
+			ctx := context.Background()
+			first := filepath.Join(e.downloadDir, "first")
+			second := filepath.Join(e.downloadDir, "second")
+			info := buildInfo("left-behind", [][]string{{"q.bin"}})
+			left := filepath.Join(first, "left-behind")
+
+			if tc.data {
+				if err := os.MkdirAll(left, 0o755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+
+				if err := os.WriteFile(filepath.Join(left, "q.bin"), []byte("partial"), 0o600); err != nil {
+					t.Fatalf("write partial data: %v", err)
+				}
+			}
+
+			slot, err := e.Add(ctx, engine.AddSource{Magnet: magnetURI("left-behind-slot")})
+			if err != nil {
+				t.Fatalf("Add(slot): %v", err)
+			}
+
+			restored, err := e.Restore(ctx, engine.ResumeData{
+				ID: "an-9", Name: "left-behind", Metainfo: encodeTorrent(t, info), SavePath: first,
+			})
+			if err != nil {
+				t.Fatalf("Restore: %v", err)
+			}
+
+			if st := statusOf(t, e, restored); st.State != engine.StateQueued {
+				t.Fatalf("restored state = %s (err %v), want queued", st.State, st.Err)
+			}
+
+			free.Store(0)
+
+			if err := e.Remove(slot, false); err != nil {
+				t.Fatalf("Remove(slot): %v", err)
+			}
+
+			if st := waitForState(t, e, restored, engine.StateErrored); !errors.Is(st.Err, ErrInsufficientSpace) {
+				t.Fatalf("promoted start: err %v, want ErrInsufficientSpace", st.Err)
+			}
+
+			free.Store(1 << 40)
+
+			dest := first
+			if tc.elsewhere {
+				dest = second
+			}
+
+			path := writeTorrentFile(t, info)
+
+			infoBytes, err := bencode.Marshal(info)
+			if err != nil {
+				t.Fatalf("bencode info: %v", err)
+			}
+
+			hash := metainfo.HashBytes(infoBytes).HexString()
+
+			src := engine.AddSource{FilePath: path, SavePath: dest}
+
+			switch tc.via {
+			case "address":
+				src = engine.AddSource{TorrentURL: serveTorrent(t, encodeTorrent(t, info)), SavePath: dest}
+			case "redirect":
+				address, _ := serveMagnetRedirect(t, http.StatusFound, "magnet:?xt=urn:btih:"+hash)
+				src = engine.AddSource{TorrentURL: address, SavePath: dest}
+			}
+
+			again, err := e.Add(ctx, src)
+			if tc.via != "" && err == nil {
+				st := waitForState(t, e, again, engine.StateErrored)
+				err = st.Err
+
+				if rmErr := e.Remove(again, false); rmErr != nil {
+					t.Fatalf("Remove(the failed address add): %v", rmErr)
+				}
+			}
+
+			if !tc.data || !tc.elsewhere {
+				if err != nil {
+					t.Fatalf("re-Add: %v", err)
+				}
+
+				if listed(e, restored) {
+					t.Errorf("the refused entry %s is still listed after the re-Add", restored)
+				}
+
+				waitForState(t, e, again, engine.StateDownloading)
+
+				if tc.data {
+					if _, err := os.Stat(filepath.Join(left, "q.bin")); err != nil {
+						t.Errorf("the partial data was touched: %v", err)
+					}
+				}
+
+				return
+			}
+
+			if !errors.Is(err, ErrLeftData) || !strings.Contains(err.Error(), left) {
+				t.Fatalf("re-Add elsewhere = %q, %v; want ErrLeftData naming %s", again, err, left)
+			}
+
+			if st := statusOf(t, e, restored); st.State != engine.StateErrored {
+				t.Fatalf("refused entry state = %s, want it still listed, errored", st.State)
+			}
+
+			if _, err := os.Stat(filepath.Join(left, "q.bin")); err != nil {
+				t.Fatalf("the refused add touched the partial data: %v", err)
+			}
+
+			// The user removes the errored entry with its data, then adds
+			// the torrent where they want it.
+			if err := e.Remove(restored, true); err != nil {
+				t.Fatalf("Remove(refused, with data): %v", err)
+			}
+
+			if _, err := os.Lstat(left); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("%s still exists after remove with data (stat err %v)", left, err)
+			}
+
+			again, err = e.Add(ctx, src)
+			if err != nil {
+				t.Fatalf("Add after the remove: %v", err)
+			}
+
+			if tc.via != "redirect" {
+				waitForState(t, e, again, engine.StateDownloading)
+				return
+			}
+
+			// A magnet stays checking offline: wait for the switch to it.
+			waitUntil(t, "the redirect's magnet to be added", func() bool {
+				st := statusOf(t, e, again)
+				return st.InfoHash == hash || st.State == engine.StateErrored
+			})
+
+			if st := statusOf(t, e, again); st.State == engine.StateErrored {
+				t.Fatalf("add after the remove errored: %v", st.Err)
+			}
+		})
 	}
 }

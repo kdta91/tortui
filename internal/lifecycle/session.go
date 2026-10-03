@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -84,13 +85,37 @@ type ResumeReport struct {
 	// reason: a destination no longer among the known roots, unreadable
 	// or unsafe saved metadata, not enough free space.
 	Failed []engine.TorrentStatus
+
+	// Dropped lists records Resume dropped from the store because the
+	// engine restored them onto a torrent an older record had already
+	// restored: one infohash recorded twice (T-953). Not counted in
+	// Restored. Nothing on disk is touched (T-9127).
+	Dropped []DroppedRecord
+}
+
+// DroppedRecord is a duplicate record Resume dropped.
+type DroppedRecord struct {
+	// ID, Name and SavePath are the dropped record's own; Name is safe to
+	// show (engine.SafeName), never an address.
+	ID       string
+	Name     string
+	SavePath string
+
+	// KeptAs is the ID of the torrent the older record restored.
+	KeptAs string
+
+	// Elsewhere is set when SavePath is not where the kept torrent's data
+	// lives: whatever the dropped record downloaded there stays on disk,
+	// and nothing tracks it any more.
+	Elsewhere bool
 }
 
 // Resume re-adds every torrent recorded in the store to the engine, oldest
 // first so queue order survives, and re-keys any record whose torrent came
 // back under a different ID. A record the engine restores onto a torrent this
 // pass already restored — the same infohash as an older record — is dropped
-// from the store and not counted (T-953). It returns an error only when the
+// from the store, not counted, and listed in ResumeReport.Dropped (T-953,
+// T-9127). It returns an error only when the
 // engine cannot resume at all or stopped accepting torrents part-way (closed,
 // or ctx cancelled); every per-torrent problem is reported in the
 // ResumeReport and shows in the engine as StateErrored instead.
@@ -148,7 +173,14 @@ func (s *Session) Resume(ctx context.Context) (ResumeReport, error) {
 			}
 
 			s.logger.Warn("lifecycle: dropped a record naming a torrent already restored",
-				"id", rec.ID, "restored_as", id)
+				"id", rec.ID, "restored_as", id, "save_path", rec.SavePath)
+
+			// A session saved before T-9057 may name a torrent added by
+			// address with that address, api key and all; it is shown by
+			// host only, as the engine shows it.
+			report.Dropped = append(report.Dropped, DroppedRecord{
+				ID: rec.ID, Name: engine.SafeName(rec.Name), SavePath: rec.SavePath, KeptAs: id,
+			})
 
 			continue
 		}
@@ -175,6 +207,12 @@ func (s *Session) Resume(ctx context.Context) (ResumeReport, error) {
 		statuses[st.ID] = st
 	}
 
+	for i, d := range report.Dropped {
+		kept, ok := statuses[d.KeptAs]
+		report.Dropped[i].Elsewhere = ok && d.SavePath != "" &&
+			filepath.Clean(d.SavePath) != filepath.Clean(kept.SavePath)
+	}
+
 	for _, id := range restoredIDs {
 		st, ok := statuses[id]
 		if !ok || st.State != engine.StateErrored {
@@ -191,7 +229,8 @@ func (s *Session) Resume(ctx context.Context) (ResumeReport, error) {
 	s.resumed = true
 
 	s.logger.Info("lifecycle: session resumed",
-		"restored", report.Restored, "missing_data", len(report.Missing), "failed", len(report.Failed))
+		"restored", report.Restored, "missing_data", len(report.Missing), "failed", len(report.Failed),
+		"dropped", len(report.Dropped))
 
 	return report, nil
 }
