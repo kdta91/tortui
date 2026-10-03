@@ -152,7 +152,18 @@ func Shutdown(opts ShutdownOptions) []error {
 // pauseAll pauses every torrent the engine currently tracks, logging (but
 // not failing the step on) any individual Pause error — one bad torrent ID
 // must not stop the rest from being paused before the engine closes.
+//
+// An engine.ShutdownPauser pauses them all itself, so the session's final
+// save still sees only the pauses the user asked for (T-952).
 func pauseAll(e engine.Engine, logger *slog.Logger) error {
+	if sp, ok := e.(engine.ShutdownPauser); ok {
+		if err := sp.PauseForShutdown(); err != nil {
+			logger.Warn("lifecycle: pause failed during shutdown", "error", err)
+		}
+
+		return nil
+	}
+
 	for _, ts := range e.List() {
 		if err := e.Pause(ts.ID); err != nil {
 			logger.Warn("lifecycle: pause failed during shutdown", "id", ts.ID, "error", err)

@@ -35,7 +35,7 @@ straight away. Runs on **macOS, Linux, and Windows**.
 - **Download management.** Progress, rates, peers, ETA, queue position. Open the file, reveal
   the folder, open the source page, pause, resume, or remove with or without the data.
 - **Resumes where it left off.** Downloads come back after a restart without re-fetching pieces
-  already verified. Each download folder gets a hidden piece-record file (`.torrent.db` or
+  already verified, and one you paused stays paused. Each download folder gets a hidden piece-record file (`.torrent.db` or
   `.torrent.bolt.db`) for this; leave it in place.
 - **Minimal by design.** One accent colour, boxes only for dialogs and forms, and a layout that
   fits 80×24.
@@ -206,7 +206,8 @@ downloads. On first run it writes a default config (the status bar says where) a
 one-time welcome with the legal notice. It opens on an empty Search screen and queries nothing
 until you search or press `L`. Only one tortui runs per state directory; a second one says so and
 exits. Quitting (`q`), `SIGINT`, or
-`SIGTERM` pauses and saves your downloads before exiting, and the next start resumes them.
+`SIGTERM` pauses and saves your downloads before exiting, and the next start resumes them,
+except the ones you paused yourself.
 
 ---
 

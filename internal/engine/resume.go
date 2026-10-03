@@ -48,6 +48,13 @@ type ResumeData struct {
 
 	// Origin is where the torrent was originally added from.
 	Origin Origin
+
+	// Paused is set when the user paused the torrent (Engine.Pause) and
+	// has not resumed it. A torrent paused for any other reason — for
+	// lack of free space, by the seed policy, by PauseForShutdown — or
+	// waiting in the queue is not. Restore brings a paused torrent back
+	// paused, its transfers held from the start (T-952).
+	Paused bool
 }
 
 // Resumer is implemented by an Engine that can save and restore torrents
@@ -70,4 +77,15 @@ type Resumer interface {
 	// dropped and the user can remove it. Restore returns an error only
 	// when it tracked nothing: a closed engine or a cancelled ctx.
 	Restore(ctx context.Context, d ResumeData) (string, error)
+}
+
+// ShutdownPauser is implemented by an Engine that can pause every torrent at
+// shutdown without the pause counting as the user's: ResumeData reports only
+// a pause the user asked for, so a restart brings back exactly those torrents
+// paused (T-952). Like Resumer it is optional; a caller discovers it with a
+// type assertion and falls back to Pause on each torrent.
+type ShutdownPauser interface {
+	// PauseForShutdown holds every tracked torrent's transfers as Pause
+	// does, without marking any of them paused by the user.
+	PauseForShutdown() error
 }

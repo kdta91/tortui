@@ -28,6 +28,10 @@ type provenance struct {
 	magnet     string
 	torrentURL string
 	metainfo   []byte
+
+	// paused is a pause the user asked for in the session that saved the
+	// torrent: the entry starts paused, its transfers held (T-952).
+	paused bool
 }
 
 // newTracked builds a tracked entry carrying p. The caller sets its state and
@@ -41,6 +45,8 @@ func (p provenance) newTracked(id, dest, name string) *tracked {
 		magnet:     p.magnet,
 		torrentURL: p.torrentURL,
 		metainfo:   p.metainfo,
+		paused:     p.paused,
+		userPaused: p.paused,
 		done:       make(chan struct{}),
 	}
 }
@@ -97,6 +103,7 @@ func (e *Engine) ResumeData(id string) (engine.ResumeData, error) {
 		Metainfo:   bytes.Clone(tr.metainfo),
 		SavePath:   tr.savePath,
 		Origin:     tr.origin,
+		Paused:     tr.userPaused,
 	}
 	t, spec := tr.t, tr.spec
 	e.mu.Unlock()
@@ -155,6 +162,7 @@ func (e *Engine) Restore(ctx context.Context, d engine.ResumeData) (string, erro
 		magnet:     engine.WithoutMetainfoSources(d.Magnet),
 		torrentURL: d.TorrentURL,
 		metainfo:   bytes.Clone(d.Metainfo),
+		paused:     d.Paused,
 	}
 
 	// A session saved before T-9057 may name a torrent added by address
@@ -163,7 +171,8 @@ func (e *Engine) Restore(ctx context.Context, d engine.ResumeData) (string, erro
 
 	dest, err := resolveDestination(d.SavePath, e.downloadDir, e.knownRoots())
 	if err != nil {
-		return e.trackFailed(prov, d.SavePath, name, err)
+		// Not a known root: nothing there is named as this entry's data.
+		return e.trackErrored(prov, d.SavePath, name, err, false)
 	}
 
 	switch {
@@ -280,17 +289,36 @@ func anyPieceComplete(pc storage.PieceCompletion, ih metainfo.Hash, pieces int) 
 	return false
 }
 
-// trackFailed tracks a restored torrent that cannot run, in StateErrored with
+// trackFailed tracks a restored torrent that cannot run at dest, a known
+// destination root; see trackErrored.
+func (e *Engine) trackFailed(prov provenance, dest, name string, cause error) (string, error) {
+	return e.trackErrored(prov, dest, name, cause, true)
+}
+
+// trackErrored tracks a restored torrent that cannot run, in StateErrored with
 // cause as its reason, keeping everything ResumeData needs so the entry
 // survives another restart until the user removes it. It returns an error
 // only when the engine is closed.
-func (e *Engine) trackFailed(prov provenance, dest, name string, cause error) (string, error) {
+//
+// The entry is refused, like one awaitInfo refused (T-948, T-9127): it
+// carries the infohash its saved metainfo or magnet names, so a re-add is
+// matched to it, and, when rooted (dest is a known destination root), the
+// validated name of its data on disk there, which a remove with data deletes
+// (T-9128).
+func (e *Engine) trackErrored(prov provenance, dest, name string, cause error, rooted bool) (string, error) {
 	if errors.Is(cause, ErrClosed) {
 		return "", cause
 	}
 
 	if name == "" {
 		name = prov.id
+	}
+
+	hex, info := restoredIdentity(prov)
+
+	left := ""
+	if rooted {
+		left = leftData(info, dest)
 	}
 
 	e.mu.Lock()
@@ -303,6 +331,9 @@ func (e *Engine) trackFailed(prov provenance, dest, name string, cause error) (s
 	tr := prov.newTracked(e.mintIDLocked(prov.id), dest, name)
 	tr.state = engine.StateErrored
 	tr.err = fmt.Errorf("anacrolix: torrent %s: %w", tr.id, cause)
+	tr.infoHash = hex
+	tr.refused = true
+	e.keepLeftLocked(tr, left)
 
 	e.torrents[tr.id] = tr
 	e.order = append(e.order, tr.id)
@@ -311,4 +342,30 @@ func (e *Engine) trackFailed(prov provenance, dest, name string, cause error) (s
 		"id", tr.id, "destination", dest, "error", cause)
 
 	return tr.id, nil
+}
+
+// restoredIdentity returns the infohash a restored torrent's saved metainfo
+// names, with its info dictionary when that is readable, or else the
+// infohash its saved magnet names; "" and nil when neither names one.
+func restoredIdentity(prov provenance) (string, *metainfo.Info) {
+	if n := len(prov.metainfo); n > 0 && n <= maxTorrentFileBytes {
+		if mi, err := metainfo.Load(bytes.NewReader(prov.metainfo)); err == nil {
+			if spec, err := torrent.TorrentSpecFromMetaInfoErr(mi); err == nil {
+				info, err := specInfo(spec)
+				if err != nil {
+					return spec.InfoHash.HexString(), nil
+				}
+
+				return spec.InfoHash.HexString(), info
+			}
+		}
+	}
+
+	if trimmed(prov.magnet) != "" {
+		if spec, _, err := specFromMagnet(prov.magnet); err == nil {
+			return spec.InfoHash.HexString(), nil
+		}
+	}
+
+	return "", nil
 }

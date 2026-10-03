@@ -50,6 +50,11 @@ type TorrentRecord struct {
 	// anything. It is attacker-controlled data like any .torrent, and is
 	// re-validated whenever it is used.
 	Metainfo []byte `json:"metainfo,omitempty"`
+
+	// Paused is set when the user paused the torrent, so a restart brings
+	// it back paused (T-952). A record written before the field existed
+	// reads as false: the torrent resumes running, as it always did.
+	Paused bool `json:"paused,omitempty"`
 }
 
 // SetTorrent inserts or replaces the record for rec.ID. It returns

@@ -264,6 +264,11 @@ func TestReAddOfASpacePausedTorrentHandsBackTheSameEntry(t *testing.T) {
 		t.Fatalf("err %v, want the space pause's ErrInsufficientSpace", st.Err)
 	}
 
+	// Not the user's pause: a restart does not bring it back paused (T-952).
+	if pausedOf(t, e, id) {
+		t.Error("ResumeData.Paused of a space-paused torrent = true, want false")
+	}
+
 	// A magnet carries no size, so the re-add is not refused up front.
 	again, err := e.Add(context.Background(), engine.AddSource{Magnet: magnet})
 	if err != nil {
@@ -300,8 +305,12 @@ func TestReAddElsewhereOfARefusedTorrentWithDataIsRefused(t *testing.T) {
 		via       string // how the re-add names the torrent: "" a file, or an address
 		// that serves it ("address") or redirects to its magnet ("redirect"),
 		// which fail after Add returns
+		deleted bool // the user deletes the left data by hand before the re-add (T-9129)
 	}{
 		{name: "data, another destination", data: true, elsewhere: true},
+		{name: "data deleted by hand, another destination", data: true, elsewhere: true, deleted: true},
+		{name: "data deleted by hand, another destination, by address", data: true, elsewhere: true, via: "address", deleted: true},
+		{name: "data deleted by hand, another destination, by redirect", data: true, elsewhere: true, via: "redirect", deleted: true},
 		{name: "data, another destination, by address", data: true, elsewhere: true, via: "address"},
 		{name: "data, another destination, by redirect", data: true, elsewhere: true, via: "redirect"},
 		{name: "data, same destination", data: true},
@@ -363,6 +372,12 @@ func TestReAddElsewhereOfARefusedTorrentWithDataIsRefused(t *testing.T) {
 
 			free.Store(1 << 40)
 
+			if tc.deleted {
+				if err := os.RemoveAll(left); err != nil {
+					t.Fatalf("delete the left data by hand: %v", err)
+				}
+			}
+
 			dest := first
 			if tc.elsewhere {
 				dest = second
@@ -388,7 +403,7 @@ func TestReAddElsewhereOfARefusedTorrentWithDataIsRefused(t *testing.T) {
 			}
 
 			again, err := e.Add(ctx, src)
-			if tc.via != "" && err == nil {
+			if tc.via != "" && err == nil && !tc.deleted {
 				st := waitForState(t, e, again, engine.StateErrored)
 				err = st.Err
 
@@ -397,18 +412,27 @@ func TestReAddElsewhereOfARefusedTorrentWithDataIsRefused(t *testing.T) {
 				}
 			}
 
-			if !tc.data || !tc.elsewhere {
+			if !tc.data || !tc.elsewhere || tc.deleted {
 				if err != nil {
 					t.Fatalf("re-Add: %v", err)
+				}
+
+				// An address add claims the infohash once its fetch is done:
+				// wait for that before looking for the refused entry.
+				if tc.via == "redirect" {
+					// A magnet stays checking offline.
+					waitUntil(t, "the redirect's magnet to be added", func() bool {
+						return statusOf(t, e, again).InfoHash == hash
+					})
+				} else {
+					waitForState(t, e, again, engine.StateDownloading)
 				}
 
 				if listed(e, restored) {
 					t.Errorf("the refused entry %s is still listed after the re-Add", restored)
 				}
 
-				waitForState(t, e, again, engine.StateDownloading)
-
-				if tc.data {
+				if tc.data && !tc.deleted {
 					if _, err := os.Stat(filepath.Join(left, "q.bin")); err != nil {
 						t.Errorf("the partial data was touched: %v", err)
 					}

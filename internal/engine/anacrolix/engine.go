@@ -228,6 +228,12 @@ type tracked struct {
 	// awaitInfo and DEC-102.
 	paused bool
 
+	// userPaused is set when Pause paused the torrent, and cleared by
+	// Resume: the user's pause, the one pause ResumeData reports so it
+	// survives a restart (T-952). A pause by the free-space check, the
+	// seed policy, or PauseForShutdown sets paused alone.
+	userPaused bool
+
 	// prePauseState is the state to restore on Resume: whatever state was
 	// showing at the moment Pause was called, so resuming a
 	// still-checking torrent goes back to StateChecking and resuming a
@@ -296,6 +302,12 @@ type tracked struct {
 	// entry, and an add of the same infohash to another destination is
 	// refused with ErrLeftData while the entry is tracked (T-9127).
 	leftName string
+
+	// sharedName is set instead of leftName when the data on disk under
+	// the refused entry's name is another tracked entry's (same name, same
+	// destination): never this entry's to delete or name, but a remove
+	// with data says it kept it (T-9133).
+	sharedName string
 
 	down rateMeter
 	up   rateMeter
@@ -854,7 +866,10 @@ func (e *Engine) track(ctx context.Context, dest, rawURL, name string, prov prov
 	e.torrents[t.id] = t
 	e.order = append(e.order, t.id)
 
-	if e.activeLocked() > e.maxActive {
+	// A torrent restored paused holds no slot, so it never queues (T-952).
+	if t.paused {
+		t.prePauseState, t.state = t.state, engine.StatePaused
+	} else if e.activeLocked() > e.maxActive {
 		t.url, t.urlCtx = rawURL, context.WithoutCancel(ctx)
 		e.enqueueLocked(t)
 
@@ -969,6 +984,7 @@ func (e *Engine) untrackLocked(tr *tracked) {
 // concurrent Adds can never together overshoot max_active_downloads.
 func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string, prov provenance) (tr *tracked, existingID string, queued bool, err error) {
 	hex, name := spec.InfoHash.HexString(), displayName(spec)
+	gone := e.goneLeftData(hex)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -977,7 +993,7 @@ func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string, prov proven
 		return nil, "", false, ErrClosed
 	}
 
-	if id, ok, err := e.claimInfoHashLocked(hex, nil, dest); err != nil {
+	if id, ok, err := e.claimInfoHashLocked(hex, nil, dest, gone); err != nil {
 		return nil, "", false, err
 	} else if ok {
 		return nil, id, false, nil
@@ -987,7 +1003,11 @@ func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string, prov proven
 	t.infoHash = hex
 	t.state = engine.StateChecking
 
-	if e.activeLocked() >= e.maxActive {
+	// A torrent restored paused holds no slot, so it never queues; it is
+	// attached with its transfers held (T-952).
+	if t.paused {
+		t.prePauseState, t.state = t.state, engine.StatePaused
+	} else if e.activeLocked() >= e.maxActive {
 		t.spec = spec
 		e.enqueueLocked(t)
 		queued = true
@@ -1421,14 +1441,23 @@ func (e *Engine) refuse(tr *tracked, t *torrent.Torrent, info *metainfo.Info, er
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// Another torrent's data under the same name at the same destination
-	// is not this entry's to delete or to name (T-9127).
-	if left != "" && e.dataNameTakenLocked(tr, left) {
-		left = ""
-	}
-
 	e.failLocked(tr, err)
 	tr.refused = true
+	e.keepLeftLocked(tr, left)
+}
+
+// keepLeftLocked records left, the name of data on disk at refused entry tr's
+// destination, as tr's leftName — or as its sharedName when another tracked
+// entry keeps its data under that name there, which is not tr's to delete or
+// to name (T-9127, T-9133). Engine.mu must be held.
+func (e *Engine) keepLeftLocked(tr *tracked, left string) {
+	tr.leftName, tr.sharedName = "", ""
+
+	if left != "" && e.dataNameTakenLocked(tr, left) {
+		tr.sharedName = left
+		return
+	}
+
 	tr.leftName = left
 }
 
@@ -1473,12 +1502,45 @@ func leftData(info *metainfo.Info, dest string) string {
 	return name
 }
 
-// claimInfoHash is claimInfoHashLocked under Engine.mu.
+// claimInfoHash is claimInfoHashLocked under Engine.mu, after
+// goneLeftData.
 func (e *Engine) claimInfoHash(hex string, self *tracked, dest string) (string, bool, error) {
+	gone := e.goneLeftData(hex)
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	return e.claimInfoHashLocked(hex, self, dest)
+	return e.claimInfoHashLocked(hex, self, dest, gone)
+}
+
+// goneLeftData returns the left-data paths of the refused entries for hex
+// that are no longer on disk: the user deleted them by hand (T-9129). It
+// reads the disk without Engine.mu held, so the claim that takes the result
+// does no I/O under the lock.
+func (e *Engine) goneLeftData(hex string) map[string]bool {
+	if hex == "" {
+		return nil
+	}
+
+	var paths []string
+
+	e.mu.Lock()
+	for _, tr := range e.torrents {
+		if tr.refused && tr.infoHash == hex && tr.leftName != "" {
+			paths = append(paths, filepath.Join(tr.savePath, tr.leftName))
+		}
+	}
+	e.mu.Unlock()
+
+	gone := make(map[string]bool)
+
+	for _, p := range paths {
+		if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
+			gone[p] = true
+		}
+	}
+
+	return gone
 }
 
 // claimInfoHashLocked returns the ID of a tracked torrent other than self
@@ -1488,8 +1550,10 @@ func (e *Engine) claimInfoHash(hex string, self *tracked, dest string) (string, 
 // refused torrent again evaluates it afresh instead of handing back the
 // stale, errored entry (T-948) — unless that entry left data on disk at a
 // destination other than dest, when the claim fails with ErrLeftData and
-// nothing is untracked (T-9127, DEC-163). Engine.mu must be held.
-func (e *Engine) claimInfoHashLocked(hex string, self *tracked, dest string) (string, bool, error) {
+// nothing is untracked (T-9127, DEC-163). Left data whose path is in gone
+// (goneLeftData) was deleted by hand: that entry left nothing, and is
+// untracked like any other (T-9129). Engine.mu must be held.
+func (e *Engine) claimInfoHashLocked(hex string, self *tracked, dest string, gone map[string]bool) (string, bool, error) {
 	if hex == "" {
 		return "", false, nil
 	}
@@ -1510,8 +1574,13 @@ func (e *Engine) claimInfoHashLocked(hex string, self *tracked, dest string) (st
 	}
 
 	for _, tr := range refused {
-		if tr.leftName != "" && tr.savePath != dest {
-			return "", false, &engine.LeftDataError{Path: filepath.Join(tr.savePath, tr.leftName)}
+		if tr.leftName == "" || tr.savePath == dest {
+			continue
+		}
+
+		left := filepath.Join(tr.savePath, tr.leftName)
+		if !gone[left] {
+			return "", false, &engine.LeftDataError{Path: left}
 		}
 	}
 
@@ -1782,6 +1851,23 @@ func (e *Engine) Pause(id string) error {
 		return nil
 	}
 
+	e.pauseLocked(tr)
+	tr.userPaused = true
+
+	// A paused download frees its slot for the next queued torrent.
+	e.wg.Add(1)
+
+	go func() {
+		defer e.wg.Done()
+		e.promote()
+	}()
+
+	return nil
+}
+
+// pauseLocked holds tr's transfers and shows it paused, keeping the state to
+// restore on Resume. tr must not already be paused. Engine.mu must be held.
+func (e *Engine) pauseLocked(tr *tracked) {
 	tr.paused = true
 	e.dequeueLocked(tr.id)
 
@@ -1797,14 +1883,25 @@ func (e *Engine) Pause(id string) error {
 		tr.t.DisallowDataDownload()
 		tr.t.DisallowDataUpload()
 	}
+}
 
-	// A paused download frees its slot for the next queued torrent.
-	e.wg.Add(1)
+// PauseForShutdown implements engine.ShutdownPauser: it pauses every torrent
+// not already paused, as Pause would, without marking any of them paused by
+// the user, so ResumeData still reports exactly the user's pauses (T-952).
+// Nothing is promoted from the queue: every queued torrent is paused too.
+func (e *Engine) PauseForShutdown() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-	go func() {
-		defer e.wg.Done()
-		e.promote()
-	}()
+	if e.closed {
+		return ErrClosed
+	}
+
+	for _, id := range e.order {
+		if tr := e.torrents[id]; !tr.paused {
+			e.pauseLocked(tr)
+		}
+	}
 
 	return nil
 }
@@ -1829,7 +1926,7 @@ func (e *Engine) Resume(id string) error {
 		return nil
 	}
 
-	tr.paused = false
+	tr.paused, tr.userPaused = false, false
 
 	switch {
 	case tr.spacePaused:
@@ -1900,10 +1997,16 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 	// A refused entry the library holds no info for deletes by the name
 	// its data had when it was refused. A refused entry deletes nothing
 	// another tracked entry keeps its data under, at the same destination
-	// (T-9127).
-	name := dataNameLocked(tr)
-	if tr.refused && name != "" && e.dataNameTakenLocked(tr, name) {
-		name = ""
+	// (T-9127), and says so rather than reporting a delete it skipped
+	// (T-9133).
+	name, kept := dataNameLocked(tr), ""
+
+	switch {
+	case !tr.refused || !deleteData:
+	case name != "" && e.dataNameTakenLocked(tr, name):
+		kept, name = name, ""
+	case name == "" && tr.sharedName != "" && e.dataNameTakenLocked(tr, tr.sharedName):
+		kept = tr.sharedName
 	}
 
 	tr.removed = true
@@ -1931,6 +2034,14 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 
 	if !deleteData {
 		return nil
+	}
+
+	if kept != "" {
+		path := filepath.Join(savePath, kept)
+		e.logger.Warn("anacrolix: removed a torrent but kept its data: another download uses it",
+			"id", id, "path", path)
+
+		return &engine.DataKeptError{Path: path}
 	}
 
 	return e.deleteTorrentData(id, savePath, name, roots)

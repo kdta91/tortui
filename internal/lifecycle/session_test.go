@@ -560,3 +560,91 @@ func TestSessionResumeReportsADroppedDuplicate(t *testing.T) {
 		})
 	}
 }
+
+// TestUserPauseSurvivesShutdownAndRestart is T-952 end to end: the user
+// pauses one torrent and leaves another running; Shutdown pauses both and
+// saves; the next session brings back only the user's pause. A record
+// written without the field restores running, as before.
+func TestUserPauseSurvivesShutdownAndRestart(t *testing.T) {
+	dir, dbPath := t.TempDir(), filepath.Join(t.TempDir(), "tortui.db")
+	pausedMagnet := "magnet:?xt=urn:btih:3123456789abcdef0123456789abcdef01234567&dn=example-fixture"
+	runningMagnet := "magnet:?xt=urn:btih:4123456789abcdef0123456789abcdef01234567&dn=example-fixture"
+	olderMagnet := "magnet:?xt=urn:btih:5123456789abcdef0123456789abcdef01234567&dn=example-fixture"
+
+	newEngine := func() *anacrolix.Engine {
+		e, err := anacrolix.New(anacrolix.Options{
+			Config:  config.Config{DownloadDir: dir},
+			Logger:  quietLogger(),
+			Offline: true,
+		})
+		if err != nil {
+			t.Fatalf("anacrolix.New: %v", err)
+		}
+
+		t.Cleanup(func() { _ = e.Close() })
+
+		return e
+	}
+
+	st1, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+
+	e1 := newEngine()
+	s1 := NewSession(e1, st1, quietLogger())
+
+	if _, err := s1.Resume(context.Background()); err != nil {
+		t.Fatalf("Resume (empty): %v", err)
+	}
+
+	paused, err := e1.Add(context.Background(), engine.AddSource{Magnet: pausedMagnet})
+	if err != nil {
+		t.Fatalf("Add(paused): %v", err)
+	}
+
+	running, err := e1.Add(context.Background(), engine.AddSource{Magnet: runningMagnet})
+	if err != nil {
+		t.Fatalf("Add(running): %v", err)
+	}
+
+	if err := e1.Pause(paused); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+
+	if errs := Shutdown(ShutdownOptions{Engine: e1, Store: st1, Session: s1, Logger: quietLogger()}); len(errs) != 0 {
+		t.Fatalf("Shutdown: %v", errs)
+	}
+
+	st2 := openStore(t, dbPath)
+
+	for id, want := range map[string]bool{paused: true, running: false} {
+		if rec, ok := st2.GetTorrent(id); !ok || rec.Paused != want {
+			t.Fatalf("saved record %s = %+v (found %v), want Paused %v", id, rec, ok, want)
+		}
+	}
+
+	// A record saved before T-952: no pause field.
+	setRecords(t, st2, store.TorrentRecord{ID: "an-older", Magnet: olderMagnet, SavePath: dir, AddedAt: time.Now()})
+
+	e2 := newEngine()
+
+	if _, err := NewSession(e2, st2, quietLogger()).Resume(context.Background()); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	states := make(map[string]engine.State)
+	for _, s := range e2.List() {
+		states[s.ID] = s.State
+	}
+
+	if states[paused] != engine.StatePaused {
+		t.Errorf("user-paused torrent restored in state %s, want paused", states[paused])
+	}
+
+	for _, id := range []string{running, "an-older"} {
+		if s, ok := states[id]; !ok || s == engine.StatePaused || s == engine.StateErrored {
+			t.Errorf("torrent %s restored in state %s (listed %v), want it running", id, s, ok)
+		}
+	}
+}

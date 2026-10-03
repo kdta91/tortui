@@ -254,7 +254,8 @@ func (m Model) handlePauseResume() (tea.Model, tea.Cmd) {
 }
 
 // handlePauseResumeResult settles or rolls back the optimistic update
-// handlePauseResume made.
+// handlePauseResume made. A pause or resume that took is saved, so a restart
+// after a crash still brings the torrent back as the user left it (T-952).
 func (m Model) handlePauseResumeResult(msg pauseResumeResultMsg) (tea.Model, tea.Cmd) {
 	p, ok := m.downloads.pending[msg.id]
 
@@ -264,7 +265,7 @@ func (m Model) handlePauseResumeResult(msg pauseResumeResultMsg) (tea.Model, tea
 			m.downloads.pending = withPending(m.downloads.pending, msg.id, &p)
 		}
 
-		return m, nil
+		return m, saveSessionCmd(m.sessionSaver)
 	}
 
 	m.downloads.pending = withPending(m.downloads.pending, msg.id, nil)
@@ -331,9 +332,14 @@ func (m Model) handleRemoveConfirmAction(action Action) (tea.Model, tea.Cmd) {
 }
 
 // handleRemoveResult reports a remove engine call's outcome. The row itself
-// disappears on the engine's next snapshot.
+// disappears on the engine's next snapshot. A remove with data that kept the
+// data, because another download uses it, removed the torrent all the same:
+// it says so, and where, rather than that the data was deleted (T-9133).
 func (m Model) handleRemoveResult(msg removeResultMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
+	var kept *engine.DataKeptError
+
+	keptData := errors.As(msg.err, &kept)
+	if msg.err != nil && !keptData {
 		return m.pushStatus(fmt.Sprintf("couldn't remove %s: %v", msg.name, msg.err))
 	}
 
@@ -343,7 +349,13 @@ func (m Model) handleRemoveResult(msg removeResultMsg) (tea.Model, tea.Cmd) {
 	}
 
 	text := fmt.Sprintf("removed %s (data kept)", msg.name)
-	if msg.deleteData {
+
+	switch {
+	case keptData:
+		// It leads with what happened and where; the name would push
+		// both past an 80-column status bar.
+		text = kept.Error()
+	case msg.deleteData:
 		text = fmt.Sprintf("removed %s and deleted its data", msg.name)
 	}
 
