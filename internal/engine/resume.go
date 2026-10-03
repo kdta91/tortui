@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrDataMissing reports a torrent restored from an earlier session whose
@@ -55,6 +56,22 @@ type ResumeData struct {
 	// waiting in the queue is not. Restore brings a paused torrent back
 	// paused, its transfers held from the start (T-952).
 	Paused bool
+
+	// SeedDone is set when the seed policy stopped the torrent's upload
+	// and the user has not resumed it since. Restore brings it back
+	// stopped, its upload held from the start, so a restart never seeds a
+	// torrent past its policy (T-9135).
+	SeedDone bool
+
+	// Uploaded is the data the torrent has uploaded over every session,
+	// in bytes, which the ratio policy counts. Zero in a record saved
+	// before T-9135, which counts afresh.
+	Uploaded int64
+
+	// CompletedAt is when the torrent's data was first seen complete,
+	// which the duration policy counts from; zero when it never was, or in
+	// a record saved before T-9135, which counts afresh.
+	CompletedAt time.Time
 }
 
 // Resumer is implemented by an Engine that can save and restore torrents

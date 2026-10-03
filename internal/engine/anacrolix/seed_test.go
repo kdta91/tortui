@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,8 +69,15 @@ func waitForSeeded(t *testing.T, leecher *Engine, id string, seeder *Engine, see
 
 	t.Cleanup(func() {
 		if t.Failed() {
-			t.Logf("leecher %+v", attachedTorrent(t, leecher, id).Stats().TorrentGauges)
-			t.Logf("seeder %+v", attachedTorrent(t, seeder, seedID).Stats().TorrentGauges)
+			lt, st := attachedTorrent(t, leecher, id), attachedTorrent(t, seeder, seedID)
+			t.Logf("leecher %+v pieces %v", lt.Stats().TorrentGauges, lt.PieceStateRuns())
+			t.Logf("seeder %+v pieces %v", st.Stats().TorrentGauges, st.PieceStateRuns())
+
+			var status strings.Builder
+			leecher.client.WriteStatus(&status)
+			status.WriteString("\n--- seeder ---\n")
+			seeder.client.WriteStatus(&status)
+			t.Logf("client status:\n%s", status.String())
 		}
 	})
 
@@ -202,22 +210,26 @@ func restoreRecord(t *testing.T, id, file, dest string) engine.ResumeData {
 	return engine.ResumeData{ID: id, Name: id, Metainfo: mi, SavePath: dest, Paused: true}
 }
 
+// gateAt is what onAttach saw of a torrent at one attach stage.
+type gateAt struct {
+	stage         attachStage
+	info, seeding bool
+}
+
 // TestRestoredPausedTorrentJoinsTheClientHeld is T-9134. A completed torrent
-// restored paused is in the client with its info dictionary and its transfers
-// already held, before awaitInfo ever runs: with seeding on, a torrent
-// attached with its upload allowed seeds from that moment, so a peer could be
-// sent data the user paused.
+// restored paused is in the client with no info dictionary until its
+// transfers are held, and with them held from then on, before awaitInfo ever
+// runs: with seeding on, a torrent with its info and its upload allowed
+// seeds from that moment, so a peer could be sent data the user paused.
 func TestRestoredPausedTorrentJoinsTheClientHeld(t *testing.T) {
 	t.Parallel()
 
-	type joined struct{ info, seeding bool }
-
-	at := make(chan joined, 1)
+	seen := make(chan gateAt, 3)
 
 	e := newTestEngine(t, func(o *Options) {
 		o.MetadataTimeout = time.Hour
-		o.afterClientAdd = func(tt *torrent.Torrent) {
-			at <- joined{info: tt.Info() != nil, seeding: tt.Seeding()}
+		o.onAttach = func(stage attachStage, tt *torrent.Torrent) {
+			seen <- gateAt{stage: stage, info: tt.Info() != nil, seeding: tt.Seeding()}
 		}
 	})
 
@@ -228,18 +240,75 @@ func TestRestoredPausedTorrentJoinsTheClientHeld(t *testing.T) {
 		t.Fatalf("Restore: %v", err)
 	}
 
-	select {
-	case j := <-at:
-		if !j.info || j.seeding {
-			t.Fatalf("restored paused torrent joined the client with info %v, seeding %v; want info, not seeding",
-				j.info, j.seeding)
+	for want := stageAdded; want <= stagePublished; want++ {
+		var g gateAt
+
+		select {
+		case g = <-seen:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("attach never reached stage %d", want)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the restored torrent never joined the client")
+
+		switch {
+		case g.stage != want:
+			t.Fatalf("attach stage %d, want %d", g.stage, want)
+		case g.stage == stageAdded && g.info:
+			t.Fatalf("restored paused torrent joined the client with its info, seeding %v; want no info yet", g.seeding)
+		case g.seeding:
+			t.Fatalf("restored paused torrent is seeding at attach stage %d", g.stage)
+		case g.stage != stageAdded && !g.info:
+			t.Fatalf("restored paused torrent has no info at attach stage %d", g.stage)
+		}
 	}
 
 	if st := statusOf(t, e, id); st.State != engine.StatePaused {
 		t.Fatalf("restored state = %s, want paused", st.State)
+	}
+}
+
+// TestPauseWhileATorrentJoinsHoldsItsGate: a Pause that lands after attach
+// read the pause, but before the engine knows the library torrent, cannot
+// shut the gate itself; attach must, before awaitInfo runs, or a completed
+// torrent seeds in between.
+func TestPauseWhileATorrentJoinsHoldsItsGate(t *testing.T) {
+	t.Parallel()
+
+	const id = "an-1"
+
+	var e *Engine
+
+	paused := make(chan error, 1)
+	published := make(chan bool, 1)
+
+	e = newTestEngine(t, func(o *Options) {
+		o.MetadataTimeout = time.Hour
+		o.onAttach = func(stage attachStage, tt *torrent.Torrent) {
+			switch stage {
+			case stageJoined:
+				paused <- e.Pause(id)
+			case stagePublished:
+				published <- tt.Seeding()
+			}
+		}
+	})
+
+	file := completeTorrent(t, e.downloadDir, "pause-window", 2*testPieceLength)
+
+	got, err := e.Add(context.Background(), engine.AddSource{FilePath: file})
+	if err != nil || got != id {
+		t.Fatalf("Add = %q, %v; want %q", got, err, id)
+	}
+
+	if err := <-paused; err != nil {
+		t.Fatalf("Pause in the window: %v", err)
+	}
+
+	if <-published {
+		t.Fatal("a torrent paused as it joined the client is seeding before awaitInfo runs")
+	}
+
+	if st := statusOf(t, e, id); st.State != engine.StatePaused {
+		t.Fatalf("state = %s, want paused", st.State)
 	}
 }
 
@@ -353,36 +422,57 @@ func TestResumeOfARestoredPausedTorrentOpensItsGate(t *testing.T) {
 // TestResumeWhileARestoredPausedTorrentJoinsLiftsItsGate: a Resume that lands
 // after the restored paused torrent joined the client held, but before the
 // engine knows its library torrent, cannot lift the gate itself; attach must,
-// or the torrent shows running with its transfers held for good.
+// or the torrent shows running with its transfers held for good: downloads
+// for one missing data, seeding for one complete.
 func TestResumeWhileARestoredPausedTorrentJoinsLiftsItsGate(t *testing.T) {
 	t.Parallel()
 
-	const id = "an-80"
+	for _, complete := range []bool{false, true} {
+		t.Run(map[bool]string{false: "missing data", true: "complete"}[complete], func(t *testing.T) {
+			t.Parallel()
 
-	var e *Engine
+			const id = "an-80"
 
-	resumed := make(chan error, 1)
+			var e *Engine
 
-	e = newTestEngine(t, func(o *Options) {
-		o.MetadataTimeout = time.Hour
-		o.afterClientAdd = func(*torrent.Torrent) { resumed <- e.Resume(id) }
-	})
+			resumed := make(chan error, 1)
 
-	file := writeTorrentFile(t, buildInfo("resume-window", [][]string{{"w.bin"}}))
+			e = newTestEngine(t, func(o *Options) {
+				o.MetadataTimeout = time.Hour
+				o.onAttach = func(stage attachStage, _ *torrent.Torrent) {
+					if stage == stageJoined {
+						resumed <- e.Resume(id)
+					}
+				}
+			})
 
-	if _, err := e.Restore(context.Background(), restoreRecord(t, id, file, e.downloadDir)); err != nil {
-		t.Fatalf("Restore: %v", err)
-	}
+			file := writeTorrentFile(t, buildInfo("resume-window", [][]string{{"w.bin"}}))
+			if complete {
+				file = completeTorrent(t, e.downloadDir, "resume-window", 2*testPieceLength)
+			}
 
-	if err := <-resumed; err != nil {
-		t.Fatalf("Resume in the window: %v", err)
-	}
+			if _, err := e.Restore(context.Background(), restoreRecord(t, id, file, e.downloadDir)); err != nil {
+				t.Fatalf("Restore: %v", err)
+			}
 
-	if st := statusOf(t, e, id); st.State == engine.StatePaused {
-		t.Fatalf("state after Resume = %s, want it out of the pause", st.State)
-	}
+			if err := <-resumed; err != nil {
+				t.Fatalf("Resume in the window: %v", err)
+			}
 
-	if !downloadGateOpen(t, attachedTorrent(t, e, id), time.Second) {
-		t.Fatal("downloads are disallowed on a torrent resumed as it joined the client")
+			if st := statusOf(t, e, id); st.State == engine.StatePaused {
+				t.Fatalf("state after Resume = %s, want it out of the pause", st.State)
+			}
+
+			tt := attachedTorrent(t, e, id)
+
+			if complete {
+				waitUntil(t, "the resumed complete torrent seeding", tt.Seeding)
+				return
+			}
+
+			if !downloadGateOpen(t, tt, time.Second) {
+				t.Fatal("downloads are disallowed on a torrent resumed as it joined the client")
+			}
+		})
 	}
 }

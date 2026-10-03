@@ -297,7 +297,11 @@ func (e *Engine) applyPolicyLocked(tr *tracked, now time.Time) {
 
 	if tr.state == engine.StateDownloading && length > 0 && tr.t.BytesCompleted() >= length {
 		tr.state = engine.StateSeeding
-		tr.completedAt = now
+		// A restored torrent keeps the time it first completed, so the
+		// duration policy counts across restarts (T-9135).
+		if tr.completedAt.IsZero() {
+			tr.completedAt = now
+		}
 		e.logger.Info("anacrolix: download complete", "id", tr.id, "seed_policy", e.seed.String())
 	}
 
@@ -306,7 +310,8 @@ func (e *Engine) applyPolicyLocked(tr *tracked, now time.Time) {
 	}
 
 	stats := tr.t.Stats()
-	if !seedingDone(e.seed, stats.BytesWrittenData.Int64(), length, tr.completedAt, now) {
+	uploaded := tr.uploadedBefore + stats.BytesWrittenData.Int64()
+	if !seedingDone(e.seed, uploaded, length, tr.completedAt, now) {
 		return
 	}
 

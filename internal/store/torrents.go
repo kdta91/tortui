@@ -55,6 +55,15 @@ type TorrentRecord struct {
 	// it back paused (T-952). A record written before the field existed
 	// reads as false: the torrent resumes running, as it always did.
 	Paused bool `json:"paused,omitempty"`
+
+	// SeedDone, Uploaded and CompletedAt are the seed policy's progress:
+	// stopped by the policy, bytes uploaded over every session, when the
+	// data was first complete. They keep a restart from seeding a torrent
+	// past its policy (T-9135). A record written before the fields existed
+	// reads them as zero, and the policy counts afresh.
+	SeedDone    bool      `json:"seed_done,omitempty"`
+	Uploaded    int64     `json:"uploaded,omitempty"`
+	CompletedAt time.Time `json:"completed_at,omitzero"`
 }
 
 // SetTorrent inserts or replaces the record for rec.ID. It returns

@@ -379,13 +379,16 @@ func (s *Session) saveLocked() error {
 // takes.
 func resumeDataFrom(rec store.TorrentRecord) engine.ResumeData {
 	return engine.ResumeData{
-		ID:         rec.ID,
-		Name:       rec.Name,
-		Magnet:     rec.Magnet,
-		TorrentURL: rec.TorrentURL,
-		Metainfo:   rec.Metainfo,
-		SavePath:   rec.SavePath,
-		Paused:     rec.Paused,
+		ID:          rec.ID,
+		Name:        rec.Name,
+		Magnet:      rec.Magnet,
+		TorrentURL:  rec.TorrentURL,
+		Metainfo:    rec.Metainfo,
+		SavePath:    rec.SavePath,
+		Paused:      rec.Paused,
+		SeedDone:    rec.SeedDone,
+		Uploaded:    rec.Uploaded,
+		CompletedAt: rec.CompletedAt,
 		Origin: engine.Origin{
 			IndexerID: rec.IndexerID,
 			SourceURL: rec.SourceURL,
@@ -423,6 +426,9 @@ func mergeRecord(rec store.TorrentRecord, d engine.ResumeData, now time.Time) st
 	rec.Magnet = d.Magnet
 	rec.TorrentURL = d.TorrentURL
 	rec.Paused = d.Paused
+	rec.SeedDone = d.SeedDone
+	rec.Uploaded = d.Uploaded
+	rec.CompletedAt = d.CompletedAt
 
 	if len(d.Metainfo) > 0 {
 		rec.Metainfo = d.Metainfo

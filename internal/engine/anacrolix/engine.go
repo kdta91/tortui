@@ -137,12 +137,10 @@ type Options struct {
 	// package test can land a Resume in exactly that window (T-946).
 	afterInfo func(id string)
 
-	// afterClientAdd, when set, is called by attach with the library's
-	// torrent as soon as it is in the client with any info dictionary it
-	// was handed, before Engine.mu is taken to publish it. It exists so a
-	// package test can read the transfer gate a paused torrent joined with
-	// (T-9134).
-	afterClientAdd func(*torrent.Torrent)
+	// onAttach, when set, is called by attach with the library's torrent
+	// at each attachStage, so a package test can read the transfer gate a
+	// torrent has at that point, or land a Pause or Resume there (T-9134).
+	onAttach func(attachStage, *torrent.Torrent)
 
 	// SpaceCheckInterval is how often downloading torrents' destinations
 	// are re-checked for free space. Zero uses DefaultSpaceCheckInterval.
@@ -295,6 +293,10 @@ type tracked struct {
 	seedDone     bool
 	seedOverride bool
 
+	// uploadedBefore is what the torrent uploaded in earlier sessions,
+	// which the ratio policy adds to this session's count (T-9135).
+	uploadedBefore int64
+
 	// spacePaused is set when the periodic free-space check paused the
 	// torrent; it shows StateErrored with the shortfall as Err until
 	// Resume, which clears both.
@@ -353,7 +355,7 @@ type Engine struct {
 	http            *httpx.Client
 	beforeAttach    func()
 	afterInfo       func(id string)
-	afterClientAdd  func(*torrent.Torrent)
+	onAttach        func(attachStage, *torrent.Torrent)
 
 	done      chan struct{}
 	wg        sync.WaitGroup
@@ -460,7 +462,7 @@ func New(opts Options) (*Engine, error) {
 		http:            httpClient,
 		beforeAttach:    opts.beforeAttach,
 		afterInfo:       opts.afterInfo,
-		afterClientAdd:  opts.afterClientAdd,
+		onAttach:        opts.onAttach,
 		done:            make(chan struct{}),
 		torrents:        make(map[string]*tracked),
 		storages:        make(map[string]safeStorage),
@@ -1242,9 +1244,7 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 		return err
 	}
 
-	if e.afterClientAdd != nil {
-		e.afterClientAdd(t)
-	}
+	e.attachHook(stageJoined, t)
 
 	e.mu.Lock()
 	if tr.removed {
@@ -1278,10 +1278,15 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 		tr.name = t.Name()
 	}
 
-	// A Resume that ran since addToClient held the transfers found tr.t
-	// nil and could not lift the gate: lift it here, under the lock that
-	// now publishes tr.t. (A Pause in that window is held by awaitInfo.)
-	if held && !tr.paused && tr.state != engine.StateQueued {
+	// A Pause or Resume that ran since addToClient read the pause found
+	// tr.t nil and could not touch the gate: settle it here, under the lock
+	// that now publishes tr.t, so a peer is never sent data between here
+	// and awaitInfo's own gate.
+	switch {
+	case !held && tr.paused:
+		t.DisallowDataDownload()
+		t.DisallowDataUpload()
+	case held && !tr.paused && tr.state != engine.StateQueued:
 		t.AllowDataDownload()
 		t.AllowDataUpload()
 	}
@@ -1291,12 +1296,34 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 	e.wg.Add(1)
 	e.mu.Unlock()
 
+	e.attachHook(stagePublished, t)
+
 	go func() {
 		defer e.wg.Done()
 		e.awaitInfo(tr, t, dest)
 	}()
 
 	return nil
+}
+
+// attachStage names a point in attach at which Options.onAttach is called.
+type attachStage int
+
+const (
+	// stageAdded: AddTorrentSpec has returned, before any gate is set.
+	stageAdded attachStage = iota
+	// stageJoined: addToClient is done, before Engine.mu publishes tr.t.
+	stageJoined
+	// stagePublished: tr.t is published and the gate settled, before
+	// awaitInfo starts.
+	stagePublished
+)
+
+// attachHook calls Options.onAttach, when set.
+func (e *Engine) attachHook(stage attachStage, t *torrent.Torrent) {
+	if e.onAttach != nil {
+		e.onAttach(stage, t)
+	}
 }
 
 // addToClient hands spec to the client. A torrent paused before it joins —
@@ -1320,6 +1347,12 @@ func (e *Engine) addToClient(tr *tracked, spec *torrent.TorrentSpec) (*torrent.T
 		return nil, false, fmt.Errorf("anacrolix: add torrent: %w", err)
 	}
 
+	e.attachHook(stageAdded, t)
+
+	// Not reached for a held torrent: one tracked entry per infohash
+	// (findOrTrack, claimInfoHash), and a refused one was dropped before it
+	// was refused. Were it reached, the torrent already has its info, and
+	// is gated below all the same.
 	if !isNew {
 		e.logger.Debug("anacrolix: torrent already present in client", "id", tr.id)
 	}
@@ -2070,9 +2103,10 @@ func (e *Engine) Resume(id string) error {
 		tr.spacePaused = false
 		tr.err = nil
 		tr.state = tr.prePauseState
-	case tr.seedDone:
+	case tr.seedDone && tr.state != engine.StateErrored:
 		// Stopped by the seed policy: the user asked to keep seeding,
-		// which overrides the policy for this torrent from now on.
+		// which overrides the policy for this torrent from now on. (A
+		// restore that failed keeps the stop only to save it again.)
 		tr.seedDone = false
 		tr.seedOverride = true
 		tr.state = engine.StateSeeding
