@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
@@ -32,6 +33,14 @@ type provenance struct {
 	// paused is a pause the user asked for in the session that saved the
 	// torrent: the entry starts paused, its transfers held (T-952).
 	paused bool
+
+	// seedDone, uploaded and completedAt carry the seed policy's progress
+	// over from the session that saved the torrent: stopped by the policy,
+	// bytes uploaded so far, when its data was first complete (T-9135).
+	// A torrent the policy stopped starts paused, its transfers held.
+	seedDone    bool
+	uploaded    int64
+	completedAt time.Time
 }
 
 // newTracked builds a tracked entry carrying p. The caller sets its state and
@@ -45,9 +54,13 @@ func (p provenance) newTracked(id, dest, name string) *tracked {
 		magnet:     p.magnet,
 		torrentURL: p.torrentURL,
 		metainfo:   p.metainfo,
-		paused:     p.paused,
+		paused:     p.paused || p.seedDone,
 		userPaused: p.paused,
 		done:       make(chan struct{}),
+
+		seedDone:       p.seedDone,
+		uploadedBefore: p.uploaded,
+		completedAt:    p.completedAt,
 	}
 }
 
@@ -96,17 +109,25 @@ func (e *Engine) ResumeData(id string) (engine.ResumeData, error) {
 	}
 
 	d := engine.ResumeData{
-		ID:         tr.id,
-		Name:       tr.name,
-		Magnet:     tr.magnet,
-		TorrentURL: tr.torrentURL,
-		Metainfo:   bytes.Clone(tr.metainfo),
-		SavePath:   tr.savePath,
-		Origin:     tr.origin,
-		Paused:     tr.userPaused,
+		ID:          tr.id,
+		Name:        tr.name,
+		Magnet:      tr.magnet,
+		TorrentURL:  tr.torrentURL,
+		Metainfo:    bytes.Clone(tr.metainfo),
+		SavePath:    tr.savePath,
+		Origin:      tr.origin,
+		Paused:      tr.userPaused,
+		SeedDone:    tr.seedDone,
+		Uploaded:    tr.uploadedBefore,
+		CompletedAt: tr.completedAt,
 	}
 	t, spec := tr.t, tr.spec
 	e.mu.Unlock()
+
+	if t != nil {
+		stats := t.Stats()
+		d.Uploaded += stats.BytesWrittenData.Int64()
+	}
 
 	if len(d.Metainfo) > 0 {
 		return d, nil
@@ -163,6 +184,10 @@ func (e *Engine) Restore(ctx context.Context, d engine.ResumeData) (string, erro
 		torrentURL: d.TorrentURL,
 		metainfo:   bytes.Clone(d.Metainfo),
 		paused:     d.Paused,
+
+		seedDone:    d.SeedDone,
+		uploaded:    max(0, d.Uploaded),
+		completedAt: d.CompletedAt,
 	}
 
 	// A session saved before T-9057 may name a torrent added by address

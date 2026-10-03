@@ -89,3 +89,30 @@ func TestSessionSavedAfterPauseOrResume(t *testing.T) {
 		}
 	}
 }
+
+// TestMaybeDataKeptRemoveSaysMayUse is T-9135: when no download is known to
+// use the kept data but one may, the status bar says "may use", within 80
+// columns, and never that the data was deleted.
+func TestMaybeDataKeptRemoveSaysMayUse(t *testing.T) {
+	kept := filepath.Join(string(filepath.Separator)+"data", "movies", "shared-name")
+	err := fmt.Errorf("remove: %w", &engine.DataKeptError{Path: kept, Maybe: true})
+
+	m := New(newTestEngine(t), testTheme())
+	m.width = 80
+
+	updated, _ := m.handleRemoveResult(removeResultMsg{id: "t1", name: "shared-name", deleteData: true, err: err})
+
+	bar := updated.(Model).renderStatusBar()
+
+	if w := theme.Width(bar); w > 80 {
+		t.Errorf("status bar is %d columns wide, want at most 80: %q", w, bar)
+	}
+
+	if want := "data kept: another download may use " + kept; !strings.Contains(bar, want) {
+		t.Errorf("status bar %q does not show %q", bar, want)
+	}
+
+	if strings.Contains(bar, "deleted its data") {
+		t.Errorf("status bar %q says the data was deleted", bar)
+	}
+}

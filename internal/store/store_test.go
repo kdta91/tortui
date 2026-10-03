@@ -342,3 +342,40 @@ func TestTorrentPausedSurvivesReopen(t *testing.T) {
 		t.Errorf("legacy record = %+v (found %v), want it loaded unpaused with its fields", got, ok)
 	}
 }
+
+// TestTorrentSeedProgressSurvivesReopen is T-9135: the seed policy's stop,
+// the bytes uploaded and the completion time are stored with the record, and
+// a record without them reads them as zero.
+func TestTorrentSeedProgressSurvivesReopen(t *testing.T) {
+	s, path := openTest(t, time.Hour)
+
+	done := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	want := TorrentRecord{ID: "t1", SavePath: "/downloads", SeedDone: true, Uploaded: 123456, CompletedAt: done}
+
+	if err := s.SetTorrent(want); err != nil {
+		t.Fatalf("SetTorrent: %v", err)
+	}
+
+	if err := s.SetTorrent(TorrentRecord{ID: "t2", SavePath: "/downloads"}); err != nil {
+		t.Fatalf("SetTorrent: %v", err)
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	reopened, err := open(path, time.Hour)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	got, ok := reopened.GetTorrent("t1")
+	if !ok || !got.SeedDone || got.Uploaded != want.Uploaded || !got.CompletedAt.Equal(done) {
+		t.Errorf("reopened record = %+v (found %v), want the seed progress %+v", got, ok, want)
+	}
+
+	if got, ok := reopened.GetTorrent("t2"); !ok || got.SeedDone || got.Uploaded != 0 || !got.CompletedAt.IsZero() {
+		t.Errorf("reopened record without seed progress = %+v (found %v), want zero values", got, ok)
+	}
+}
