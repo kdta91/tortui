@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
@@ -366,5 +368,178 @@ func TestCompletedFileIsRemovableWithDataWhileRunningAndAfterClose(t *testing.T)
 
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("delete completed file after Close: %v", err)
+	}
+}
+
+// torrentOf returns the one fileTorrent s has open.
+func torrentOf(t *testing.T, s *fileStore) *fileTorrent {
+	t.Helper()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.torrents) != 1 {
+		t.Fatalf("store has %d torrents open, want 1", len(s.torrents))
+	}
+
+	for ft := range s.torrents {
+		return ft
+	}
+
+	return nil
+}
+
+// TestFileStoreOpeningOneFileNeverStallsAnother is T-9003: the first use of
+// a torrent's file — its open and the I/O straight after it — runs without
+// the torrent's exclusive lock, so I/O on another file of the same torrent,
+// whose handle is already open, goes ahead while it is stuck. Both a stuck
+// open and stuck I/O are held until the other file's write has finished;
+// before T-9003 that write waited for them.
+func TestFileStoreOpeningOneFileNeverStallsAnother(t *testing.T) {
+	t.Parallel()
+
+	for _, stuck := range []string{"open", "io"} {
+		t.Run(stuck, func(t *testing.T) {
+			t.Parallel()
+
+			info := storeFixture("stall-"+stuck, 1000, 1000)
+			s, _, dir := openStore(t, info)
+			ft := torrentOf(t, s)
+
+			// File 0's handle is open before anything is stuck.
+			if err := ft.withFile(0, true, func(*os.File) error { return nil }); err != nil {
+				t.Fatalf("open file 0: %v", err)
+			}
+
+			second := filepath.Join(dir, "stall-"+stuck, "f01.bin")
+			entered, release := make(chan struct{}), make(chan struct{})
+
+			if stuck == "open" {
+				s.openFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+					if name == second {
+						close(entered)
+						<-release
+					}
+
+					return os.OpenFile(name, flag, perm)
+				}
+			}
+
+			stuckDone := make(chan error, 1)
+
+			go func() {
+				stuckDone <- ft.withFile(1, true, func(*os.File) error {
+					if stuck == "io" {
+						close(entered)
+						<-release
+					}
+
+					return nil
+				})
+			}()
+
+			<-entered
+
+			otherDone := make(chan error, 1)
+
+			go func() {
+				otherDone <- ft.withFile(0, true, func(f *os.File) error {
+					_, err := f.WriteAt([]byte("x"), 0)
+					return err
+				})
+			}()
+
+			stalled := false
+
+			select {
+			case err := <-otherDone:
+				if err != nil {
+					t.Errorf("write to file 0: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				stalled = true
+				t.Errorf("a write to file 0 waited on file 1's %s", stuck)
+			}
+
+			close(release)
+
+			if err := <-stuckDone; err != nil {
+				t.Errorf("file 1: %v", err)
+			}
+
+			if stalled {
+				if err := <-otherDone; err != nil {
+					t.Errorf("write to file 0: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestFileStoreConcurrentIOAcrossEvictionsKeepsEveryByte drives many
+// goroutines writing and reading more files than the handle cap, so opens,
+// evictions and reuse interleave; run under -race it checks the handle table
+// is only touched under its lock, and every file still holds its bytes.
+func TestFileStoreConcurrentIOAcrossEvictionsKeepsEveryByte(t *testing.T) {
+	t.Parallel()
+
+	const size = 512
+
+	lengths := make([]int64, maxOpenFilesPerTorrent*2)
+	for i := range lengths {
+		lengths[i] = size
+	}
+
+	info := storeFixture("churn", lengths...)
+	s, _, _ := openStore(t, info)
+	ft := torrentOf(t, s)
+
+	var wg sync.WaitGroup
+
+	errs := make(chan error, len(lengths))
+
+	for i := range lengths {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			want := pattern(size, byte(i))
+
+			for round := range 20 {
+				if err := ft.withFile(i, true, func(f *os.File) error {
+					_, err := f.WriteAt(want, 0)
+					return err
+				}); err != nil {
+					errs <- fmt.Errorf("file %d round %d write: %w", i, round, err)
+					return
+				}
+
+				got := make([]byte, size)
+				if err := ft.withFile(i, false, func(f *os.File) error {
+					_, err := f.ReadAt(got, 0)
+					return err
+				}); err != nil {
+					errs <- fmt.Errorf("file %d round %d read: %w", i, round, err)
+					return
+				}
+
+				if !bytes.Equal(got, want) {
+					errs <- fmt.Errorf("file %d round %d read back different bytes", i, round)
+					return
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Error(err)
+	}
+
+	if n := s.openHandles(); n > maxOpenFilesPerTorrent {
+		t.Errorf("open handles = %d, over the cap %d", n, maxOpenFilesPerTorrent)
 	}
 }

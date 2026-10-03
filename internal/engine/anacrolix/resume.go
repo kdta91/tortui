@@ -152,7 +152,7 @@ func (e *Engine) Restore(ctx context.Context, d engine.ResumeData) (string, erro
 	prov := provenance{
 		id:         d.ID,
 		origin:     d.Origin,
-		magnet:     withoutMetainfoSources(d.Magnet),
+		magnet:     engine.WithoutMetainfoSources(d.Magnet),
 		torrentURL: d.TorrentURL,
 		metainfo:   bytes.Clone(d.Metainfo),
 	}

@@ -54,6 +54,10 @@ type fileStore struct {
 	completion storage.PieceCompletion
 	logger     *slog.Logger
 
+	// openFile opens a data file: os.OpenFile, unless a test holds an
+	// open up to prove it stalls nothing else (T-9003).
+	openFile func(name string, flag int, perm os.FileMode) (*os.File, error)
+
 	mu       sync.Mutex
 	torrents map[*fileTorrent]struct{}
 
@@ -68,6 +72,7 @@ func newFileStore(dir string, completion storage.PieceCompletion, logger *slog.L
 		dir:        dir,
 		completion: completion,
 		logger:     logger,
+		openFile:   os.OpenFile,
 		torrents:   make(map[*fileTorrent]struct{}),
 	}
 }
@@ -154,9 +159,11 @@ func (s *fileStore) openHandles() int64 { return s.open.Load() }
 
 // fileTorrent is one torrent's data files.
 //
-// Every read or write holds mu shared for the duration of the I/O; opening,
-// replacing, evicting and closing handles hold it exclusively, so a handle is
-// never closed under an operation using it.
+// Every read or write holds mu shared for the duration of the I/O. Taking a
+// handle out of the table — replacing, evicting, closing — holds it
+// exclusively, so a handle is never taken away from an operation using it;
+// once out of the table nothing can reach it, so it is closed after mu is
+// released. Opening a file holds no lock at all (T-9003).
 type fileTorrent struct {
 	store    *fileStore
 	infoHash metainfo.Hash
@@ -181,7 +188,7 @@ func (t *fileTorrent) Close() error {
 	t.mu.Lock()
 	var errs []error
 	for i, h := range t.handles {
-		if err := t.closeHandleLocked(h); err != nil {
+		if err := t.closeHandle(h); err != nil {
 			errs = append(errs, fmt.Errorf("close %s: %w", t.files[i].path, err))
 		}
 	}
@@ -201,24 +208,23 @@ func (t *fileTorrent) Close() error {
 // reading otherwise. A read of a file that does not exist reports
 // fs.ErrNotExist without creating it.
 //
-// The common case — the handle is already open — runs op under mu shared.
-// Otherwise op runs under mu exclusive, straight after the open, so a
-// concurrent eviction can never close the handle before op gets to use it.
+// op always runs under mu shared, so I/O on one file never waits for I/O on
+// another. A file not yet open is opened with no lock held and put in the
+// table, then used like any open one (T-9003). If an eviction takes it out
+// again before op gets to it — more than the cap of other files opened in
+// between — the file is opened and used under mu exclusive instead, so the
+// call always finishes.
 func (t *fileTorrent) withFile(i int, write bool, op func(*os.File) error) error {
-	t.mu.RLock()
-	if h, ok := t.handles[i]; ok && !t.closed && (h.writable || !write) {
-		h.lastUse.Store(t.uses.Add(1))
-		err := op(h.f)
-		t.mu.RUnlock()
-
+	if done, err := t.withOpenFile(i, write, op); done {
 		return err
 	}
 
-	closed := t.closed
-	t.mu.RUnlock()
+	if err := t.install(i, write); err != nil {
+		return err
+	}
 
-	if closed {
-		return errStorageClosed
+	if done, err := t.withOpenFile(i, write, op); done {
+		return err
 	}
 
 	t.mu.Lock()
@@ -234,9 +240,97 @@ func (t *fileTorrent) withFile(i int, write bool, op func(*os.File) error) error
 	return op(h.f)
 }
 
+// withOpenFile runs op on file i under mu shared when its handle is open and
+// fits write. done reports whether op ran, or the storage is closed.
+func (t *fileTorrent) withOpenFile(i int, write bool, op func(*os.File) error) (done bool, err error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.closed {
+		return true, errStorageClosed
+	}
+
+	h, ok := t.handles[i]
+	if !ok || (write && !h.writable) {
+		return false, nil
+	}
+
+	h.lastUse.Store(t.uses.Add(1))
+
+	return true, op(h.f)
+}
+
+// install opens file i with no lock held, then puts the handle in the table
+// under mu exclusive: replacing a read-only handle when write is wanted, and
+// evicting the least recently used handle when the table is full. A handle
+// another caller installed first is kept and this one closed. Every handle
+// taken out of the table is closed after mu is released.
+func (t *fileTorrent) install(i int, write bool) error {
+	f, err := t.openData(i, write)
+	if err != nil {
+		return err
+	}
+
+	var (
+		out  []int
+		outH []*storeHandle
+	)
+
+	t.mu.Lock()
+
+	switch h, ok := t.handles[i]; {
+	case t.closed:
+		t.mu.Unlock()
+
+		return errors.Join(errStorageClosed, f.Close())
+
+	case ok && (h.writable || !write):
+		// Another caller opened it first.
+		t.mu.Unlock()
+
+		if err := f.Close(); err != nil {
+			t.store.logger.Warn("anacrolix: close a duplicate data file handle", "path", t.files[i].path, "error", err)
+		}
+
+		return nil
+
+	case ok:
+		delete(t.handles, i)
+		out, outH = append(out, i), append(outH, h)
+	}
+
+	if len(t.handles) >= maxOpenFilesPerTorrent {
+		victim, h := t.evictLocked()
+		out, outH = append(out, victim), append(outH, h)
+	}
+
+	h := &storeHandle{f: f, writable: write}
+	h.lastUse.Store(t.uses.Add(1))
+	t.handles[i] = h
+	t.store.open.Add(1)
+	t.mu.Unlock()
+
+	return t.closeHandles(out, outH)
+}
+
+// closeHandles closes handles already taken out of the table; files[i] names
+// the file each one is for.
+func (t *fileTorrent) closeHandles(files []int, handles []*storeHandle) error {
+	var errs []error
+
+	for k, h := range handles {
+		if err := t.closeHandle(h); err != nil {
+			errs = append(errs, fmt.Errorf("close %s: %w", t.files[files[k]].path, err))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
 // openLocked returns file i's handle, opening it if need be: replacing a
 // read-only handle when write is wanted, and evicting the least recently
-// used handle when the table is full. mu must be held exclusively.
+// used handle when the table is full. mu must be held exclusively. Only
+// withFile's last resort opens a file under the lock.
 func (t *fileTorrent) openLocked(i int, write bool) (*storeHandle, error) {
 	if t.closed {
 		return nil, errStorageClosed
@@ -249,37 +343,19 @@ func (t *fileTorrent) openLocked(i int, write bool) (*storeHandle, error) {
 
 		delete(t.handles, i)
 
-		if err := t.closeHandleLocked(h); err != nil {
+		if err := t.closeHandle(h); err != nil {
 			return nil, fmt.Errorf("close %s for reopening: %w", t.files[i].path, err)
 		}
 	}
 
 	if len(t.handles) >= maxOpenFilesPerTorrent {
-		if err := t.evictLocked(); err != nil {
-			return nil, err
+		victim, h := t.evictLocked()
+		if err := t.closeHandle(h); err != nil {
+			return nil, fmt.Errorf("close %s: %w", t.files[victim].path, err)
 		}
 	}
 
-	path := t.files[i].path
-
-	var (
-		f   *os.File
-		err error
-	)
-
-	if write {
-		f, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE, dataFilePerm)
-		if errors.Is(err, fs.ErrNotExist) {
-			if mkErr := os.MkdirAll(filepath.Dir(path), dataDirPerm); mkErr != nil {
-				return nil, fmt.Errorf("create directory for %s: %w", path, mkErr)
-			}
-
-			f, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE, dataFilePerm)
-		}
-	} else {
-		f, err = os.Open(path)
-	}
-
+	f, err := t.openData(i, write)
 	if err != nil {
 		return nil, err
 	}
@@ -291,9 +367,31 @@ func (t *fileTorrent) openLocked(i int, write bool) (*storeHandle, error) {
 	return h, nil
 }
 
-// evictLocked closes the least recently used handle. mu must be held
-// exclusively.
-func (t *fileTorrent) evictLocked() error {
+// openData opens file i, for reading and writing — creating it and its
+// directory when missing — when write is set, and for reading otherwise.
+func (t *fileTorrent) openData(i int, write bool) (*os.File, error) {
+	path := t.files[i].path
+
+	if !write {
+		return t.store.openFile(path, os.O_RDONLY, 0)
+	}
+
+	f, err := t.store.openFile(path, os.O_RDWR|os.O_CREATE, dataFilePerm)
+	if errors.Is(err, fs.ErrNotExist) {
+		if mkErr := os.MkdirAll(filepath.Dir(path), dataDirPerm); mkErr != nil {
+			return nil, fmt.Errorf("create directory for %s: %w", path, mkErr)
+		}
+
+		f, err = t.store.openFile(path, os.O_RDWR|os.O_CREATE, dataFilePerm)
+	}
+
+	return f, err
+}
+
+// evictLocked takes the least recently used handle out of the table and
+// returns it, with the file it is for, for the caller to close. mu must be
+// held exclusively.
+func (t *fileTorrent) evictLocked() (int, *storeHandle) {
 	victim, oldest := -1, uint64(0)
 	for i, h := range t.handles {
 		if use := h.lastUse.Load(); victim < 0 || use < oldest {
@@ -304,16 +402,12 @@ func (t *fileTorrent) evictLocked() error {
 	h := t.handles[victim]
 	delete(t.handles, victim)
 
-	if err := t.closeHandleLocked(h); err != nil {
-		return fmt.Errorf("close %s: %w", t.files[victim].path, err)
-	}
-
-	return nil
+	return victim, h
 }
 
-// closeHandleLocked closes h, which the caller has already taken out of the
-// handle table. mu must be held exclusively.
-func (t *fileTorrent) closeHandleLocked(h *storeHandle) error {
+// closeHandle closes h, which is no longer in the handle table, so nothing
+// else can reach it.
+func (t *fileTorrent) closeHandle(h *storeHandle) error {
 	t.store.open.Add(-1)
 
 	return h.f.Close()

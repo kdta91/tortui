@@ -88,10 +88,12 @@ type ResumeReport struct {
 
 // Resume re-adds every torrent recorded in the store to the engine, oldest
 // first so queue order survives, and re-keys any record whose torrent came
-// back under a different ID. It returns an error only when the engine cannot
-// resume at all or stopped accepting torrents part-way (closed, or ctx
-// cancelled); every per-torrent problem is reported in the ResumeReport and
-// shows in the engine as StateErrored instead.
+// back under a different ID. A record the engine restores onto a torrent this
+// pass already restored — the same infohash as an older record — is dropped
+// from the store and not counted (T-953). It returns an error only when the
+// engine cannot resume at all or stopped accepting torrents part-way (closed,
+// or ctx cancelled); every per-torrent problem is reported in the
+// ResumeReport and shows in the engine as StateErrored instead.
 //
 // An engine that does not implement engine.Resumer resumes nothing, and the
 // store is left untouched.
@@ -125,12 +127,33 @@ func (s *Session) Resume(ctx context.Context) (ResumeReport, error) {
 	})
 
 	restoredIDs := make([]string, 0, len(records))
+	restored := make(map[string]bool, len(records))
 
 	for _, rec := range records {
 		id, err := r.Restore(ctx, resumeDataFrom(rec))
 		if err != nil {
 			return report, fmt.Errorf("lifecycle: resume torrent %s: %w", rec.ID, err)
 		}
+
+		if restored[id] {
+			// The engine handed back a torrent this pass already
+			// restored: this record names the same infohash as an
+			// earlier one (T-953). Re-keying it would overwrite that
+			// record, so it is dropped instead; the earlier, older
+			// record stays as it was.
+			if id != rec.ID {
+				if err := s.store.DeleteTorrent(rec.ID); err != nil {
+					return report, fmt.Errorf("lifecycle: drop duplicate torrent %s: %w", rec.ID, err)
+				}
+			}
+
+			s.logger.Warn("lifecycle: dropped a record naming a torrent already restored",
+				"id", rec.ID, "restored_as", id)
+
+			continue
+		}
+
+		restored[id] = true
 
 		if id != rec.ID {
 			if err := s.store.DeleteTorrent(rec.ID); err != nil {
