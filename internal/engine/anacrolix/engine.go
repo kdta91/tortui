@@ -165,6 +165,13 @@ type Options struct {
 	// trackers and PEX stay off and nothing is announced (T-9135).
 	peers bool
 
+	// keepAliveTimeout, when set, replaces the library's peer keep-alive
+	// timeout, which also bounds how long a peer connection's writer can
+	// sleep after a wake-up it missed (Backlog T-9137). The loopback peer
+	// tests set it short so a missed wake-up costs them under a second
+	// instead of a minute.
+	keepAliveTimeout time.Duration
+
 	// HTTPClient fetches a .torrent named by AddSource.TorrentURL. A nil
 	// HTTPClient builds one with tortui's shared defaults, which also
 	// follows a redirect to a subdomain of the requested host.
@@ -593,6 +600,10 @@ func clientConfig(opts Options, downloadDir string, logger *slog.Logger, port in
 	// seed policy is about what happens after completion.
 	cfg.Seed = seedsAfterCompletion(opts.Config)
 	cfg.DisableAggressiveUpload = true
+
+	if opts.keepAliveTimeout > 0 {
+		cfg.KeepAliveTimeout = opts.keepAliveTimeout
+	}
 
 	if opts.Offline {
 		cfg.NoDHT = true

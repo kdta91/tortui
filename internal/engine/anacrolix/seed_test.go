@@ -2,6 +2,7 @@ package anacrolix
 
 import (
 	"context"
+	"log/slog"
 	"net/netip"
 	"os"
 	"testing"
@@ -16,14 +17,26 @@ import (
 // peerEngine is an offline test engine that still trades data with the peers
 // a test hands it, over loopback only: DHT, trackers and PEX stay off, and
 // nothing is announced anywhere (AGENT.md §6.7). It seeds by duration, so a
-// ratio reached by chunks sent twice never stops it mid-test.
+// ratio reached by chunks sent twice never stops it mid-test, and its peer
+// keep-alive is short, so the library's missed writer wake-up (Backlog
+// T-9137) costs half a second rather than the test's whole wait.
 func peerEngine(t *testing.T, mutate func(*Options)) *Engine {
 	t.Helper()
 
+	log := &lockedBuffer{}
+	t.Cleanup(func() {
+		if t.Failed() {
+			out := log.String()
+			t.Logf("peer engine log (last 6 KiB):\n%s", out[max(0, len(out)-6<<10):])
+		}
+	})
+
 	return newTestEngine(t, func(o *Options) {
+		o.Logger = slog.New(slog.NewTextHandler(log, &slog.HandlerOptions{Level: slog.LevelDebug}))
 		o.MetadataTimeout = time.Hour
 		o.listenHost = "127.0.0.1"
 		o.peers = true
+		o.keepAliveTimeout = 500 * time.Millisecond
 		o.Config.SeedPolicy = "duration"
 		o.Config.SeedDuration = "24h"
 
@@ -45,6 +58,22 @@ func connectTo(t *testing.T, from *Engine, id string, to *Engine) {
 
 	addr := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(port))
 	attachedTorrent(t, from, id).AddPeers([]torrent.PeerInfo{{Addr: addr, Trusted: true}})
+}
+
+// waitForSeeded is waitForComplete for a download whose one peer is seeder:
+// on failure it reports both sides' peer counts, so a run on another OS says
+// whether they ever connected.
+func waitForSeeded(t *testing.T, leecher *Engine, id string, seeder *Engine, seedID string) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("leecher %+v", attachedTorrent(t, leecher, id).Stats().TorrentGauges)
+			t.Logf("seeder %+v", attachedTorrent(t, seeder, seedID).Stats().TorrentGauges)
+		}
+	})
+
+	waitForComplete(t, leecher, id)
 }
 
 // TestCompletedTorrentSeedsToAPeer is PR #101 review note 2. A torrent whose
@@ -72,7 +101,7 @@ func TestCompletedTorrentSeedsToAPeer(t *testing.T) {
 	}
 
 	connectTo(t, leecher, id, seeder)
-	waitForComplete(t, leecher, id)
+	waitForSeeded(t, leecher, id, seeder, seeding)
 }
 
 // TestSeedPolicyOffNeverSeeds: the library uploads a completed torrent only
@@ -143,7 +172,7 @@ func TestUserPausedCompletedTorrentUploadsNothing(t *testing.T) {
 	}
 
 	connectTo(t, after, again, seeder)
-	waitForComplete(t, after, again)
+	waitForSeeded(t, after, again, seeder, id)
 }
 
 // assertNothingDownloaded fails if id gets a byte of data within window.
@@ -256,7 +285,7 @@ func TestRestoredPausedSeedUploadsNothingUntilResumed(t *testing.T) {
 	}
 
 	connectTo(t, after, again, seeder)
-	waitForComplete(t, after, again)
+	waitForSeeded(t, after, again, seeder, id)
 }
 
 // TestResumeOfARestoredPausedTorrentOpensItsGate is PR #101 review note 5: a
