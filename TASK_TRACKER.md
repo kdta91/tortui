@@ -794,6 +794,13 @@ deferrals stay deferred to Backlog T-9004.
   Test engines shorten the timeout (T-9135); production keeps the default. Possible mitigations: a shorter
   production KeepAliveTimeout (a few seconds; keep-alives are cheap), or an upstream fix that takes the signal
   before filling the buffer. From the review of T-9135 (PR #102).
+- `T-9138` A refused entry whose data name was another download's (sharedName) says "data kept: another download
+  may use <path>" after that download was removed with its data kept. Defensible, but the real reason is that the
+  data was another download's; consider clearer wording. Non-blocking note (a) from the review of T-9135 (PR #102).
+- `T-9139` The 300 ms "uploads nothing" checks (`assertNothingDownloaded`, `internal/engine/anacrolix/seed_test.go`)
+  pass without testing anything on a slow runner when the peer connection is not up yet; the `Seeding()`
+  assertions carry the real load. Make them wait for a connected peer first. Non-blocking note (d) from the review
+  of T-9135 (PR #102).
 
 ---
 

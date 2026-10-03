@@ -5675,4 +5675,4 @@ block a refused entry's delete; sharedName data is always kept; DataKeptError ga
 Refused entries now delete by leftName only. Review fix: on amd64 the library turned the unlimited limiter's zero
 burst into a negative one, so no client ever connected to a peer (DEC-171); the seed-policy stop and counts are
 persisted (DEC-170); test engines shorten the keep-alive past a library lost wake-up. Mutations in the PR body.
-Backlog T-9136, T-9137.
+Backlog T-9136 to T-9139.
