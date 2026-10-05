@@ -302,6 +302,110 @@ func TestRegistryDropsAnAnswerFromASourceUnregisteredMidFetch(t *testing.T) {
 	}
 }
 
+// capsGatedIndexer holds its first Caps call — the first thing searchOne
+// does — until release is closed, so a test can change the registry between
+// a fan-out's selection and its request.
+type capsGatedIndexer struct {
+	*stubIndexer
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newCapsGated(src *stubIndexer) *capsGatedIndexer {
+	return &capsGatedIndexer{stubIndexer: src, entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (g *capsGatedIndexer) Caps() Caps {
+	g.once.Do(func() {
+		close(g.entered)
+		<-g.release
+	})
+	return g.stubIndexer.Caps()
+}
+
+// TestSearchAllReportsASourceRemovedBeforeItsRequestAsUnknown pins T-9168
+// (Backlog T-924, DEC-183): a source unregistered after a fan-out selected it
+// but before its request is reported as ErrUnknownIndexer, a failure, and is
+// never asked; it is not a misleading ErrThrottled skip.
+func TestSearchAllReportsASourceRemovedBeforeItsRequestAsUnknown(t *testing.T) {
+	alpha := newCapsGated(okSource("alpha", hit("alpha", "1", "alpha one", 6)))
+	r, _ := newTestRegistry(t, Config{}, alpha, okSource("beta", hit("beta", "1", "beta one", 4)))
+
+	type outcome struct {
+		results []Result
+		errs    []SourceError
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, errs, err := r.SearchAll(context.Background(), Query{Text: "x"})
+		done <- outcome{res, errs, err}
+	}()
+	<-alpha.entered
+
+	if err := r.Unregister("alpha"); err != nil {
+		t.Fatalf("Unregister: %v", err)
+	}
+	close(alpha.release)
+	got := <-done
+
+	if got.err != nil {
+		t.Fatalf("SearchAll: %v", got.err)
+	}
+	if len(got.errs) != 1 || got.errs[0].IndexerID != "alpha" {
+		t.Fatalf("source errors = %v, want one for alpha", got.errs)
+	}
+	if e := got.errs[0]; !errors.Is(e.Err, ErrUnknownIndexer) || errors.Is(e.Err, ErrThrottled) || e.Skipped {
+		t.Errorf("alpha's error = %+v, want an unknown-source failure, not a throttle skip", e)
+	}
+	if n := alpha.calls.Load(); n != 0 {
+		t.Errorf("the removed source was asked %d times, want 0", n)
+	}
+	if joined(titles(got.results)) != "beta one" {
+		t.Errorf("results = %v, want beta's answer only", titles(got.results))
+	}
+}
+
+// TestSearchAllNeverSpendsAReplacementsRefreshSlot pins the same fix for a
+// source replaced under its id mid fan-out: the old adapter makes no request
+// and does not claim the replacement's minimum-refresh slot.
+func TestSearchAllNeverSpendsAReplacementsRefreshSlot(t *testing.T) {
+	old := newCapsGated(okSource("alpha", hit("alpha", "1", "old", 6)))
+	r, _ := newTestRegistry(t, Config{MinRefreshInterval: time.Hour}, old)
+
+	done := make(chan []SourceError, 1)
+	go func() {
+		_, errs, _ := r.SearchAll(context.Background(), Query{Text: "first"})
+		done <- errs
+	}()
+	<-old.entered
+
+	if err := r.Unregister("alpha"); err != nil {
+		t.Fatalf("Unregister: %v", err)
+	}
+	replacement := okSource("alpha", hit("alpha", "2", "fresh", 1))
+	if err := r.Register(replacement); err != nil {
+		t.Fatalf("Register(replacement): %v", err)
+	}
+	close(old.release)
+
+	if errs := <-done; len(errs) != 1 || !errors.Is(errs[0].Err, ErrUnknownIndexer) {
+		t.Fatalf("in-flight source errors = %v, want one ErrUnknownIndexer for the replaced adapter", errs)
+	}
+	if n := old.calls.Load(); n != 0 {
+		t.Errorf("the replaced adapter was asked %d times, want 0", n)
+	}
+
+	got, errs, err := r.SearchAll(context.Background(), Query{Text: "second"})
+	if err != nil || len(errs) != 0 {
+		t.Fatalf("SearchAll on the replacement = %v, %v; want it fetched, not throttled", errs, err)
+	}
+	if joined(titles(got)) != "fresh" || replacement.calls.Load() != 1 {
+		t.Errorf("results = %v (replacement asked %d times), want the replacement's answer", titles(got), replacement.calls.Load())
+	}
+}
+
 func TestRegistryListReturnsACopy(t *testing.T) {
 	r, _ := newTestRegistry(t, Config{}, okSource("alpha"), okSource("beta"))
 
@@ -1213,16 +1317,27 @@ func TestSearchAllDeduplicatesWithinASingleSource(t *testing.T) {
 // TestSearchAllSeederTieKeepsTheFirstCopy pins the tie rule documented on
 // mergeResults: only strictly more seeders replaces the survivor, so on a tie
 // the copy met first (earlier source in selection order, earlier row within a
-// source) stays.
+// source) stays. alpha, selected first, is held until beta has replied, so
+// the survivor proves merge order is selection order, not arrival order.
 func TestSearchAllSeederTieKeepsTheFirstCopy(t *testing.T) {
 	const infoHash = "0011223344556677889900112233445566778899"
 	row := func(id, rid string) Result {
 		return Result{IndexerID: id, ID: rid, Title: "tie " + id + rid, InfoHash: infoHash, Magnet: testMagnet, Seeders: 7}
 	}
-	r, _ := newTestRegistry(t, Config{},
-		okSource("alpha", row("alpha", "1"), row("alpha", "2")),
-		okSource("beta", row("beta", "1")),
-	)
+	betaReplied := make(chan struct{})
+	alpha := &stubIndexer{id: "alpha", caps: bothCaps, fn: func(ctx context.Context, _ Query) ([]Result, error) {
+		select {
+		case <-betaReplied:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return []Result{row("alpha", "1"), row("alpha", "2")}, nil
+	}}
+	beta := &stubIndexer{id: "beta", caps: bothCaps, fn: func(_ context.Context, _ Query) ([]Result, error) {
+		defer close(betaReplied)
+		return []Result{row("beta", "1")}, nil
+	}}
+	r, _ := newTestRegistry(t, Config{}, alpha, beta)
 
 	results, _, err := r.SearchAll(context.Background(), Query{Text: "x"})
 	if err != nil {
@@ -1364,12 +1479,13 @@ func TestSortResultsTieBreaks(t *testing.T) {
 }
 
 func TestReserveFetchRejectsAnUnknownSource(t *testing.T) {
-	// Unreachable through SearchAll, which only ever reserves for a source
-	// it just resolved; it is here so that a future caller cannot silently
-	// get a free pass past the refresh floor.
+	// A source that was never registered, or is no longer the one under its
+	// id, gets no slot: a future caller cannot silently get a free pass past
+	// the refresh floor, and it is told the source is gone, not throttled.
 	r := NewRegistry(Config{})
-	if r.reserveFetch("ghost") {
-		t.Error("reserveFetch(ghost) = true for an unregistered source, want false")
+	ghost := &source{ix: okSource("ghost"), enabled: true}
+	if got := r.reserveFetch(ghost); got != fetchGone {
+		t.Errorf("reserveFetch(ghost) = %d for an unregistered source, want fetchGone", got)
 	}
 }
 

@@ -459,6 +459,10 @@ func (a *Adapter) searchParams(q indexer.Query) (url.Values, bool, error) {
 
 	switch q.Mode {
 	case indexer.ModeSearch:
+		if !a.caps.Search {
+			return nil, false, ErrSearchUnsupported
+		}
+
 		text := strings.TrimSpace(q.Text)
 		if text == "" {
 			// indexer.Query is explicit that an adapter must not turn
