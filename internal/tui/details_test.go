@@ -1294,6 +1294,25 @@ func TestDetailsScreenEndToEndSelectAndAdd(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+
+	// T-964: the "added" status line shows on any screen, so assert on the
+	// screen itself: the final model is on Downloads and its body is the
+	// downloads body, not the Details or Results one.
+	tm.Send(tea.QuitMsg{})
+
+	final, ok := tm.FinalModel(t, teatest.WithFinalTimeout(5*time.Second)).(Model)
+	if !ok {
+		t.Fatal("final model is not a Model")
+	}
+
+	if final.screen != ScreenDownloads {
+		t.Fatalf("screen after add = %v, want Downloads", final.screen)
+	}
+
+	view := final.View()
+	if strings.Contains(view, "not yet resolved") || strings.Contains(view, "Query:") {
+		t.Fatalf("view still shows Details or Search content:\n%s", view)
+	}
 }
 
 // TestALinklessResultIsListedAndItsResolveErrorReachesTheStatusBar is

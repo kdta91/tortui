@@ -677,9 +677,10 @@ const (
 // push the next allowed one further out.
 //
 // id is src's id as the caller already read it: adapter code (ID) never runs
-// under the registry lock. src must still be the source registered under id. One that was removed
-// or replaced since the fan-out selected it is fetchGone: it is not asked, and
-// a replacement's slot is never spent on the old adapter's request.
+// under the registry lock. src must still be the source registered under id.
+// One that was removed or replaced since the fan-out selected it is
+// fetchGone: it is not asked, and a replacement's slot is never spent on the
+// old adapter's request.
 func (r *Registry) reserveFetch(id string, src *source) fetchSlot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -727,11 +728,11 @@ type merged struct {
 // with one exception: a copy whose count is known replaces a tied copy whose
 // count is unknown (ExtraKeySeedersUnknown), so a real zero is never hidden
 // behind a placeholder zero and the S/L cell does not depend on which source
-// replied first (T-9022, DEC-186). Among equals, the survivor is
-// the earlier source in selection order (the ids given, else registration
-// order), and within one source the earlier row. Every contributing source id
-// is recorded in Extra under ExtraKeySources, in selection order, so the TUI
-// can show that a row came from several places.
+// replied first (T-9022, DEC-186). Among equals, the survivor is the earlier
+// source in selection order (the ids given, else registration order), and
+// within one source the earlier row. Every contributing source id is recorded
+// in Extra under ExtraKeySources, in selection order, so the TUI can show that
+// a row came from several places.
 //
 // Ordering is by mode: seeders descending for ModeSearch, published descending
 // for ModeLatest (AGENT.md §7 makes seeders the default sort of the results

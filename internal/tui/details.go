@@ -108,7 +108,10 @@ func addTorrentCmd(eng engine.Engine, src engine.AddSource, create bool, name, i
 			return addResultMsg{name: name, err: err}
 		}
 
-		id, err := eng.Add(context.Background(), src)
+		ctx, cancel := context.WithTimeout(context.Background(), addTimeout)
+		defer cancel()
+
+		id, err := eng.Add(ctx, src)
 		return addResultMsg{
 			id: id, name: name, err: err,
 			indexerID: indexerID, sourceURL: sourceURL, savePath: src.SavePath,
@@ -139,22 +142,48 @@ func addSourceFor(r indexer.Result, savePath string) engine.AddSource {
 // failure, so a caller that only inspects it on the success path never sees
 // anything but the resolved value.
 type resolveResultMsg struct {
+	gen    int
 	result indexer.Result
 	err    error
 }
 
+// resolveTimeout bounds one Indexer.Resolve call and addTimeout one Engine.Add
+// call (AGENT.md §6.2: every network call carries a deadline). Add returns
+// promptly by contract, so both are generous ceilings for a hung source or
+// engine, not expected durations.
+const (
+	resolveTimeout = 30 * time.Second
+	addTimeout     = 30 * time.Second
+)
+
 // resolveCmd returns the tea.Cmd that calls ix.Resolve — off Update's own
 // goroutine, per AGENT.md §6.1, since a real adapter's Resolve makes a
-// network request.
-func resolveCmd(ix indexer.Indexer, r indexer.Result) tea.Cmd {
+// network request. ctx carries the deadline and the user's esc cancel
+// (cancelResolve); gen lets handleResolveResult drop a result whose resolve
+// was cancelled or superseded.
+func resolveCmd(ctx context.Context, gen int, ix indexer.Indexer, r indexer.Result) tea.Cmd {
 	return func() tea.Msg {
-		resolved, err := ix.Resolve(context.Background(), r)
+		resolved, err := ix.Resolve(ctx, r)
 		if err != nil {
-			return resolveResultMsg{result: r, err: fmt.Errorf("resolve %q: %w", r.Title, err)}
+			return resolveResultMsg{gen: gen, result: r, err: fmt.Errorf("resolve %q: %w", r.Title, err)}
 		}
 
-		return resolveResultMsg{result: resolved}
+		return resolveResultMsg{gen: gen, result: resolved}
 	}
+}
+
+// resolving reports whether a Resolve started by startAdd is in flight.
+func (m Model) resolving() bool { return m.resolveCancel != nil }
+
+// cancelResolve is esc while a details-page fetch is in flight (T-9043): it
+// cancels the call's context, bumps the generation so the late result is
+// dropped, and says so. The key is only claimed while a resolve is running.
+func (m Model) cancelResolve() (tea.Model, tea.Cmd) {
+	m.resolveCancel()
+	m.resolveCancel = nil
+	m.resolveGen++
+
+	return m.pushStatus("add cancelled: " + m.resolveTitle)
 }
 
 // handleAddFromDetails implements enter (ActionSelect) on the details
@@ -218,7 +247,16 @@ func (m Model) startAdd(r indexer.Result) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		return m, resolveCmd(ix, r)
+		if m.resolveCancel != nil {
+			m.resolveCancel()
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), resolveTimeout)
+		m.resolveCancel = cancel
+		m.resolveGen++
+		m.resolveTitle = r.Title
+
+		return m, resolveCmd(ctx, m.resolveGen, ix, r)
 	}
 
 	return m.finishAdd(r)
@@ -230,6 +268,15 @@ func (m Model) startAdd(r indexer.Result) (tea.Model, tea.Cmd) {
 // acceptance: "failures surface as a status-bar error, not a crash"); a
 // successful one continues into finishAdd with the now-resolved Result.
 func (m Model) handleResolveResult(msg resolveResultMsg) (tea.Model, tea.Cmd) {
+	if msg.gen != m.resolveGen {
+		return m, nil // cancelled or superseded: nothing is waiting on it
+	}
+
+	if m.resolveCancel != nil {
+		m.resolveCancel() // release the timeout's timer
+		m.resolveCancel = nil
+	}
+
 	if msg.err != nil {
 		var cmd tea.Cmd
 		m.statusBar, cmd = m.statusBar.Push(fmt.Sprintf("couldn't add: %v", msg.err))
