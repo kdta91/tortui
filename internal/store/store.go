@@ -82,6 +82,16 @@ type Store struct {
 	dirty  bool
 	closed bool
 
+	// closeFlushErr is the outcome of Close's final flush, set before the
+	// file is closed. ClearHistory reads it when its own flush finds the
+	// file already closed (history.go).
+	closeFlushErr error
+
+	// beforeClearFlush, when set, runs in ClearHistory between clearing the
+	// in-memory history and flushing it. Tests use it to land a Close in
+	// that window; it is nil in production.
+	beforeClearFlush func()
+
 	flushInterval time.Duration
 	stopFlush     chan struct{}
 	flushDone     chan struct{}
@@ -275,6 +285,9 @@ func (s *Store) Close() error {
 	<-s.flushDone
 
 	flushErr := s.flush()
+	s.mu.Lock()
+	s.closeFlushErr = flushErr
+	s.mu.Unlock()
 	closeErr := s.db.Close()
 	if flushErr != nil {
 		return flushErr

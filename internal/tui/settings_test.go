@@ -1088,6 +1088,21 @@ func TestScraperFormWithoutURLIsValid(t *testing.T) {
 	}
 }
 
+// T-9035: a scraper with neither a URL nor a definition is refused, and the
+// reason names the definition, not the (optional) URL.
+func TestScraperFormWithNeitherURLNorDefinitionIsRejected(t *testing.T) {
+	f := sourceForm{name: "n", typ: "scraper"}
+
+	if got := f.validate(); got != errNeedsDefinition {
+		t.Errorf("validate() = %q, want %q", got, errNeedsDefinition)
+	}
+
+	issues := f.liveIssues(nil)
+	if len(issues) != 1 || issues[0] != errNeedsDefinition {
+		t.Errorf("liveIssues() = %v, want just %q", issues, errNeedsDefinition)
+	}
+}
+
 func TestScraperFormWithInvalidTypedURLIsRejected(t *testing.T) {
 	f := sourceForm{name: "n", typ: "scraper", definition: "d.yml", sourceURL: "ftp://example.org"}
 
@@ -1148,5 +1163,85 @@ func TestImportPrefillsURLAndSavesWithoutTypingOne(t *testing.T) {
 
 	if cmd == nil || m.settings.form.err != "" {
 		t.Fatalf("save refused: err=%q cmd=%v", m.settings.form.err, cmd)
+	}
+}
+
+// T-980: the live hints the form shows while typing go away once the field is
+// fixed. The older test above only proves they appear.
+func TestFormLiveIssuesClearOnceFieldsAreFixed(t *testing.T) {
+	existing := []config.Indexer{{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true}}
+
+	f := sourceForm{name: "My Tracker", typ: "torznab", sourceURL: "not-a-url"}
+	if got := f.liveIssues(existing); len(got) == 0 {
+		t.Fatal("setup: expected hints for a bad URL and a taken id")
+	}
+
+	f.sourceURL = "https://example.org/b"
+	if got := f.liveIssues(existing); len(got) != 1 || !strings.Contains(got[0], "already used") {
+		t.Fatalf("liveIssues after fixing the URL = %v, want only the id hint", got)
+	}
+
+	f.name = "Another Tracker"
+	if got := f.liveIssues(existing); len(got) != 0 {
+		t.Fatalf("liveIssues after fixing the name = %v, want none", got)
+	}
+
+	f.name = ""
+	if got := f.liveIssues(existing); len(got) != 1 || got[0] != "name is required" {
+		t.Fatalf("liveIssues for an empty name = %v", got)
+	}
+
+	f.name = "Another Tracker"
+	if got := f.liveIssues(existing); len(got) != 0 {
+		t.Fatalf("liveIssues after refilling the name = %v, want none", got)
+	}
+}
+
+// T-977: a toggle or remove whose save fails puts the optimistic change back
+// and says so.
+func TestFailedToggleSaveRevertsTheRow(t *testing.T) {
+	sm := &fakeSourceManager{sources: []config.Indexer{
+		{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+	}}
+	sm.saveErr = errors.New("disk full")
+	m := settingsModelFor(t, sm)
+
+	m = drive(t, m, tea.KeyMsg{Type: tea.KeySpace})
+
+	if sm.saveCalls != 1 {
+		t.Fatalf("saveCalls = %d, want 1", sm.saveCalls)
+	}
+
+	rows := m.sourceRows()
+	if len(rows) != 1 || !rows[0].Enabled {
+		t.Fatalf("rows after a failed toggle = %+v, want the source still enabled", rows)
+	}
+
+	if out := view(m); !strings.Contains(out, "couldn't save sources: disk full") {
+		t.Fatalf("failure not reported:\n%s", out)
+	}
+}
+
+func TestFailedRemoveSaveRestoresTheRow(t *testing.T) {
+	sm := &fakeSourceManager{sources: []config.Indexer{
+		{ID: "my-tracker", Name: "My Tracker", Type: "torznab", URL: "https://example.org/a", Enabled: true},
+	}}
+	sm.saveErr = errors.New("disk full")
+	m := settingsModelFor(t, sm)
+
+	m = drive(t, m, keyRune("x"))
+	m = drive(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	m = drive(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if sm.saveCalls != 1 {
+		t.Fatalf("saveCalls = %d, want 1 (the remove was confirmed)", sm.saveCalls)
+	}
+
+	if rows := m.sourceRows(); len(rows) != 1 || rows[0].ID != "my-tracker" {
+		t.Fatalf("rows after a failed remove = %+v, want the source back", rows)
+	}
+
+	if out := view(m); !strings.Contains(out, "couldn't save sources: disk full") {
+		t.Fatalf("failure not reported:\n%s", out)
 	}
 }

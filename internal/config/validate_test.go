@@ -182,6 +182,18 @@ func TestConfigValidate(t *testing.T) {
 			wantKey: "indexer[0].definition",
 		},
 		{
+			// T-9035: neither a URL nor a definition, so there is nothing to
+			// build the source from; only the definition is named, because the
+			// URL is optional for a scraper.
+			name: "scraper indexer with neither url nor definition",
+			mutate: func(c *Config) {
+				c.Indexers[0].Type = "scraper"
+				c.Indexers[0].URL = ""
+				c.Indexers[0].Definition = ""
+			},
+			wantKey: "indexer[0].definition",
+		},
+		{
 			name: "scraper indexer without url is valid",
 			mutate: func(c *Config) {
 				c.Indexers[0].Type = "scraper"

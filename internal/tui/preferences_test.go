@@ -878,3 +878,55 @@ func TestPreferencesApplyToReturnsParseErrorRatherThanDiscarding(t *testing.T) {
 		t.Fatal("applyTo must return an error for an unparseable field rather than discarding it")
 	}
 }
+
+// T-983: a download-dir check that arrives for a path (or minimum free space)
+// the user has since edited past is dropped, so it can never overwrite the
+// result for what is typed now, whatever order the results arrive in.
+func TestPreferencesStaleDownloadDirCheckNeverOverwritesNewer(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good")
+	if err := os.Mkdir(good, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	occupied := filepath.Join(dir, "occupied")
+	if err := os.WriteFile(occupied, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pm := &fakePreferencesManager{cfg: newTestConfig(dir)}
+	m := newPrefsTestModel(t, newTestEngine(t), pm)
+	margin := m.settings.prefsForm.margin()
+	probe := freeSpaceProbe(1 << 40)
+
+	older := prefsDownloadDirCheckMsg{check: checkDestination(good, 0, margin, probe)}
+	newer := prefsDownloadDirCheckMsg{check: checkDestination(occupied, 0, margin, probe)}
+
+	if newer.check.problem == "" {
+		t.Fatal("setup: the newer path must report a problem")
+	}
+
+	m.settings.prefsForm.downloadDir = occupied
+
+	// The newer result lands, then the older one arrives late.
+	for _, msg := range []prefsDownloadDirCheckMsg{newer, older} {
+		updated, _ := m.handlePrefsDownloadDirCheck(msg)
+		m = updated.(Model)
+	}
+
+	f := m.settings.prefsForm
+	if f.checkedPath != occupied || f.downloadDirCheck.problem == "" {
+		t.Fatalf("checkedPath = %q, problem = %q: the late stale result overwrote the newer one", f.checkedPath, f.downloadDirCheck.problem)
+	}
+
+	// A result computed under another min_free_space is stale too.
+	other := prefsDownloadDirCheckMsg{check: checkDestination(occupied, 0, margin+1, probe)}
+	other.check.problem = "from another margin"
+
+	updated, _ := m.handlePrefsDownloadDirCheck(other)
+	m = updated.(Model)
+
+	if got := m.settings.prefsForm.downloadDirCheck.problem; got == "from another margin" {
+		t.Fatal("a result for a different min_free_space was applied")
+	}
+}
