@@ -2568,6 +2568,8 @@ coverage 90.4%.
 
 ### T-944 · Engine review follow-ups from T-031/T-032 QA
 
+> Id note (T-9172): the id T-944 was also used by a Backlog entry about a `.yaml` extension (closed in T-9169, DEC-079); this block is the engine one.
+
 ```
 status: done
 depends: T-033
@@ -5997,3 +5999,32 @@ says so; `TestSubdomainRedirectRefusesACredentialedRequest`). T-944 closed: deci
 in `docs/indexer-definitions.md`; `TestOnlyYMLFilesAreRead`). Edge tests: U+FF5F and U+FF61 are separators either way, so
 they are pinned on `foldFullwidth` directly; a halfwidth katakana letter glued to "audio" pins the CategoryFromString side.
 New Backlog: T-9170.
+Id note (T-9172): the "T-944" closed here is the Backlog entry about a `.yaml` extension, not the engine task "Engine review follow-ups" (DEC-105).
+
+### T-9171 · Details and add-flow Backlog batch
+
+```
+status: done
+depends: none
+tier: M
+```
+Promotes Backlog T-964, T-966, T-9043, T-971, T-9016, T-9017 and T-9020, each checked against the current code first
+(Details and the add flow changed in T-9140, T-9141 and T-9121 to T-9143), plus four follow-ups from the PR #112 review.
+
+**Acceptance:**
+1. [x] Every entry is fixed, or closed with evidence in the Notes (all seven were still open and are fixed).
+2. [x] `Indexer.Resolve` and `Engine.Add` in the add flow run under a deadline; tests fail without it (T-966).
+3. [x] esc cancels an in-flight details fetch, the late result is dropped and opens no picker; esc is not claimed otherwise (T-9043).
+4. [x] ctrl+c quits from the destination picker, source form, preferences panel and import wizard; the quit prompt opens over a modal when downloads are active (T-971).
+5. [x] Enter on an empty import field shows a hint; a blank Name is not flagged while import text waits (T-9016, T-9017).
+6. [x] The end-to-end add test asserts the final screen is Downloads; the search-result test also starts from Downloads (T-964, T-9020).
+7. [x] DEC-056 carries the DEC-186 amendment marker; `MeetsMinSeeders` calls `seedersUnknown`; the two registry godocs are rewrapped.
+8. [x] Backlog T-9172 records the doubled id T-944 and both archive blocks carry a note.
+9. [x] 80x24 layout and the keymap are unchanged; no blocking I/O in Update; no live network, example.org names only.
+
+**Notes:** All seven fixed; none was already done (T-9140 and T-9141 did not touch these paths). T-966/T-9043: a 30 s
+deadline on each call and an esc cancel with a generation guard (DEC-187). T-971 also covers the preferences panel and
+the import wizard, which had the same defect; with downloads active ctrl+c opens the quit prompt over the modal. T-9016:
+a status-bar hint. T-9017: `liveIssues` checks a copy with the Name filled while an import waits, and skips the id
+check then. T-964 now asserts the final model's screen and body. New Backlog: T-9172, T-9173 (no on-screen hint for the
+esc cancel), T-9174 (cancel priority; a linked startAdd does not cancel an earlier fetch).

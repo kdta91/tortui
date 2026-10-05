@@ -185,14 +185,17 @@ func TestLatestKeyStillRunsLatest(t *testing.T) {
 }
 
 // TestSearchResultAlwaysMovesToResults: a completed dispatch lands on
-// Results wherever the user is when it arrives.
+// Results wherever the user is when it arrives (T-9020: from Downloads too,
+// so a stay-put guard coming back fails here).
 func TestSearchResultAlwaysMovesToResults(t *testing.T) {
-	m := New(newTestEngine(t), testTheme())
-	m.search.generation = 1
-	m.screen = ScreenSearch
+	for _, from := range []Screen{ScreenSearch, ScreenDownloads} {
+		m := New(newTestEngine(t), testTheme())
+		m.search.generation = 1
+		m.screen = from
 
-	updated, _ := m.handleSearchResult(searchResultMsg{gen: 1, query: indexer.Query{Mode: indexer.ModeLatest}})
-	if got := updated.(Model).screen; got != ScreenResults {
-		t.Fatalf("screen = %v, want Results", got)
+		updated, _ := m.handleSearchResult(searchResultMsg{gen: 1, query: indexer.Query{Mode: indexer.ModeLatest}})
+		if got := updated.(Model).screen; got != ScreenResults {
+			t.Fatalf("from %v: screen = %v, want Results", from, got)
+		}
 	}
 }

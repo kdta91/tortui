@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -75,6 +76,14 @@ type Model struct {
 	// Dismissed by any key, so it stays a plain bool rather than a
 	// components.Dialog — the same reasoning as errorDetail below.
 	firstRun bool
+
+	// resolveCancel cancels the details-page fetch startAdd started, nil when
+	// none is in flight; resolveGen numbers them so a cancelled or superseded
+	// fetch's late result is dropped; resolveTitle names it for the status
+	// line (T-9043, details.go).
+	resolveCancel context.CancelFunc
+	resolveGen    int
+	resolveTitle  string
 
 	showHelp bool
 	// quitConfirm is root's one Dialog instance (T-054): the "quit with
@@ -733,27 +742,43 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// ctrl+c quits from inside the text-entry modals too (T-971): each claims
+	// every key for typing, so it would otherwise do nothing there.
+	// The quit prompt (when downloads are active) then opens over the modal
+	// and, being first in context(), takes the keys until it is dismissed.
+	if msg.String() == "ctrl+c" && !m.quitConfirm.IsOpen() &&
+		(m.dest.open || m.settings.form != nil || m.settings.prefsForm != nil || m.settings.aggImport != nil) {
+		return m.handleQuit()
+	}
+
 	// The destination picker (T-074) is modal and owns every key while it
 	// is open, including typing into its path field.
-	if m.dest.open {
+	if m.dest.open && !m.quitConfirm.IsOpen() {
 		return m.handleDestinationKey(msg)
 	}
 
 	// The settings add/edit form (T-080) is modal and owns every key while
 	// it is open, the same reason the destination picker does above.
-	if m.settings.form != nil {
+	if m.settings.form != nil && !m.quitConfirm.IsOpen() {
 		return m.handleSourceFormKey(msg)
+	}
+
+	// esc cancels an in-flight details-page fetch (T-9043). Only when no
+	// modal or overlay is open, so esc keeps its own meaning in those.
+	if msg.String() == "esc" && m.resolving() && m.context() == screenContext(m.screen) &&
+		m.search.editing == editNone {
+		return m.cancelResolve()
 	}
 
 	// The preferences panel (T-082, preferences.go) is modal the same way,
 	// for the same reason: it needs almost every key for free-text fields.
-	if m.settings.prefsForm != nil {
+	if m.settings.prefsForm != nil && !m.quitConfirm.IsOpen() {
 		return m.handlePreferencesKey(msg)
 	}
 
 	// The aggregator-import wizard (T-083, aggregator_import.go) is modal
 	// the same way, for the same reason.
-	if m.settings.aggImport != nil {
+	if m.settings.aggImport != nil && !m.quitConfirm.IsOpen() {
 		return m.handleAggregatorImportKey(msg)
 	}
 

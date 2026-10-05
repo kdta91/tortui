@@ -14,7 +14,7 @@ func MeetsMinSeeders(r Result, min int) bool {
 		return true
 	}
 
-	if r.Extra[ExtraKeySeedersUnknown] != "" {
+	if seedersUnknown(r) {
 		return true
 	}
 

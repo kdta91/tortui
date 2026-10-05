@@ -495,11 +495,18 @@ func (f sourceForm) liveIssues(existing []config.Indexer) []string {
 	// Import text waiting in the field is not a missing definition: a save
 	// runs it (T-9052), and a failed import's own message must stay visible
 	// rather than sit under this hint.
-	if reason := f.validate(); reason != "" && (reason != errNeedsDefinition || !f.hasUnrunImport()) {
+	// The same import fills a blank Name and ID from the definition's own id,
+	// so a blank Name is not a problem while one is waiting (T-9017).
+	checked, nameFromImport := f, strings.TrimSpace(f.name) == "" && f.hasUnrunImport()
+	if nameFromImport {
+		checked.name = "imported"
+	}
+
+	if reason := checked.validate(); reason != "" && (reason != errNeedsDefinition || !f.hasUnrunImport()) {
 		issues = append(issues, reason)
 	}
 
-	if id := f.resolvedID(); id != "" {
+	if id := f.resolvedID(); id != "" && (!nameFromImport || strings.TrimSpace(f.idOverride) != "") {
 		for _, s := range existing {
 			if s.ID == id && s.ID != f.editingID {
 				issues = append(issues, fmt.Sprintf("id %q is already used by another source", id))
@@ -1509,7 +1516,7 @@ func (m Model) handleSourceFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// silently double as "next field."
 		if f.current() == fieldImport {
 			if strings.TrimSpace(f.importText) == "" {
-				return m, nil
+				return m.pushStatus("type a file path or URL to import first")
 			}
 
 			f.err = ""
