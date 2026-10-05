@@ -5938,3 +5938,34 @@ archive and decisions, so it is not backfilled. T-925 fixed (godoc, DEC-056, `Te
 changing `>` to `>=` in `mergeResults` fails it). T-9006 fixed (the two cells read N/A). dev-config note checked
 against `config/load.go`, which writes the resolved default on first creation. New Backlog T-9164 to T-9167.
 
+
+---
+
+### T-9168 · Indexer and httpx Backlog batch
+
+```
+status: done
+depends: none
+tier: H
+```
+Promotes Backlog T-918, T-919, T-924, T-927, T-929, T-930, T-931 and T-935, each checked against the current code
+first, plus three notes from the PR #110 review. A security boundary: every fix only tightens. Cross-host refusal
+(DEC-136), magnet-only redirects (DEC-151), xs=/as= dropping (DEC-153), SafeName (DEC-154, DEC-155), the lenient
+redirect conditions (DEC-156) and userinfo/credential handling are unchanged.
+
+**Acceptance:**
+1. [x] Each of the eight entries is closed with evidence or fixed, with a test that fails on the old code.
+2. [x] httpx refuses a hop to http after an https hop, and the leak sweep covers ErrInsecureRedirect (T-930, T-931; DEC-182).
+3. [x] A source removed or replaced mid fan-out is reported as unknown and never asked (T-924; DEC-183).
+4. [x] Fullwidth category labels fold; the tripwire sees parenthesised, aliased and converted spellings (T-918, T-919; DEC-184).
+5. [x] A suffixed credential key is masked in free text; a logged httpx.Config is readable and credential-free (T-927, T-929; DEC-185).
+6. [x] Torznab refuses a keyword query its caps declared unavailable, without a request (T-935).
+7. [x] PR #110 notes: DEC-056 carries a dated marker; the seeder-tie test holds the first source until the second replied; the mergeResults godoc says selection order.
+8. [x] No live network: loopback httptest servers or an in-process transport, example.org names only.
+
+**Notes:** All eight were still open; none was already done. T-924 was reachable through `Unregister` and also let a
+replaced adapter spend its replacement's refresh slot. Fixed: T-930 (previous-hop scheme check), T-931 (leak case via an
+in-process transport), T-924 (`reserveFetch` checks the source pointer), T-918 (U+FF01 to U+FF5E fold), T-919 (tripwire
+refactored into `scanCategoryDecls` with a shape table; open: untyped constant returns and arithmetic, DEC-184), T-927
+(regex identifier suffix), T-929 (`Config.LogValue`), T-935 (`ErrSearchUnsupported`). Each new test failed before its
+fix (torznab and tripwire checked by reverting the fix); the gated seeder-tie test pins existing behaviour. No new Backlog entry.

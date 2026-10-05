@@ -227,14 +227,19 @@ var categoryWords = map[string]Category{
 // a numeric label is not routed to CategoryFromTorznab — an adapter that has
 // numeric ids should call that helper directly rather than stringifying them.
 //
-// It is total and cannot fail. An empty, whitespace-only, non-ASCII, invalid
-// UTF-8, or simply unrecognised label returns CategoryOther. As with the
-// numeric helper, an unplaceable category is never a dropped result and never
-// an error (AGENT.md §13).
+// Fullwidth ASCII forms (U+FF01 to U+FF5E, as CJK-locale sources write
+// them) are folded to their ASCII letters, digits and punctuation first, so
+// a fullwidth "AUDIO" or "Movies/HD" reads like the ASCII one (T-918). No
+// other compatibility mapping is applied.
+//
+// It is total and cannot fail. An empty, whitespace-only, otherwise
+// non-ASCII, invalid UTF-8, or simply unrecognised label returns
+// CategoryOther. As with the numeric helper, an unplaceable category is never
+// a dropped result and never an error (AGENT.md §13).
 //
 // Call it in the adapter, never in the TUI.
 func CategoryFromString(s string) Category {
-	tokens := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+	tokens := strings.FieldsFunc(strings.ToLower(strings.Map(foldFullwidth, s)), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
 	for _, tok := range tokens {
@@ -243,4 +248,15 @@ func CategoryFromString(s string) Category {
 		}
 	}
 	return CategoryOther
+}
+
+// foldFullwidth maps a fullwidth ASCII form (U+FF01 to U+FF5E) onto the ASCII
+// character it stands for (U+0021 to U+007E) and leaves every other rune
+// alone.
+func foldFullwidth(r rune) rune {
+	const fullwidthOffset = 0xFF01 - 0x21
+	if r >= 0xFF01 && r <= 0xFF5E {
+		return r - fullwidthOffset
+	}
+	return r
 }

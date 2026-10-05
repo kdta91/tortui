@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet · `T-9127` Storage discard keeps others' data; dropped resume records and refused re-adds tell the user · `T-9133` A user's pause survives a restart; failed restores keep their name and infohash; kept data is reported · `T-9135` Seeding works; a refused entry's remove spares data another download may use; a restored pause holds from the start · `T-9140` Category glyph column and local category filter · `T-9141` Source's own category name in Details · `T-9143` Free space shared per disk; canonical destinations; cross-torrent delete guards · `T-9156` Close obsolete Backlog entries, with evidence · `T-9153` README launch polish and demo GIF · `T-9158` Results table batch: undated last, size width, selection, trust sort · `T-9162` Scripts and CI/Make batch · `T-9163` Docs Backlog batch.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet · `T-9127` Storage discard keeps others' data; dropped resume records and refused re-adds tell the user · `T-9133` A user's pause survives a restart; failed restores keep their name and infohash; kept data is reported · `T-9135` Seeding works; a refused entry's remove spares data another download may use; a restored pause holds from the start · `T-9140` Category glyph column and local category filter · `T-9141` Source's own category name in Details · `T-9143` Free space shared per disk; canonical destinations; cross-torrent delete guards · `T-9156` Close obsolete Backlog entries, with evidence · `T-9153` README launch polish and demo GIF · `T-9158` Results table batch: undated last, size width, selection, trust sort · `T-9162` Scripts and CI/Make batch · `T-9163` Docs Backlog batch · `T-9168` Indexer and httpx Backlog batch.
 
 ---
 
@@ -208,15 +208,6 @@ deferrals stay deferred to Backlog T-9004.
   discards a specific token later in it. Reproduced against merged `main` (261a381):
   `"Misc/Software"` -> other and `"Unknown/Audio"` -> other, while `"Software/Misc"` -> software.
   Common in the newznab block-0 dialect, so T-021/T-022 will meet it. Found by QA on T-011 (PR #9).
-- `T-918` `CategoryFromString` applies simple case folding only, so fullwidth forms miss every
-  bucket. Reproduced against merged `main` (261a381): `"AUDIO"` and `"audio"` in fullwidth both ->
-  other. Cosmetic; recorded so T-022 is not surprised. Found by QA on T-011 (PR #9).
-- `T-919` Unwrap `*ast.ParenExpr` in `isCategoryTypeExpr` in `internal/indexer/category_test.go`.
-  The §2 bucket-set tripwire matches only a bare `*ast.Ident`, so a parenthesized type spelling
-  evades it. QA round 3 on T-011 (PR #9) judged this non-blocking because `make fmt-check` rejects
-  that spelling and gofumpt rewrites it to the form the tripwire catches — but the guard should not
-  depend on the formatter to hold. Also covers the alias, untyped-conversion and bare-inline shapes
-  that DEC-051 discloses as open by design.
 - `T-920` Share an in-flight fetch between concurrent fan-outs (single-flight per cache key). As
   built in T-012 the per-source minimum refresh interval is claimed before the request, so two
   concurrent *distinct* queries reaching one source inside the interval get one fetch and one
@@ -231,10 +222,6 @@ deferrals stay deferred to Backlog T-9004.
   source has answered. That is the documented meaning of a per-indexer timeout and not a bug, but
   T-060/T-061 may want results delivered incrementally rather than at the slowest source's pace.
   Found by QA on T-012 (PR #10).
-- `T-924` `reserveFetch` returns `false` for an id that is not registered, which surfaces to the
-  caller as an `ErrThrottled` skip rather than an unknown-source failure. Currently unreachable —
-  there is no deregistration API — so this is a latent misleading-message bug only, worth closing
-  before any API that can remove a source lands. Found by QA on T-012 (PR #10).
 - `T-926` The hostname scanner's value-shape rule still reports ordinary Go and prose inside
   `internal/indexer/**`. T-9026 (DEC-141) skips only a bare two-part selector with a capitalised
   name (`URL: server.URL`, `errors.New(`). Still reported (checked 2026-10-05): a url-style key
@@ -278,29 +265,11 @@ deferrals stay deferred to Backlog T-9004.
   signing would run before `core.hooksPath` is set. Export `GIT_CONFIG_GLOBAL=/dev/null` and
   `GIT_CONFIG_NOSYSTEM=1`. Its temp output file also lands in the parent of the `mktemp` directory instead of
   inside it. Found in review of T-9162 (PR #109).
-- `T-927` `internal/logging`'s free-text masker misses `CookieHeader:` in a `%+v` struct dump. The
-  regex requires the sensitive word immediately followed by `[:=]`, so `APIKey:` is caught but
-  `CookieHeader:` is not — the `Header` sits between. Only bites when a caller formats a struct into
-  a string itself rather than passing it as a log attribute (reflection-based masking handles the
-  attribute path correctly). Found by QA on T-020 (PR #11); a defect in `internal/logging`, not in
-  `httpx`.
 - `T-928` `httpx`'s per-host limiter keys on the literal `url.URL.Host`, so `feed.example.org` and
   `feed.example.org:80` are separate buckets and `checkRedirect` refuses a redirect that only adds
   an explicit default port. Both fail closed — a doubled rate budget and a refused-but-safe
   redirect, never a followed unsafe one. Normalising the default port per scheme fixes both. Found
   by QA on T-020 (PR #11), disclosed in the `ErrCrossHostRedirect` godoc and DEC-064.
-- `T-929` `slog.Any` on an `httpx.Config` renders `!ERROR:json: unsupported type: func(...)` because
-  `Config.Jitter` is a function field. Fails safe — no credential is emitted — but the log line is
-  useless. A `LogValue` on `Config` (as `Credentials` already has) would fix it. Found by QA on
-  T-020 (PR #11).
-- `T-930` `httpx.checkRedirect` compares each hop's scheme against `via[0]`, the original request,
-  rather than the immediately preceding hop, so `http` -> `https` -> `http` is followed. No new
-  exposure versus the configured scheme — the first hop was already cleartext by the user's own
-  config, which is why DEC-064 follows an upgrade — but comparing against the previous hop would be
-  tighter. Found by QA on T-020 (PR #11).
-- `T-931` `httpx`'s `leakCases` table does not include the `ErrInsecureRedirect` path added in
-  T-020's round-1 remediation. That path is covered by its own dedicated tests, so this is a gap in
-  the systematic leak sweep rather than an uncovered behaviour. Found by QA on T-020 (PR #11).
 
 - `T-933` `scripts/check-indexer-hostnames.sh` flags the value of an XML namespace declaration.
   A Torznab feed identifies its extension attributes with an `xmlns:torznab` declaration whose
@@ -333,13 +302,6 @@ deferrals stay deferred to Backlog T-9004.
   masked key; either touches the frozen §5 contract, so it needs its own `DEC-` and a note on
   every affected task (AGENT.md §5, §12). Found by QA on T-021 (PR #12), rounds 1 and 2;
   disclosed rather than fixed there, per DEC-066 and DEC-071.
-- `T-935` `Adapter.Search` does not consult `Caps.Search`, so a source that declared
-  `search available="no"` still receives a request from a direct caller. The registry already
-  skips a source that lacks the capability a query needs (§6.3), so nothing reaches this path
-  today, and `torznab.Discover` already refuses to run the Latest probe against such a source —
-  but a backstop inside the adapter, mirroring the existing `ErrLatestUnsupported` path for
-  `ModeLatest`, would make the two capabilities behave the same way and would stop a future
-  caller sending a request the source said it cannot answer. Found by QA on T-021 (PR #12).
 - `T-936` Decide whether `internal/logging`'s sensitive-key list should cover domain fields that
   carry attacker-controlled free text — `title`, `uploader`, `magnet`, `name` — rather than only
   credential-shaped key names. `T-934` fixes the `indexer.Result` case at the type level;
@@ -854,6 +816,10 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-179 | 2026-10-05 | T-9158 (T-962): the first s onto the Trust column sorts descending, most trusted first; every other column still starts ascending, and S reverses. |
 | DEC-180 | 2026-10-05 | T-9158 (T-957, T-958, T-963): an undated result sorts last in both age directions; a size truncates (1023.9 MB reads "1023 MB") and drops the decimal from 1000; a fresh result set selects its top row. |
 | DEC-181 | 2026-10-05 | T-9162 (T-9029, T-913): the hostname scanner also checks a hostname-shaped userinfo and a backtick-quoted value; both add detections, nothing is relaxed. |
+| DEC-182 | 2026-10-05 | T-9168 (T-930): httpx refuses a hop to http when the previous hop was https, not only when the first request was; http to https is still followed. |
+| DEC-183 | 2026-10-05 | T-9168 (T-924): a source removed or replaced after selection, before its request, is an ErrUnknownIndexer failure and is never asked; it no longer spends a replacement's refresh slot. |
+| DEC-184 | 2026-10-05 | T-9168 (T-918, T-919): CategoryFromString folds fullwidth ASCII forms; the bucket tripwire sees parenthesised types, aliases and any conversion to Category. |
+| DEC-185 | 2026-10-05 | T-9168 (T-927, T-929): the free-text masker redacts a suffixed credential key (CookieHeader:); httpx.Config has a credential-free LogValue. |
 
 ## Blocked
 

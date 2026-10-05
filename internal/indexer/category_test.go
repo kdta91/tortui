@@ -62,13 +62,20 @@ func walkCategories() []Category {
 // rather than being skipped, because a shape this does not understand is a
 // shape it cannot honestly claim to be guarding.
 //
-// What it cannot see at all is a declaration that never spells the identifier
-// Category: a const or var typed through an alias (type c = Category), or a
-// bare Category(7) conversion with no declaration behind it. Matching on the
-// type name as written is a syntactic check, and closing those two would need a
-// full type check of the package. DEC-051 records that as a deliberate, stated
-// limit rather than pretending the guard is airtight — and none of this stops
-// an author who simply edits this test, which is not what it is here for.
+// The type is recognised however it is spelled in source (T-919, DEC-184): the
+// bare identifier Category, a parenthesised (Category), or any alias declared
+// in the package (type c = Category, an alias of an alias, at file level or
+// inside a function). A conversion to Category, or to an alias of it, anywhere
+// in the package's non-test code also fails it — that is the untyped
+// const X = Category(7) declaration and the bare inline Category(7) alike —
+// since no bucket has any business being made from a number here.
+//
+// What it still cannot see is a Category value that never names the type or
+// an alias of it at all: an untyped constant returned from a function whose
+// result is Category, or arithmetic on an existing bucket (CategoryData + 1).
+// Closing those would need a full type check of the package, which DEC-051
+// rejected on portability; DEC-184 keeps that limit. None of this stops an
+// author who simply edits this test, which is not what it is here for.
 func categoryConstNames(t *testing.T) []string {
 	t.Helper()
 
@@ -101,6 +108,20 @@ func categoryConstNames(t *testing.T) []string {
 		parsed = append(parsed, file)
 	}
 
+	names, err := scanCategoryDecls(fset, files, parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return names
+}
+
+// scanCategoryDecls is categoryConstNames' parser-independent half: it reads
+// the enum's names off the iota block and returns an error for any shape the
+// tripwire refuses. files names each entry of parsed, for messages.
+func scanCategoryDecls(fset *token.FileSet, files []string, parsed []*ast.File) ([]string, error) {
+	aliases := categoryAliases(parsed)
+	isCategory := func(e ast.Expr) bool { return isCategoryTypeExpr(e, aliases) }
+
 	// Pass 1: the iota const block is the enum proper, and its declaration
 	// order is what gives each bucket its value.
 	var (
@@ -119,80 +140,195 @@ func categoryConstNames(t *testing.T) []string {
 			if !ok {
 				continue
 			}
-			if !isCategoryTypeExpr(first.Type) {
+			if !isCategory(first.Type) {
 				continue
 			}
 			if len(first.Values) != 1 {
-				t.Fatalf("%s: Category const block's first spec has %d values, want exactly iota", name, len(first.Values))
+				return nil, fmt.Errorf("%s: Category const block's first spec has %d values, want exactly iota", name, len(first.Values))
 			}
 			if id, ok := first.Values[0].(*ast.Ident); !ok || id.Name != "iota" {
-				t.Fatalf("%s: Category const block is not an iota run; this test cannot derive bucket values from it", name)
+				return nil, fmt.Errorf("%s: Category const block is not an iota run; this test cannot derive bucket values from it", name)
 			}
 
 			blocks++
 			if blocks > 1 {
-				t.Fatalf("%s: a second Category iota const block was found; iota restarts per block, so bucket values can no longer be derived from declaration order", name)
+				return nil, fmt.Errorf("%s: a second Category iota const block was found; iota restarts per block, so bucket values can no longer be derived from declaration order", name)
 			}
 
 			for i, spec := range gd.Specs {
 				vs, ok := spec.(*ast.ValueSpec)
 				if !ok {
-					t.Fatalf("%s: unexpected spec kind %T in the Category const block", name, spec)
+					return nil, fmt.Errorf("%s: unexpected spec kind %T in the Category const block", name, spec)
 				}
 				if len(vs.Names) != 1 {
-					t.Fatalf("%s: spec %d of the Category const block declares %d names, want 1", name, i, len(vs.Names))
+					return nil, fmt.Errorf("%s: spec %d of the Category const block declares %d names, want 1", name, i, len(vs.Names))
 				}
 				if i > 0 && len(vs.Values) != 0 {
-					t.Fatalf("%s: spec %d of the Category const block sets an explicit value, breaking the iota run", name, i)
+					return nil, fmt.Errorf("%s: spec %d of the Category const block sets an explicit value, breaking the iota run", name, i)
 				}
 				names = append(names, vs.Names[0].Name)
 			}
 		}
 	}
 
-	// Pass 2: nothing else in the package may declare a Category. A constant
-	// or variable of this type that pass 1 did not read is a bucket the enum
-	// does not know about, whatever block or file it hides in.
+	// Pass 2: nothing else in the package may declare a Category, and
+	// nothing may convert a value to one. A constant or variable of this
+	// type that pass 1 did not read is a bucket the enum does not know
+	// about, whatever block or file it hides in; a conversion is how a
+	// bucket is made without declaring a constant of the type at all.
 	accounted := make(map[string]bool, len(names))
 	for _, n := range names {
 		accounted[n] = true
 	}
+	var found error
 	for i, file := range parsed {
 		name := files[i]
 		ast.Inspect(file, func(n ast.Node) bool {
+			if found != nil {
+				return false
+			}
+			if call, ok := n.(*ast.CallExpr); ok && len(call.Args) == 1 && isCategory(call.Fun) {
+				found = fmt.Errorf("%s:%d: a value is converted to Category; a bucket made from a number is invisible "+
+					"to declaration order and to Category.String, so the closed bucket set cannot be checked — "+
+					"use a constant from the enum's iota block", name, fset.Position(call.Pos()).Line)
+				return false
+			}
 			gd, ok := n.(*ast.GenDecl)
 			if !ok || (gd.Tok != token.CONST && gd.Tok != token.VAR) {
 				return true
 			}
 			for _, spec := range gd.Specs {
 				vs, ok := spec.(*ast.ValueSpec)
-				if !ok || !isCategoryTypeExpr(vs.Type) {
+				if !ok || !isCategory(vs.Type) {
 					continue
 				}
 				for _, id := range vs.Names {
 					if accounted[id.Name] {
 						continue
 					}
-					t.Fatalf("%s:%d: %s is declared with type Category outside the enum's iota const block; "+
+					found = fmt.Errorf("%s:%d: %s is declared with type Category outside the enum's iota const block; "+
 						"a bucket declared here is invisible to declaration order and to Category.String, "+
 						"so the closed bucket set cannot be checked — declare it in the iota block or not at all",
 						name, fset.Position(id.Pos()).Line, id.Name)
+					return false
 				}
+			}
+			return true
+		})
+		if found != nil {
+			return nil, found
+		}
+	}
+
+	return names, nil
+}
+
+// categoryAliases returns every name declared anywhere in parsed as an alias
+// of Category, directly or through other aliases (type a = Category; type b =
+// a), including aliases declared inside a function body.
+func categoryAliases(parsed []*ast.File) map[string]bool {
+	targets := make(map[string]string)
+	for _, file := range parsed {
+		ast.Inspect(file, func(n ast.Node) bool {
+			ts, ok := n.(*ast.TypeSpec)
+			if !ok || !ts.Assign.IsValid() {
+				return true
+			}
+			if id, ok := unparen(ts.Type).(*ast.Ident); ok {
+				targets[ts.Name.Name] = id.Name
 			}
 			return true
 		})
 	}
 
-	return names
+	aliases := make(map[string]bool)
+	for changed := true; changed; {
+		changed = false
+		for name, target := range targets {
+			if !aliases[name] && (target == "Category" || aliases[target]) {
+				aliases[name] = true
+				changed = true
+			}
+		}
+	}
+	return aliases
 }
 
-// isCategoryTypeExpr reports whether a declaration's type is written as the
-// bare identifier Category. This is a syntactic match on the name, not a type
-// check: an alias for Category is spelled differently and is not recognised.
-// See the limits documented on categoryConstNames.
-func isCategoryTypeExpr(e ast.Expr) bool {
-	id, ok := e.(*ast.Ident)
-	return ok && id.Name == "Category"
+// isCategoryTypeExpr reports whether a type expression names Category: the
+// bare identifier, any parenthesisation of it, or an alias in aliases. This is
+// a syntactic match on the name, not a type check. See the limits documented
+// on categoryConstNames.
+func isCategoryTypeExpr(e ast.Expr, aliases map[string]bool) bool {
+	id, ok := unparen(e).(*ast.Ident)
+	return ok && (id.Name == "Category" || aliases[id.Name])
+}
+
+// unparen strips every layer of parentheses from e.
+func unparen(e ast.Expr) ast.Expr {
+	for {
+		p, ok := e.(*ast.ParenExpr)
+		if !ok {
+			return e
+		}
+		e = p.X
+	}
+}
+
+// TestCategoryTripwireCatchesEveryDeclaredShape feeds scanCategoryDecls the
+// shapes T-919 named (DEC-184): each must fail it, and the plain enum, an
+// unrelated defined type and a non-conversion use must not.
+func TestCategoryTripwireCatchesEveryDeclaredShape(t *testing.T) {
+	const enum = "package indexer\ntype Category int\nconst (\n\tCategoryOther Category = iota\n\tCategoryAudio\n)\n"
+
+	refused := map[string]string{
+		"parenthesised type":          "const X (Category) = 7\n",
+		"doubly parenthesised type":   "var X ((Category))\n",
+		"alias":                       "type c = Category\nconst X c = 7\n",
+		"alias of an alias":           "type a = Category\ntype b = a\nvar X b\n",
+		"parenthesised alias target":  "type c = (Category)\nconst X c = 7\n",
+		"alias inside a function":     "func f() { type c = Category; var x c; _ = x }\n",
+		"untyped conversion const":    "const X = Category(7)\n",
+		"untyped conversion var":      "var X = Category(0)\n",
+		"parenthesised conversion":    "const X = (Category)(7)\n",
+		"conversion through an alias": "type c = Category\nconst X = c(7)\n",
+		"bare inline conversion":      "func f() Category { return Category(7) }\n",
+		"conversion in a const block": "const (\n\tY = 1\n\tX = Category(7)\n)\n",
+	}
+	allowed := map[string]string{
+		"the enum alone":           "",
+		"a defined type, no alias": "type c Category\nconst X c = 7\n",
+		"a bucket used, not made":  "func f() Category { return CategoryAudio }\n",
+		"an unrelated conversion":  "var n = int(CategoryAudio)\n",
+	}
+
+	scan := func(t *testing.T, extra string) ([]string, error) {
+		t.Helper()
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "synthetic.go", enum+extra, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parsing the synthetic source: %v", err)
+		}
+		return scanCategoryDecls(fset, []string{"synthetic.go"}, []*ast.File{file})
+	}
+
+	for name, extra := range refused {
+		t.Run("refuses "+name, func(t *testing.T) {
+			if _, err := scan(t, extra); err == nil {
+				t.Errorf("the tripwire accepted %q", extra)
+			}
+		})
+	}
+	for name, extra := range allowed {
+		t.Run("allows "+name, func(t *testing.T) {
+			names, err := scan(t, extra)
+			if err != nil {
+				t.Fatalf("the tripwire refused %q: %v", extra, err)
+			}
+			if strings.Join(names, ",") != "CategoryOther,CategoryAudio" {
+				t.Errorf("enum names = %v, want [CategoryOther CategoryAudio]", names)
+			}
+		})
+	}
 }
 
 func isKnownCategory(c Category) bool {
@@ -392,6 +528,13 @@ func TestCategoryFromString(t *testing.T) {
 		{"only nul", "\x00", CategoryOther},
 		{"substring is not a token", "audiophile", CategoryOther},
 		{"token inside word", "myvideos", CategoryOther},
+		// Fullwidth ASCII forms fold to ASCII first (T-918).
+		{"fullwidth upper", "\uFF21\uFF35\uFF24\uFF29\uFF2F", CategoryAudio},
+		{"fullwidth lower", "\uFF41\uFF55\uFF44\uFF49\uFF4F", CategoryAudio},
+		{"fullwidth path form", "\uFF2D\uFF4F\uFF56\uFF49\uFF45\uFF53\uFF0F\uFF28\uFF24", CategoryVideo},
+		{"fullwidth mixed with ascii", "\uFF33oftware", CategorySoftware},
+		{"fullwidth substring is not a token", "\uFF41\uFF55\uFF44\uFF49\uFF4Fphile", CategoryOther},
+		{"fullwidth digits", "\uFF15\uFF10\uFF13\uFF10", CategoryOther},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

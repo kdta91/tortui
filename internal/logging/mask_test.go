@@ -89,6 +89,20 @@ func TestMaskText(t *testing.T) {
 			wantMasked: []string{"PASSKEY-9079"},
 		},
 		{
+			// T-927: a %+v struct dump puts a field name between the
+			// credential word and the colon.
+			name:        "struct dump with a suffixed credential field name",
+			in:          fmt.Sprintf("config %+v", struct{ APIKey, CookieHeader, Name string }{"KEY-927", "COOKIE-927", "feed"}),
+			wantMasked:  []string{"KEY-927", "COOKIE-927"},
+			wantPresent: []string{"APIKey:", "CookieHeader:", "Name:feed"},
+		},
+		{
+			name:        "suffixed credential key in free text",
+			in:          "sending session_cookie_value=COOKIE-927 and apikey_param = KEY-927 now",
+			wantMasked:  []string{"COOKIE-927", "KEY-927"},
+			wantPresent: []string{"sending", "now"},
+		},
+		{
 			name:        "ordinary message untouched",
 			in:          "search dispatched to 3 sources",
 			wantPresent: []string{"search dispatched to 3 sources"},

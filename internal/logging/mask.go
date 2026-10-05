@@ -126,8 +126,11 @@ var magnetPattern = regexp.MustCompile(`(?i)magnet:\?\S+`)
 
 // credentialPattern matches a "key: value" or "key=value" pair whose key
 // names a credential, so a raw Cookie header or "api_key=..." string logged
-// as free text (outside a structured attribute) still gets scrubbed.
-var credentialPattern = regexp.MustCompile(`(?i)(api[_-]?key|cookie|token|secret|password|passkey|authorization)(\s*[:=]\s*)([^\s&"',;]+)`)
+// as free text (outside a structured attribute) still gets scrubbed. The
+// credential word may carry an identifier suffix before the separator
+// ("CookieHeader:" in a %+v struct dump, "cookie_value="), which is
+// redacted the same way (T-927).
+var credentialPattern = regexp.MustCompile(`(?i)(api[_-]?key|cookie|token|secret|password|passkey|authorization)([A-Za-z0-9_-]*)(\s*[:=]\s*)([^\s&"',;]+)`)
 
 // bearerPattern matches an "Authorization: Bearer <token>"-style value even
 // when written without the "Authorization" key at all (e.g. a raw header
@@ -184,7 +187,7 @@ func maskText(s string) string {
 	// whitespace after "Bearer" and leave the actual token that follows
 	// it untouched.
 	s = bearerPattern.ReplaceAllString(s, "Bearer "+redacted)
-	s = credentialPattern.ReplaceAllString(s, "$1$2"+redacted)
+	s = credentialPattern.ReplaceAllString(s, "$1$2$3"+redacted)
 	s = knownSecretPrefixPattern.ReplaceAllString(s, redacted)
 
 	return s

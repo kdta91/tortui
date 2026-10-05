@@ -307,8 +307,10 @@ func (r *Registry) SetEnabled(id string, enabled bool) error {
 // Unregister removes the source registered under id, and every cached answer
 // it gave, so a source later registered under the same id (an edited
 // configuration, T-096) starts clean. It returns ErrUnknownIndexer for an id
-// that is not registered. A fan-out already under way keeps the adapter it
-// selected until that search returns.
+// that is not registered. A fan-out already under way that selected the
+// source but has not yet sent its request reports it as ErrUnknownIndexer and
+// never asks it; a request already sent runs to completion, and its answer is
+// not cached (DEC-183).
 func (r *Registry) Unregister(id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -464,7 +466,10 @@ func (r *Registry) searchOne(ctx context.Context, src *source, q Query) ([]Resul
 		return cached, true, nil
 	}
 
-	if !r.reserveFetch(id) {
+	switch r.reserveFetch(src) {
+	case fetchGone:
+		return nil, false, &SourceError{IndexerID: id, Err: ErrUnknownIndexer}
+	case fetchThrottled:
 		return nil, false, &SourceError{
 			IndexerID: id,
 			Skipped:   true,
@@ -650,27 +655,43 @@ func (r *Registry) storeResults(key cacheKey, owner *source, results []Result) {
 	r.cache[key] = cacheEntry{results: cloneResults(results), fetched: now}
 }
 
-// reserveFetch reports whether an outbound request to id may be made now, and
+// fetchSlot is reserveFetch's answer.
+type fetchSlot int
+
+const (
+	// fetchClaimed: the request may be made now, and the slot is taken.
+	fetchClaimed fetchSlot = iota
+	// fetchThrottled: the source was asked inside MinRefreshInterval.
+	fetchThrottled
+	// fetchGone: the source was unregistered, or replaced under its id,
+	// after the fan-out selected it (T-924, DEC-183).
+	fetchGone
+)
+
+// reserveFetch reports whether an outbound request to src may be made now, and
 // claims the slot if so.
 //
 // Claiming happens before the request rather than after it, and under the same
 // lock as the check, so two concurrent fan-outs cannot both decide they are
 // first. A cache hit never calls this: it makes no request, so it must not
 // push the next allowed one further out.
-func (r *Registry) reserveFetch(id string) bool {
+//
+// src must still be the source registered under its id. One that was removed
+// or replaced since the fan-out selected it is fetchGone: it is not asked, and
+// a replacement's slot is never spent on the old adapter's request.
+func (r *Registry) reserveFetch(src *source) fetchSlot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	s, ok := r.sources[id]
-	if !ok {
-		return false
+	if r.sources[src.ix.ID()] != src {
+		return fetchGone
 	}
 	now := r.now()
-	if !s.lastFetch.IsZero() && now.Sub(s.lastFetch) < r.cfg.MinRefreshInterval {
-		return false
+	if !src.lastFetch.IsZero() && now.Sub(src.lastFetch) < r.cfg.MinRefreshInterval {
+		return fetchThrottled
 	}
-	s.lastFetch = now
-	return true
+	src.lastFetch = now
+	return fetchClaimed
 }
 
 // cloneResults copies results deeply enough that the copy and the original
@@ -702,11 +723,10 @@ type merged struct {
 // The surviving copy is the one with the most seeders, which is the copy whose
 // magnet is most likely to actually resolve into a swarm. When copies tie on
 // seeders the first one met survives (only strictly more seeders replaces it):
-// the earlier source in the order the sources were queried, and within one
-// source the earlier row. Every
-// contributing source id is recorded in Extra under ExtraKeySources, in the
-// order the sources were queried, so the TUI can show that a row came from
-// several places.
+// the earlier source in selection order (the ids given, else registration
+// order), and within one source the earlier row. Every contributing source id
+// is recorded in Extra under ExtraKeySources, in selection order, so the TUI
+// can show that a row came from several places.
 //
 // Ordering is by mode: seeders descending for ModeSearch, published descending
 // for ModeLatest (AGENT.md §7 makes seeders the default sort of the results

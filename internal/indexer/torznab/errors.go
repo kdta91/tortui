@@ -64,6 +64,13 @@ var (
 	// ModeLatest.
 	ErrModeUnsupported = errors.New("query mode is not supported")
 
+	// ErrSearchUnsupported reports a ModeSearch query sent to a source
+	// whose caps document declared keyword search unavailable. The
+	// registry skips such a source rather than asking it (AGENT.md §6.3);
+	// this is the adapter's own backstop for a caller that does not, the
+	// same as ErrLatestUnsupported (T-935).
+	ErrSearchUnsupported = errors.New("this source does not offer keyword search")
+
 	// ErrLatestUnsupported reports a ModeLatest query sent to a source
 	// whose caps probe did not show a working recent-additions feed. The
 	// registry skips such a source rather than asking it (AGENT.md §6.3);

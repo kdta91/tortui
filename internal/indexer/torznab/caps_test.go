@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/kdta91/tortui/internal/indexer"
@@ -379,5 +380,38 @@ func TestCategoryIDsSkipWhatTortuiCannotPlace(t *testing.T) {
 
 	if categoryIDs(capsDocument{}) != nil {
 		t.Fatal("a caps document with no categories must produce a nil map, not an empty one")
+	}
+}
+
+// TestSearchRefusesAKeywordQueryTheSourceCannotSearch pins T-9168 (Backlog
+// T-935): an adapter whose caps say search is unavailable refuses a keyword
+// query itself, as it already refuses ModeLatest without the Latest cap, and
+// sends the source nothing.
+func TestSearchRefusesAKeywordQueryTheSourceCannotSearch(t *testing.T) {
+	t.Parallel()
+
+	src := newSource(t, map[string]reply{
+		functionCaps:   fixtureReply(t, "caps-no-search.xml"),
+		functionSearch: fixtureReply(t, "search-full.xml"),
+	})
+
+	a := mustDiscover(t, src)
+	before := len(src.requests())
+
+	results, err := a.Search(testContext(t), indexer.Query{Mode: indexer.ModeSearch, Text: "ubuntu"})
+	if !errors.Is(err, ErrSearchUnsupported) {
+		t.Fatalf("Search error = %v, want ErrSearchUnsupported", err)
+	}
+
+	if results != nil {
+		t.Errorf("Search returned %v alongside an error", results)
+	}
+
+	if !strings.HasPrefix(err.Error(), "torznab "+testID+": ") {
+		t.Errorf("error = %q, want it to name the adapter (AGENT.md §6.9)", err)
+	}
+
+	if got := len(src.requests()); got != before {
+		t.Errorf("a keyword query the source cannot answer still reached it (%d new requests)", got-before)
 	}
 }

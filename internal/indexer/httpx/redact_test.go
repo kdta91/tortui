@@ -80,6 +80,26 @@ func leakCases(t *testing.T) map[string]error {
 	})
 	errs["cross-host redirect"] = mustFail(t, newLeakClient(Config{}), ctx, redirector.URL+"/api")
 
+	// An https -> http hop on the same host (ErrInsecureRedirect, T-931). Two
+	// real servers cannot share one host:port across schemes, so the hop is
+	// staged at the transport, keeping the api_key in the Location's query.
+	downgrade := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		cleartext := *r.URL
+		cleartext.Scheme = "http"
+
+		return &http.Response{
+			StatusCode: http.StatusFound,
+			Status:     "302 Found",
+			Header:     http.Header{"Location": []string{cleartext.String()}},
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    r,
+		}, nil
+	})
+	errs["insecure redirect"] = mustFail(t, newLeakClient(Config{Transport: downgrade}), ctx, "https://feed.example.org/api?t=search")
+	if !errors.Is(errs["insecure redirect"], ErrInsecureRedirect) {
+		t.Fatalf("insecure redirect case = %v, want ErrInsecureRedirect", errs["insecure redirect"])
+	}
+
 	// A dead endpoint: net/http fails the dial and hands back a *url.Error
 	// whose text is the whole URL, query string included.
 	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
