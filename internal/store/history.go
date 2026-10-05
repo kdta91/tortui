@@ -57,8 +57,9 @@ func (s *Store) ListHistory() []HistoryEntry {
 // ClearHistory removes every recorded query and flushes the empty history to
 // disk before returning, so the clear survives a crash or restart rather than
 // waiting on the debounce. It blocks on bbolt, so callers on the TUI's Update
-// goroutine must run it inside a tea.Cmd. A Close racing it is not a failure:
-// the clear was made before Close's final flush, so that flush saved it.
+// goroutine must run it inside a tea.Cmd. A Close racing it
+// returns Close's final-flush outcome: nil when that flush saved the clear,
+// the flush's error when it did not.
 func (s *Store) ClearHistory() error {
 	s.mu.Lock()
 	if s.closed {

@@ -466,3 +466,29 @@ func TestClearHistoryRacingCloseReportsSuccess(t *testing.T) {
 		t.Fatalf("history after reopen = %+v, want empty", got)
 	}
 }
+
+// T-9039: when the Close that overtook ClearHistory failed to flush, the clear
+// was not saved, and ClearHistory must say so rather than report success.
+func TestClearHistoryRacingFailedCloseReportsError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tortui.db")
+
+	s, err := open(path, time.Hour)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	s.beforeClearFlush = func() {
+		// An entry whose time cannot be encoded makes Close's final flush fail.
+		s.mu.Lock()
+		s.history = []historyRecord{{seq: 1, entry: HistoryEntry{Text: "x", At: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)}}}
+		s.mu.Unlock()
+
+		if err := s.Close(); err == nil {
+			t.Error("Close succeeded, want the encode failure")
+		}
+	}
+
+	if err := s.ClearHistory(); err == nil {
+		t.Fatal("ClearHistory = nil, want Close's failed flush reported")
+	}
+}

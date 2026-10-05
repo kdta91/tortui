@@ -574,6 +574,9 @@ deferrals stay deferred to Backlog T-9004.
   any of its other meanings (a running search, a running connection test), so those need a second press; consider
   scoping the cancel to the screen the fetch started from. (2) `startAdd` of a result that already has a link does not
   cancel an earlier in-flight details fetch, whose result can later continue into the add flow. This predates the PR.
+- `T-9176` The store's `flush` never sets `dirty` back to false (store.go), so once anything has changed every
+  periodic tick rewrites all buckets. DEC-188's race analysis relies on Close's final flush always writing, so any fix
+  must re-check that assumption (and see T-9038, the same flush window). Found in review of T-9175 (PR #114).
 
 ---
 
