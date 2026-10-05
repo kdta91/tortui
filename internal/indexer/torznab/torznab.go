@@ -189,6 +189,7 @@ type Options struct {
 type Adapter struct {
 	client       *httpx.Client
 	categoryIDs  map[indexer.Category][]int
+	catNames     map[int]sourceCategory
 	id           string
 	name         string
 	endpoint     string
@@ -273,6 +274,7 @@ func Discover(ctx context.Context, opts Options) (*Adapter, error) {
 
 	a.caps = out.caps
 	a.categoryIDs = out.categoryIDs
+	a.catNames = out.categoryNames
 
 	if probeErr != nil {
 		return a, fmt.Errorf("torznab %s: %w", a.id, probeErr)
@@ -355,7 +357,7 @@ func (a *Adapter) Search(ctx context.Context, q indexer.Query) ([]indexer.Result
 	results := make([]indexer.Result, 0, len(doc.Channel.Items))
 
 	for _, it := range doc.Channel.Items {
-		res := resultFrom(a.id, it)
+		res := resultFrom(a.id, it, a.catNames)
 
 		// MinSeeders is applied here rather than pushed to the source:
 		// Torznab has no parameter for it (indexer.Query allows

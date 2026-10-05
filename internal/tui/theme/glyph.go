@@ -18,19 +18,22 @@ type GlyphSet struct {
 	// (the order of indexer.Category's constants; this package does not
 	// import indexer, so the tui package pins the order in a test).
 	Category [7]string
+	// Sep separates two facts on one line, such as the category word and
+	// the source's own category name on the details screen.
+	Sep string
 }
 
 // UnicodeGlyphs is the default glyph set: block characters and a check
 // mark.
 var UnicodeGlyphs = GlyphSet{
-	Full: "█", Empty: "░", Check: "✓",
+	Full: "█", Empty: "░", Check: "✓", Sep: "·",
 	Category: [7]string{"·", "♪", "►", "▣", "≡", "⌘", "▤"},
 }
 
 // ASCIIGlyphs is the fallback glyph set for terminals or users that can't
 // or don't want Unicode.
 var ASCIIGlyphs = GlyphSet{
-	Full: "#", Empty: "-", Check: "+",
+	Full: "#", Empty: "-", Check: "+", Sep: "-",
 	Category: [7]string{"-", "A", "V", "I", "T", "S", "D"},
 }
 
