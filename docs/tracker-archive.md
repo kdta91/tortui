@@ -4166,6 +4166,32 @@ and when enter imports, so `~/x.yml` works (T-9018). `tui.WithDefinitionsDir` wi
 Ten tests over a temp dir cover the criteria. Backlog: T-9022, T-9023 (PR #66 review notes).
 
 
+### T-9175 · Settings and store Backlog test batch
+
+```
+status: done
+depends: none
+tier: M
+```
+Promotes Backlog T-983, T-977, T-980, T-9035, T-9039 and T-9040, each checked against the current code first (Settings
+changed in T-9101, T-9111 and T-9171).
+
+**Acceptance:**
+1. [x] Every entry is fixed, or closed with evidence in the Notes (all six were still open and are fixed).
+2. [x] A stale download-dir check never overwrites a newer one, in either arrival order (T-983).
+3. [x] A failed toggle or remove save reverts the row and reports it (T-977).
+4. [x] The form's live hints clear once the field is fixed (T-980).
+5. [x] A scraper with neither a URL nor a definition is refused by the form and by config validation (T-9035).
+6. [x] `ClearHistory` writes through without a Close, and a Close racing it is not reported as a failure (T-9039, T-9040).
+7. [x] Each new test fails when the behaviour it covers is broken (mutation-checked, output in the PR).
+8. [x] 80x24 layout and the keymap are unchanged; no blocking I/O in Update; no live network, example.org names only.
+
+**Notes:** All six fixed, none already done. T-983: the guard was already correct (a result for another path or margin
+is dropped), so this adds the test only. T-977, T-980, T-9035: tests only. T-9039 is a code change: `ClearHistory` gets
+`ErrDatabaseNotOpen` from its flush when a Close landed after the clear, and now returns Close's final-flush outcome
+instead (DEC-188). A test-only hook (`beforeClearFlush`) lands the Close in that window. T-9040: the file is read back
+through the store's own handle with no Close. Left in Backlog: T-9038 (the same flush window, a persistence change).
+
 ---
 
 ---

@@ -3,10 +3,12 @@ package store
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	bolterrors "go.etcd.io/bbolt/errors"
 )
 
 // HistoryEntry is one recent search query, shown so a user can re-run a
@@ -55,7 +57,8 @@ func (s *Store) ListHistory() []HistoryEntry {
 // ClearHistory removes every recorded query and flushes the empty history to
 // disk before returning, so the clear survives a crash or restart rather than
 // waiting on the debounce. It blocks on bbolt, so callers on the TUI's Update
-// goroutine must run it inside a tea.Cmd.
+// goroutine must run it inside a tea.Cmd. A Close racing it is not a failure:
+// the clear was made before Close's final flush, so that flush saved it.
 func (s *Store) ClearHistory() error {
 	s.mu.Lock()
 	if s.closed {
@@ -64,9 +67,25 @@ func (s *Store) ClearHistory() error {
 	}
 	s.history = nil
 	s.dirty = true
+	hook := s.beforeClearFlush
 	s.mu.Unlock()
 
-	return s.flush()
+	if hook != nil {
+		hook()
+	}
+
+	err := s.flush()
+	if errors.Is(err, bolterrors.ErrDatabaseNotOpen) {
+		// A Close landed between the clear above and this flush. Its final
+		// flush snapshots after the clear, so it already wrote the empty
+		// history; report that flush's outcome rather than the closed file.
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		return s.closeFlushErr
+	}
+
+	return err
 }
 
 // writeHistory rewrites the history bucket from scratch with snapshot,

@@ -379,3 +379,90 @@ func TestTorrentSeedProgressSurvivesReopen(t *testing.T) {
 		t.Errorf("reopened record without seed progress = %+v (found %v), want zero values", got, ok)
 	}
 }
+
+// T-9040: ClearHistory writes through on its own. The file is read through the
+// store's own handle (a second Open would wait on bbolt's file lock) before
+// any Close or periodic flush could have run, and the debounce is an hour.
+func TestClearHistoryFlushesWithoutClose(t *testing.T) {
+	s, _ := openTest(t, time.Hour)
+
+	if err := s.AddHistory("one"); err != nil {
+		t.Fatalf("AddHistory: %v", err)
+	}
+
+	if err := s.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	if got := historyKeysOnDisk(t, s); got != 1 {
+		t.Fatalf("setup: history entries on disk = %d, want 1", got)
+	}
+
+	if err := s.ClearHistory(); err != nil {
+		t.Fatalf("ClearHistory: %v", err)
+	}
+
+	if got := historyKeysOnDisk(t, s); got != 0 {
+		t.Fatalf("history entries on disk after ClearHistory = %d, want 0 with no Close or Flush", got)
+	}
+}
+
+func historyKeysOnDisk(t *testing.T, s *Store) int {
+	t.Helper()
+
+	n := 0
+
+	err := s.db.View(func(tx *bolt.Tx) error {
+		if b := tx.Bucket(bucketHistory); b != nil {
+			n = b.Stats().KeyN
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("read history bucket: %v", err)
+	}
+
+	return n
+}
+
+// T-9039: a Close that lands between ClearHistory's clear and its flush has
+// already saved the clear, so ClearHistory must not report the closed file as
+// a failure.
+func TestClearHistoryRacingCloseReportsSuccess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tortui.db")
+
+	s, err := open(path, time.Hour)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	if err := s.AddHistory("one"); err != nil {
+		t.Fatalf("AddHistory: %v", err)
+	}
+
+	if err := s.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	s.beforeClearFlush = func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}
+
+	if err := s.ClearHistory(); err != nil {
+		t.Fatalf("ClearHistory racing Close = %v, want nil: Close's flush saved the clear", err)
+	}
+
+	reopened, err := open(path, time.Hour)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+
+	defer func() { _ = reopened.Close() }()
+
+	if got := reopened.ListHistory(); len(got) != 0 {
+		t.Fatalf("history after reopen = %+v, want empty", got)
+	}
+}
