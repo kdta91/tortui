@@ -281,6 +281,17 @@ func (t Table) SortColumn() int { return t.sortCol }
 // is meaningless when SortColumn is -1.
 func (t Table) SortAscending() bool { return t.sortAsc }
 
+// SelectFirst selects the first row in the current order, or nothing when
+// the table has no rows. A caller loading a fresh set of rows uses it to
+// start at the top, where SetRows and SortBy would keep a selection that
+// happens to survive by identity.
+func (t Table) SelectFirst() Table {
+	t.selectedID = ""
+	t.ensureSelection()
+
+	return t
+}
+
 // SelectedID returns the identity of the currently selected row, or ""
 // when the table has no rows.
 func (t Table) SelectedID() string { return t.selectedID }

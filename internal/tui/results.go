@@ -56,7 +56,10 @@ func resultsColumns() []components.Column {
 			Key: "trust", Title: "Trust", Width: 6, Align: components.AlignLeft, Priority: 4,
 			Less: trustLess, Accent: true,
 		},
-		{Key: "age", Title: "Age", Width: 6, Align: components.AlignRight, Priority: 3, Less: ageLess},
+		{
+			Key: "age", Title: "Age", Width: 6, Align: components.AlignRight, Priority: 3,
+			Less: ageLess, SortMissingLast: ageSortMissing,
+		},
 		{Key: "source", Title: "Source", Width: 16, Align: components.AlignLeft, Priority: 2},
 	}
 }
@@ -142,8 +145,16 @@ func (m resultsModel) setResults(results []indexer.Result, mode indexer.Mode, no
 
 	m.allRows = rows
 	m = m.applyTrustFilter()
+	m = m.applyModeDefault(mode)
 
-	return m.applyModeDefault(mode)
+	// A fresh result set starts on the row shown at the top after the
+	// default sort (T-963). SetRows and SortBy keep a selection by identity,
+	// so a row that was selected in the previous results, or at the top of
+	// the raw order, would otherwise stay highlighted wherever the sort put
+	// it.
+	m.table = m.table.SelectFirst()
+
+	return m
 }
 
 // toggleTrustFilter implements the "t" key (ActionToggleTrustFilter): T-062
@@ -213,8 +224,10 @@ func (m resultsModel) sortDescBy(col int) resultsModel {
 }
 
 // cycleSort implements the "s" key (ActionSortCycle): move to the next
-// column in display order, wrapping, always starting that column ascending
-// (components.Table.SortBy's own rule for "a different column").
+// column in display order, wrapping, starting that column ascending
+// (components.Table.SortBy's own rule for "a different column") — except
+// Trust, which starts descending so the most trusted rows come first
+// (T-962, DEC-179); S then reverses it.
 func (m resultsModel) cycleSort() resultsModel {
 	n := len(m.table.Columns)
 	if n == 0 {
@@ -224,6 +237,10 @@ func (m resultsModel) cycleSort() resultsModel {
 	next := (m.table.SortColumn() + 1) % n
 	if next < 0 {
 		next = 0
+	}
+
+	if next == colTrust {
+		return m.sortDescBy(next)
 	}
 
 	m.table = m.table.SortBy(next)
@@ -401,7 +418,16 @@ func formatSize(n int64) string {
 		unit++
 	}
 
-	return fmt.Sprintf("%.1f %s", f, sizeUnits[unit])
+	// One decimal keeps the text within 8 cells up to "999.9 MB". From 1000
+	// up (a value below 1024 in its unit, or one that rounds to 1000.0)
+	// the decimal would make "1023.9 MB", 9 cells in the 8-cell Size
+	// column, so it is dropped: "1023 MB" (T-958).
+	num := fmt.Sprintf("%.1f", f)
+	if len(num) > len("999.9") {
+		num = fmt.Sprintf("%.0f", f)
+	}
+
+	return num + " " + sizeUnits[unit]
 }
 
 // parseSize reverses formatSize well enough for sizeLess to compare two
@@ -500,7 +526,7 @@ func seedersLess(a, b string) bool { return parseSeeders(a) < parseSeeders(b) }
 // renders as "-" rather than a nonsensical multi-decade age.
 func formatAge(now, at time.Time) string {
 	if at.IsZero() {
-		return "-"
+		return ageUnknown
 	}
 
 	d := now.Sub(at)
@@ -523,12 +549,11 @@ func formatAge(now, at time.Time) string {
 }
 
 // parseAgeSeconds reverses formatAge's unit suffix into seconds, for
-// ageLess. "-" (formatAge's zero-time case) and anything else unparseable
-// sorts as 0 — indistinguishable from "just now" — rather than panicking;
-// AGENT.md §7 does not ask the Age column to distinguish "unknown" from
-// "brand new" the way T-062 must for the Trust column.
+// ageLess. Anything unparseable reads as 0 rather than panicking. "-"
+// (formatAge's zero-time case) also reads as 0, but never reaches ageLess
+// alongside a dated row: ageSortMissing pins it last first (T-957).
 func parseAgeSeconds(cell string) int64 {
-	if cell == "" || cell == "-" {
+	if cell == "" || cell == ageUnknown {
 		return 0
 	}
 
@@ -554,6 +579,14 @@ func parseAgeSeconds(cell string) int64 {
 		return 0
 	}
 }
+
+// ageUnknown is formatAge's text for a result with no Published date.
+const ageUnknown = "-"
+
+// ageSortMissing pins undated results to the end of the Age column in both
+// sort directions (the table's SortMissingLast contract, T-957): an undated
+// result is neither the newest nor the oldest.
+func ageSortMissing(cell string) bool { return cell == ageUnknown }
 
 func ageLess(a, b string) bool { return parseAgeSeconds(a) < parseAgeSeconds(b) }
 

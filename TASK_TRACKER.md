@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet · `T-9127` Storage discard keeps others' data; dropped resume records and refused re-adds tell the user · `T-9133` A user's pause survives a restart; failed restores keep their name and infohash; kept data is reported · `T-9135` Seeding works; a refused entry's remove spares data another download may use; a restored pause holds from the start · `T-9140` Category glyph column and local category filter · `T-9141` Source's own category name in Details · `T-9143` Free space shared per disk; canonical destinations; cross-torrent delete guards · `T-9156` Close obsolete Backlog entries, with evidence · `T-9153` README launch polish and demo GIF.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet · `T-9127` Storage discard keeps others' data; dropped resume records and refused re-adds tell the user · `T-9133` A user's pause survives a restart; failed restores keep their name and infohash; kept data is reported · `T-9135` Seeding works; a refused entry's remove spares data another download may use; a restored pause holds from the start · `T-9140` Category glyph column and local category filter · `T-9141` Source's own category name in Details · `T-9143` Free space shared per disk; canonical destinations; cross-torrent delete guards · `T-9156` Close obsolete Backlog entries, with evidence · `T-9153` README launch polish and demo GIF · `T-9158` Results table batch: undated last, size width, selection, trust sort.
 
 ---
 
@@ -280,6 +280,19 @@ deferrals stay deferred to Backlog T-9004.
   missing) at line 202. T-949 pinned and cached shellcheck, so its claim of no more Chocolatey
   dependency on that leg is not quite true. Pin and cache make and mingw the same way, or record
   that Chocolatey stays for them. Found closing T-932 (T-9156).
+- `T-9159` `TestInFlightSpinnerAndEscCancels` in `internal/tui/search_test.go` still checks the spinner is gone with
+  a 150ms sleep and one `io.ReadAll`, the weak pattern T-961 removed from the trust-filter tests. Use `readUntil`
+  (`results_test.go`) on a frame that proves the cancel rendered. Found while closing T-961 (T-9158).
+- `T-9160` Showcase demo data. The `--demo` fake source ignores the query text and categories, and its fixtures
+  deliberately include emoji and CJK titles and error rows for width and error testing, so the README GIF
+  (docs/demo) shows only two Results rows. Its fake data is also inconsistent: Details and Add say 60.1 MB while the
+  download shows 4.7 GB, the new row reads "unknown source · added –", a line says "seeding policy not reported by
+  this engine", and the status bar says "2 active" while Active (1) is shown. Give the demo a clean showcase result
+  set and consistent fake engine numbers, keeping the test fixtures as they are, then re-record with
+  `make demo-gif`. Found in review of T-9153 (PR #106).
+- `T-9161` The demo tape never quits tortui, so each recording leaves a `/tmp/tortui-demo-*` directory behind. Add a
+  hidden quit at the end of `docs/demo/demo.tape` so the demo removes its sandbox. Found in review of T-9153
+  (PR #106).
 - `T-927` `internal/logging`'s free-text masker misses `CookieHeader:` in a `%+v` struct dump. The
   regex requires the sensitive word immediately followed by `[:=]`, so `APIKey:` is caught but
   `CookieHeader:` is not — the `Header` sits between. Only bites when a caller formats a struct into
@@ -401,31 +414,6 @@ deferrals stay deferred to Backlog T-9004.
   as "shown," not "recallable." Needs a keybind (the flat cursor would need a row for the
   suggestion list, or a dedicated key) that sets `search.query` to the chosen entry. Found by QA
   on T-060 (PR #39).
-- `T-957` `internal/tui/results.go`'s `parseAgeSeconds` maps `formatAge`'s `"-"` (no `Published`
-  date) to `0`, the same value as "just now" — so an undated result sorts as the *newest* item
-  under the Latest default (ascending age), a false positive rather than the "sorts last" a
-  missing date should get. Needs a distinct sentinel (e.g. a very large value, or a stable
-  secondary key) so undated results sort to the end regardless of sort direction. Found by QA on
-  T-061 (PR #40).
-- `T-958` `internal/tui/results.go`'s `formatSize` can render 9 characters (`"1023.9 MB"`,
-  `"1023.9 GB"`, etc. — one decimal digit plus a 4-character unit above 1000) while the Size
-  column is only 8 wide, so `components.Table`'s `theme.Truncate` ellipsises it. Either widen the
-  column, or round/format so the string never exceeds 8. Found by QA on T-061 (PR #40).
-- `T-959` The results-screen `?` help overlay is 27 lines at 80×24, over the 24-line floor
-  (DEC-109, AGENT.md §7). Bring it to 24 or fewer, for example by merging the s/S lines or the
-  1–4 screen-jump lines. Found by QA on T-062 (PR #41).
-- `T-960` No test checks that the trust column in `results.go` sets `Accent: true`. Found by QA
-  on T-062 (PR #41).
-- `T-961` The absence checks in the teatest trust-filter tests are weak: a 150ms sleep followed
-  by `io.ReadAll` can see no new frame at all. Found by QA on T-062 (PR #41).
-- `T-962` The first `s` onto the Trust column sorts ascending, so the most trusted rows need `S`
-  to reach the top. Consider descending as the first direction. Found by QA on T-062 (PR #41).
-- `T-963` `resultsModel.setResults`'s initial row selection anchors to the raw pre-sort result
-  order — `components.Table.SetRows`'s `ensureSelection` runs before `applyModeDefault`'s sort,
-  and the subsequent `SortBy` calls preserve selection by identity — rather than the row visually
-  at the top after the default sort. A fresh result set's highlighted row is not necessarily the
-  one shown at the top of the table. Found while building T-063, whose `d` key needed "the
-  highlighted row" to mean something predictable.
 - `T-964` `TestDetailsScreenEndToEndSelectAndAdd` (`internal/tui/details_test.go`) never checks
   that the rendered output actually shows the downloads screen after `enter` — it only waits for
   the "added ..." status-bar message, which appears regardless of which screen is current.
@@ -565,9 +553,6 @@ deferrals stay deferred to Backlog T-9004.
   one source reports a real 0 and another reports unknown, whichever arrived first wins, so the S/L
   cell can show `–` or `0` depending on order. Prefer a known count on a tie. Found in review of
   T-9012 (PR #66).
-- `T-9023` The component goldens build the `–` cell by hand in `goldenRows()` instead of going
-  through `resultRow`/`formatSwarm`, so no golden exercises the real results model. Found in review
-  of T-9012 (PR #66).
 - `T-9027` The `go test -race` job's "Confirm C toolchain" step prints `go env CGO_ENABLED` but does
   not assert it is `1`, so a runner where cgo silently ends up off would only fail later, less
   clearly, in `-race` itself. Found in review of T-9025 (PR #70), non-blocking.
@@ -894,6 +879,8 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-176 | 2026-10-05 | T-9143 (T-9130): destinations compare by path, resolved symlinks, then directory identity, read outside the lock; an unknown answer is the same directory to the delete guard and another one to the left-data claim; the guard folds name case |
 | DEC-177 | 2026-10-05 | T-9143 (T-9131): a live torrent's remove with data keeps data another tracked torrent at the same directory names (an unnamed one does not block it, but one whose info then names that data waits for the in-flight delete); storage discard keeps a file or directory any open torrent of the engine declares, by path or by file identity |
 | DEC-178 | 2026-10-05 | T-9153: the README demo GIF is recorded with vhs, a dev-only tool behind `make demo-gif` (not a Go dependency, not in the binary, outside `make check` and CI); the GIF is committed |
+| DEC-179 | 2026-10-05 | T-9158 (T-962): the first s onto the Trust column sorts descending, most trusted first; every other column still starts ascending, and S reverses. |
+| DEC-180 | 2026-10-05 | T-9158 (T-957, T-958, T-963): an undated result sorts last in both age directions; a size from 1000 in its unit drops the decimal; a fresh result set selects its top row. |
 
 ## Blocked
 

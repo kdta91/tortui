@@ -476,13 +476,13 @@ func TestResultsScreenSortCyclingChangesSortIndicator(t *testing.T) {
 	// Default for a Search-mode result set: seeders (S/L) descending.
 	waitForOutput(t, tm, "S/L v")
 
-	// The Trust column is only 6 wide, too narrow to ever show "Trust ^"
-	// (its own header text plus the indicator overflows and gets
+	// The Trust column is only 6 wide, too narrow to ever show its sort
+	// indicator (its own header text plus the indicator overflows and gets
 	// ellipsised — a real, if incidental, consequence of AGENT.md §7's
 	// column widths, not a defect this test needs to chase) — so the
 	// second "s" is sent immediately rather than waiting on that
 	// intermediate frame, landing on Age, which does fit its indicator.
-	tm.Send(keyRune("s")) // -> Trust, ascending (not independently observable at this width)
+	tm.Send(keyRune("s")) // -> Trust, descending (not independently observable at this width)
 	tm.Send(keyRune("s")) // -> Age, ascending
 	waitForOutput(t, tm, "Age ^")
 
@@ -508,26 +508,18 @@ func TestResultsScreenTrustFilterTogglesVisibleRows(t *testing.T) {
 	dispatchNonEmptySearch(tm, "x")
 	waitForAllOutput(t, tm, "vip-upload", "plain-upload")
 
-	// Flush the backlog so the post-toggle read below reports only what
-	// the filtered render actually contains, not a stale frame from
-	// before "t" was pressed still sitting in the pipe — the same pattern
-	// search_test.go's TestInFlightSpinnerAndEscCancels uses to check a
-	// disappearance.
+	// Flush the backlog so the read below reports only what the filtered
+	// render contains, not a stale frame from before "t" was pressed.
 	if _, err := io.ReadAll(tm.Output()); err != nil {
 		t.Fatalf("io.ReadAll (pre-toggle flush): %v", err)
 	}
 
 	tm.Send(keyRune("t"))
-	waitForAllOutput(t, tm, "vip-upload", "trust filter")
 
-	time.Sleep(150 * time.Millisecond)
-
-	after, err := io.ReadAll(tm.Output())
-	if err != nil {
-		t.Fatalf("io.ReadAll (post-toggle): %v", err)
-	}
-
-	if strings.Contains(string(after), "plain-upload") {
+	// The header suffix proves the filtered frame was rendered; every frame
+	// since the flush, that one included, must lack the excluded row.
+	after := readUntil(t, tm, "trust filter")
+	if strings.Contains(after, "plain-upload") {
 		t.Fatalf("filtered render still shows plain-upload.iso, want it excluded (below Trusted):\n%s", after)
 	}
 
@@ -557,21 +549,46 @@ func TestResultsScreenTrustFilterEmptyStateNamesTheFilter(t *testing.T) {
 	}
 
 	tm.Send(keyRune("t"))
-	waitForOutput(t, tm, "Press t to clear the filter")
 
-	time.Sleep(150 * time.Millisecond)
-
-	after, err := io.ReadAll(tm.Output())
-	if err != nil {
-		t.Fatalf("io.ReadAll (post-toggle): %v", err)
-	}
-
-	if strings.Contains(string(after), "plain-upload") {
+	after := readUntil(t, tm, "Press t to clear the filter")
+	if strings.Contains(after, "plain-upload") {
 		t.Fatalf("filtered-empty render still shows plain-upload.iso:\n%s", after)
 	}
 
-	if strings.Contains(string(after), "Sources queried") {
+	if strings.Contains(after, "Sources queried") {
 		t.Fatalf("filtered-empty render used the T-061 zero-results empty state instead of naming the filter:\n%s", after)
+	}
+}
+
+// readUntil accumulates everything the program writes from now on until it
+// contains want, and returns it. A caller asserting an absence reads the
+// frame that proves the update happened, then checks the returned text —
+// never a fixed sleep followed by one read that may see no frame at all
+// (T-961).
+func readUntil(tb testing.TB, tm *teatest.TestModel, want string) string {
+	tb.Helper()
+
+	var got strings.Builder
+
+	deadline := time.Now().Add(3 * time.Second)
+
+	for {
+		chunk, err := io.ReadAll(tm.Output())
+		if err != nil {
+			tb.Fatalf("io.ReadAll: %v", err)
+		}
+
+		got.Write(chunk)
+
+		if strings.Contains(got.String(), want) {
+			return got.String()
+		}
+
+		if time.Now().After(deadline) {
+			tb.Fatalf("timed out waiting for %q, got:\n%s", want, got.String())
+		}
+
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
