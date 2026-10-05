@@ -1,18 +1,24 @@
 # tortui
 
+[![CI](https://github.com/kdta91/tortui/actions/workflows/ci.yml/badge.svg)](https://github.com/kdta91/tortui/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/kdta91/tortui)](https://github.com/kdta91/tortui/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/kdta91/tortui)](LICENSE)
+
 A terminal UI for searching torrent indexers and downloading in one place. Search your
 configured sources, compare seeders and leechers, add a torrent, and watch it download —
 without leaving the terminal.
 
-Single static binary that works on its own. No daemon, no indexer proxy, no Transmission or
-qBittorrent behind it, nothing to install first — download it and you can search and download
-straight away. Runs on **macOS, Linux, and Windows**.
+![Demo: search, results with a category column, details, add, and download progress](docs/demo/demo.gif)
 
-> **Status:** v1.0.0 is released: see the
-> [release page](https://github.com/kdta91/tortui/releases/latest). Plain `tortui` runs the real
-> app — your config, the bundled source plus your own, the built-in engine, real downloads that
-> resume after a restart. `tortui --demo` runs the same UI against synthetic data. See
-> [`TASK_TRACKER.md`](TASK_TRACKER.md) for the v1.0 release checklist.
+One binary replaces a daemon, an indexer proxy and a client: no Transmission or qBittorrent
+behind it, nothing to install first. Download it and you can search and download straight
+away. Runs on **macOS, Linux, and Windows**. No telemetry, no analytics, no phone-home.
+
+> Get the latest build from the
+> [release page](https://github.com/kdta91/tortui/releases/latest). Plain `tortui` runs the
+> real app — your config, the bundled source plus your own, the built-in engine, real
+> downloads that resume after a restart. `tortui --demo` runs the same UI against synthetic
+> data, with no network (it is what the animation above shows).
 
 ---
 
@@ -26,7 +32,8 @@ straight away. Runs on **macOS, Linux, and Windows**.
   endpoint (Prowlarr, Jackett, or anything else speaking the API), or write a small YAML
   definition for a site that doesn't have one.
 - **Results you can actually read.** Title, size, seeders/leechers, uploader trust badge, age,
-  and which source it came from. A one-cell category glyph (ASCII letters under `--ascii`) marks audio, video, image, text, software, data. Sort on any column.
+  and which source it came from. A one-cell category glyph (ASCII letters under `--ascii`)
+  marks audio, video, image, text, software, data. Sort on any column.
 - **Built-in torrent engine.** Add a magnet or `.torrent` and it downloads in-process.
 - **Pick where it goes.** Choose a destination per torrent when you add it — the default, a
   saved or recently used location, or any path you type (`~` and environment variables expand;
@@ -555,6 +562,10 @@ Contributor notes:
   containing a key.
 - [`AGENT.md`](AGENT.md) holds the architecture, invariants, and coding standards.
   [`TASK_TRACKER.md`](TASK_TRACKER.md) is the build plan and current state.
+- The README animation is generated, not hand-edited: `make demo-gif` re-records
+  [`docs/demo/demo.tape`](docs/demo/demo.tape) against `tortui --demo` with
+  [vhs](https://github.com/charmbracelet/vhs) (a dev-only tool that needs `ttyd` and
+  `ffmpeg`; `brew install vhs` brings all three). It is not part of `make check` or CI.
 
 ## License
 
