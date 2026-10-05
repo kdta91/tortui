@@ -141,8 +141,13 @@ LINT_OSES := darwin linux windows
 build:
 	set -eu; go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/tortui
 
+# T-9078: a dev run keeps its state, lock file and downloads under DEV_HOME
+# (git-ignored) via TORTUI_HOME, so it never touches the real ones. Override
+# with `make run DEV_HOME=/some/dir`.
+DEV_HOME ?= $(CURDIR)/.dev-home
+
 run: build
-	set -eu; ./$(BINARY) --config ./dev-config.toml
+	set -eu; TORTUI_HOME="$(DEV_HOME)" ./$(BINARY) --config ./dev-config.toml
 
 test:
 	set -eu; go test $(PKG)
@@ -220,7 +225,7 @@ licenses:
 
 hooks:
 	set -eu; git config core.hooksPath scripts
-	@set -eu; echo "git hooks now run from ./scripts (core.hooksPath) — scripts/pre-commit is active."
+	@set -eu; echo "git hooks now run from ./scripts (core.hooksPath) — scripts/pre-commit and scripts/pre-merge-commit are active."
 
 # T-007: local convenience wrapper around scripts/check-indexer-hostnames.sh,
 # which is what actually implements the check (see its own header comment).
@@ -261,6 +266,7 @@ test-scripts:
 	set -eu; scripts/check-goos-scope_test.sh
 	set -eu; scripts/check-coverage_test.sh
 	set -eu; scripts/next-task_test.sh
+	set -eu; scripts/pre-merge-commit_test.sh
 
 # T-945: gates wrapped as targets so they need no env-prefixed command (which the agent
 # permission allowlist cannot match) and so every agent runs them identically.

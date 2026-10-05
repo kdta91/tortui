@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+# scripts/pre-merge-commit -- T-911: the same secret-hygiene guard as
+# scripts/pre-commit, for merge commits.
+#
+# git does not run pre-commit for a merge that creates a merge commit; it runs
+# pre-merge-commit instead, and with core.hooksPath=scripts (make hooks) that
+# hook did not exist, so a secret or a real config.toml arriving through a
+# merge entered history unchecked. During this hook the index already holds
+# the merge result, so the staged-diff checks in pre-commit see exactly what
+# the merge commit would record.
+#
+# A fast-forward merge makes no commit and runs no hook; the commits it brings
+# in were each subject to their own pre-commit (or not -- see CONTRIBUTING.md).
+#
+# POSIX sh only (AGENT.md section 14).
+set -eu
+
+hook_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
+exec "$hook_dir/pre-commit"

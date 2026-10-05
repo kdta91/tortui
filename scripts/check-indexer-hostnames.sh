@@ -69,6 +69,9 @@
 #     other character is never skipped. The owner accepted the residual gap:
 #     a bare unquoted `name.Label` that really is a two-label hostname with a
 #     capitalised final label passes; reviewers still check (DEC-141).
+# T-913: a backtick-delimited value (a Go raw string) is read like a "-quoted
+# one. T-9029: a hostname-shaped userinfo ("host.org@other") is checked as well
+# as the host after the "@". Both only add detections; nothing is relaxed.
 # This is a lightweight net that catches the common, careless case -- it is
 # not a substitute for human review, which is what CONTRIBUTING.md still asks
 # for.
@@ -229,13 +232,13 @@ LC_ALL=C awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		# original-case byte for rest at i (T-9026).
 		rest = text
 		off = 0
-		while (match(rest, /(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z][A-Za-z]+/)) {
+		while (match(rest, /(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*["`]?[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z][A-Za-z]+/)) {
 			start = RSTART
 			len = RLENGTH
 			m = substr(rest, start, len)
-			sub(/^(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*"?/, "", m)
+			sub(/^(url|host|endpoint|base_url)[[:space:]]*[:=][[:space:]]*["`]?/, "", m)
 			vstart = start + len - length(m)
-			quoted = (substr(rest, vstart - 1, 1) == "\"")
+			quoted = (substr(rest, vstart - 1, 1) ~ /["`]/)
 			if (quoted || !is_selector(substr(orig, off + vstart)))
 				check_host(m, file, orig)
 			off += start + len - 1
@@ -255,13 +258,39 @@ LC_ALL=C awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		dot = index(tok, ".")
 		return (substr(tok, dot + 1) ~ /[A-Z]/)
 	}
-	function check_host(host, file, text,   colon) {
+	function check_host(host, file, text,   colon, at, ui, i) {
 		# Strip a trailing quote/space/paren/sentence-punctuation run picked
 		# up from surrounding prose or markdown.
 		gsub(/[",'"'"' 	.,;)\]]+$/, "", host)
 		# Drop userinfo ("user:pass@host" -> "host"): a greedy match of
 		# everything up to the LAST "@" removes it even if the password
 		# itself contained "@".
+		# T-9029: a hostname-shaped userinfo ("host.org@other") is checked
+		# too, so the report names the host a reader would see first and a
+		# real hostname cannot hide there. Only the part before the first
+		# ":" counts, and only a dotted name with an alphabetic final
+		# label; a plain user name is never looked at. This adds a check
+		# and relaxes none.
+		# (No match() here: it would clobber the RSTART/RLENGTH that
+		# scan() still reads after calling this function.)
+		at = 0
+		for (i = length(host); i >= 1; i--) {
+			if (substr(host, i, 1) == "@") {
+				at = i
+				break
+			}
+		}
+		if (at > 0) {
+			ui = substr(host, 1, at - 1)
+			colon = index(ui, ":")
+			if (colon > 0) ui = substr(ui, 1, colon - 1)
+			ui = tolower(ui)
+			if (ui ~ /^[a-z0-9][a-z0-9.-]*\.[a-z][a-z]+$/ && !is_allowed(ui)) {
+				violations++
+				printf "  %s: possible new indexer hostname: %s\n", file, ui
+				printf "    %s\n", text
+			}
+		}
 		sub(/^.*@/, "", host)
 		colon = index(host, ":")
 		if (colon > 0) host = substr(host, 1, colon - 1)

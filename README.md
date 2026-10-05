@@ -540,14 +540,14 @@ git clone https://github.com/kdta91/tortui.git
 cd tortui
 make check      # fmt + lint + vet + tests — the commit gate
 make build      # → bin/tortui
-make run        # run with --config ./dev-config.toml (state, downloads stay in the real places)
+make run        # run with --config ./dev-config.toml and TORTUI_HOME=./.dev-home (state and downloads sandboxed)
 make build-all  # cross-compile all six OS/arch targets
 make release-check  # validate .goreleaser.yaml + a local snapshot build (no publish)
 ```
 
-`make run` only passes `--config ./dev-config.toml`; the state directory, lock file and downloads
-still use the real locations. To keep development away from your real data, use a scratch
-directory:
+`make run` passes `--config ./dev-config.toml` and sets `TORTUI_HOME` to `./.dev-home` (git-ignored;
+`make run DEV_HOME=/some/dir` to move it), so the state directory, lock file and downloads stay out of
+your real locations. For any other run, use a scratch directory:
 
 ```sh
 TORTUI_HOME=$(mktemp -d) ./bin/tortui
