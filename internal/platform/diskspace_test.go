@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,6 +39,41 @@ func TestFreeSpaceWalksUpToAnExistingAncestor(t *testing.T) {
 	// answer must come from the same filesystem, not be zero or absurd.
 	if got == 0 || (got > want*2 && want > 0) {
 		t.Fatalf("FreeSpace(missing child) = %d, want about %d", got, want)
+	}
+}
+
+// TestFilesystemIDIsSharedWithinOneFilesystem is T-9143: two directories in
+// one temp dir, and a path not created yet under it, are on one filesystem.
+func TestFilesystemIDIsSharedWithinOneFilesystem(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+
+	for _, d := range []string{a, b} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
+	want, err := FilesystemID(a)
+	if err != nil {
+		t.Fatalf("FilesystemID(a): %v", err)
+	}
+
+	if want == "" {
+		t.Fatal("FilesystemID(a) is empty")
+	}
+
+	for _, p := range []string{b, filepath.Join(b, "not", "created", "yet")} {
+		got, err := FilesystemID(p)
+		if err != nil {
+			t.Fatalf("FilesystemID(%s): %v", p, err)
+		}
+
+		if got != want {
+			t.Errorf("FilesystemID(%s) = %q, want %q (the same filesystem as %s)", p, got, want, a)
+		}
 	}
 }
 

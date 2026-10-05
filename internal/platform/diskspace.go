@@ -29,6 +29,26 @@ func FreeSpace(path string) (uint64, error) {
 	return n, nil
 }
 
+// FilesystemID names the filesystem holding path, so callers can tell which
+// destinations draw on the same free space (T-9143): two paths on one
+// filesystem get the same ID, and paths on different filesystems get
+// different ones. Like FreeSpace, path need not exist yet; its nearest
+// existing ancestor is asked. The ID is opaque, comparable only with another
+// ID from this function in the same process.
+func FilesystemID(path string) (string, error) {
+	dir, err := nearestExisting(path)
+	if err != nil {
+		return "", err
+	}
+
+	id, err := filesystemID(dir)
+	if err != nil {
+		return "", fmt.Errorf("platform: filesystem of %s: %w", dir, err)
+	}
+
+	return id, nil
+}
+
 // nearestExisting walks up from path until it finds an entry that exists.
 func nearestExisting(path string) (string, error) {
 	abs, err := filepath.Abs(path)
