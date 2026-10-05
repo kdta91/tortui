@@ -5775,3 +5775,52 @@ entry's (DEC-167); review fix: the delete is recorded in flight and such a torre
 a store group shared by every destination's backend. `platform.FilesystemID`: st_dev on macOS and Linux, the volume
 serial on Windows. Lengths are read from the info dictionary: the library's own Length races with its info set
 (found by -race). Mutations in the PR body. Backlog T-9147, T-9148; review notes T-9149 to T-9152.
+
+### T-9156 · Close obsolete Backlog entries, with evidence
+
+```
+status: done
+depends: none
+tier: L
+```
+A read-only triage (2026-10-03) judged 28 Backlog entries done or obsolete from their text alone. Each was checked
+against the code, tests, docs and archive; the proven ones are removed, the rest stay. No code changes.
+
+**Acceptance:**
+1. [x] Each of the 28 named entries is removed with a one-line evidence note, or kept (rewritten to its remaining
+   part where only part is open) with a one-line reason.
+2. [x] Every other Backlog entry marked "resolved by", "done" or "promoted" in its own text got the same check.
+3. [x] No code, script or config changed; `make check` green.
+
+**Notes:** Evidence is one line per id (longer than the usual 10 lines, by the task brief). Entries marked resolved,
+done or promoted in their own text outside the named 28: none.
+Removed (20):
+- T-916: `COVER_FLOORS` per-package floors in `Makefile:31` run by `scripts/check-coverage.sh` (T-093, DEC-127).
+- T-921: `indexer.ExtraKeyCacheHit` tagged by the registry, read by `cacheSummary` in `internal/tui/results.go:349` (T-061, DEC-110).
+- T-932: Windows shellcheck is a pinned, checksummed, cached release asset in `.github/workflows/ci.yml:125-158` (T-949).
+- T-939: scraper `details:` block, `internal/indexer/scraper/details.go` (T-9037).
+- T-945: scraper field `template` key, `internal/indexer/scraper/definition.go:233` (T-9010); the Internet Archive `source_url` mapping stays open as T-9013.
+- T-950: `NewSession`, `Resume`, `WithHistory`, `ShutdownOptions.Session` in `internal/app/app.go:182-216,315` (T-095).
+- T-954: the listen-port probe retries, "after %d attempts" in `internal/engine/listen.go:73` (T-097).
+- T-955: tortui's own `fileStore` closes every handle, `internal/engine/anacrolix/filestore.go:37` (T-097).
+- T-967: `WithTorrentStore(a.session)` and `WithDownloadDir` in `internal/app/app.go:213,225` (T-095).
+- T-968: the destination picker refuses relative paths without an absolute default, `internal/tui/destination.go:313-317` (T-074).
+- T-970: `WithDestinationStore`, `WithMinFreeSpace` at `internal/app/app.go:214-216`; runtime `AddRoot` at `internal/app/settings.go:388` (T-095, T-096).
+- T-975: `a.settings` passed as `WithSourceManager` (`internal/app/app.go:218`); `prowlarr.FeedURL` fills the feed at `internal/app/settings.go:335` (T-096, DEC-128).
+- T-993: `TestEngineRootsIncludeEveryDestinationSource`, `internal/app/roots_test.go` (archived T-993).
+- T-994: `Session.SetTorrent` under Save's lock and `Session.Close` (archived T-994).
+- T-999: promoted to T-9026; the scanner skips a bare capitalised selector, DEC-141, `scripts/check-indexer-hostnames.sh:251`.
+- T-9008: `TestAddFlowRecordsThroughTheSession`, `internal/app/session_wiring_test.go` (archived T-9008, DEC-135).
+- T-9014: `addSourceFor` sends exactly one link (a magnet wins), `internal/tui/details.go:129`, `TestAddSourceForChoosesExactlyOneLink` in `internal/tui/addsource_test.go:28` (T-9056, DEC-147).
+- T-9018: `expandHome` runs on the import path, `internal/tui/settings.go:1522`, `TestEnterImportsTheExpandedHomePath` (T-9019).
+- T-9021: `indexer.MeetsMinSeeders` used by torznab (`torznab.go:365`) and scraper (`scraper.go:358`) (archived T-9021).
+- T-9032: the archived T-9026 Notes end with the DEC-141 pointer (done in T-9031); the acceptance text is deliberately left as written.
+Kept (8):
+- T-926 (rewritten): `a URL: AGENT.md §2` still reported as `agent.md` (run on a scratch repo, 2026-10-05); only the capitalised-selector part closed (T-9026).
+- T-969: the open/reveal check-to-launch gap is unchanged in `internal/platform` and recorded nowhere else.
+- T-9002: `filestore.go` still keeps cached handles on Unix; a deleted data file is noticed only when Completion re-checks it.
+- T-9030: the key/value shape under `LC_ALL=C` still misses a value starting with a non-ASCII letter; accepted minor residual.
+- T-9033: `is_selector` still lets `probe.org_X` and `probe.org9X` through (its second part allows `_` and digits).
+- T-9048: the criteria-wording advice appears in no process doc (AGENT.md, Protocol, agent definitions).
+- T-9064: DEC-148 does not mention a secret in a hostname; the entry is its only record.
+- T-9087: `validMagnet` (`internal/indexer/httpx/magnet.go:97`) still passes C1 bytes; accepted residual, only record.
