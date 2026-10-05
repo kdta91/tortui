@@ -266,13 +266,20 @@ deferrals stay deferred to Backlog T-9004.
 - `T-925` Document the dedup seeder-tie survivor. When two candidate results tie on seeders the
   first in selection order survives; verified deterministic by QA, but stated in neither DEC-056 nor
   the `mergeResults` godoc, so a future reader cannot rely on it. Found by QA on T-012 (PR #10).
-- `T-926` The hostname scanner's value-shape rule still reports ordinary prose inside
-  `internal/indexer/**`: after T-9026 (DEC-141) a bare selector with a capitalised name
-  (`URL: server.URL`, `errors.New(`) passes, but a url-style key followed by a lowercase dotted
-  token, such as the prose `a URL: AGENT.md §2`, is still reported as a new hostname
-  (`agent.md`, checked 2026-10-05). Requiring the value to end in a plausible TLD would remove
-  the rest, at the cost of widening a security heuristic (DEC-141), so it needs an owner
-  decision. Found while building T-020.
+- `T-926` The hostname scanner's value-shape rule still reports ordinary Go and prose inside
+  `internal/indexer/**`. T-9026 (DEC-141) skips only a bare two-part selector with a capitalised
+  name (`URL: server.URL`, `errors.New(`). Still reported (checked 2026-10-05): a url-style key
+  followed by a token whose last label is lowercase, such as the prose `a URL: AGENT.md §2`
+  (`agent.md`); and selector chains with a second dot, such as the `internal/lifecycle` field
+  copies T-041 hit (a `d.Origin` field chain on a url-style key, commit 8ae2e35), which DEC-141
+  says are never skipped. Requiring the value to end in a plausible TLD would remove the rest,
+  at the cost of widening a security heuristic, so it needs an owner decision. Found while
+  building T-020.
+- `T-9157` The Windows CI jobs still install tools through Chocolatey: `choco install make` at
+  `.github/workflows/ci.yml` lines 111 and 192, and `choco install mingw` (only when gcc is
+  missing) at line 202. T-949 pinned and cached shellcheck, so its claim of no more Chocolatey
+  dependency on that leg is not quite true. Pin and cache make and mingw the same way, or record
+  that Chocolatey stays for them. Found closing T-932 (T-9156).
 - `T-927` `internal/logging`'s free-text masker misses `CookieHeader:` in a `%+v` struct dump. The
   regex requires the sensitive word immediately followed by `[:=]`, so `APIKey:` is caught but
   `CookieHeader:` is not — the `Header` sits between. Only bites when a caller formats a struct into
