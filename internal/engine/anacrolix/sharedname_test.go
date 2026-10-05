@@ -192,7 +192,7 @@ func TestRemoveWithDataOfAnEntryWhoseNameWasAnothersKeepsIt(t *testing.T) {
 				t.Fatalf("Add(other): %v", err)
 			}
 
-			attachedTorrent(t, e, other)
+			infoChecked(t, e, other)
 
 			free.Store(0)
 
@@ -229,4 +229,87 @@ func TestRemoveWithDataOfAnEntryWhoseNameWasAnothersKeepsIt(t *testing.T) {
 			removeKeeps(t, e, id, shared, true)
 		})
 	}
+}
+
+// TestARefusedEntryNeverClaimsDataAnEarlierRefusalLeftAsShared is T-9177:
+// two torrents with one name queue at one destination where data under that
+// name is already on disk. The first is refused when it starts and, since
+// the second is queued under the same name, keeps that data as shared, not
+// its own. The second, refused next, must not then claim the data as its own
+// left data: the first deferred to it only while it was queued, and the data
+// may be the first's. Neither remove with data deletes it.
+//
+// The queue orders the two refusals with no timing involved: the second
+// cannot start until the first is refused and frees the only slot. This is
+// the interleaving the T-9177 flake hit at random, where the free-space
+// check after a torrent's info arrived refused the other torrent before the
+// queued one was refused.
+func TestARefusedEntryNeverClaimsDataAnEarlierRefusalLeftAsShared(t *testing.T) {
+	t.Parallel()
+
+	var free atomic.Uint64
+	free.Store(1 << 40)
+
+	e := newTestEngine(t, func(o *Options) {
+		o.Config.MaxActiveDownloads = 1
+		o.MetadataTimeout = time.Hour
+		o.freeSpace = func(string) (uint64, error) { return free.Load(), nil }
+	})
+
+	ctx := context.Background()
+	shared := writePartial(t, e.downloadDir, "queue-twin", "a.bin")
+
+	slot, err := e.Add(ctx, engine.AddSource{Magnet: magnetURI("queue-twin-slot")})
+	if err != nil {
+		t.Fatalf("Add(slot): %v", err)
+	}
+
+	var ids [2]string
+
+	// Same name, different files: two different torrents.
+	for i, file := range []string{"a.bin", "b.bin"} {
+		ids[i], err = e.Add(ctx, engine.AddSource{
+			FilePath: writeTorrentFile(t, buildInfo("queue-twin", [][]string{{file}})),
+		})
+		if err != nil {
+			t.Fatalf("Add(%s): %v", file, err)
+		}
+
+		if st := statusOf(t, e, ids[i]); st.State != engine.StateQueued {
+			t.Fatalf("torrent with %s: state = %s, want queued", file, st.State)
+		}
+	}
+
+	first, second := ids[0], ids[1]
+
+	free.Store(0)
+
+	if err := e.Remove(slot, false); err != nil {
+		t.Fatalf("Remove(slot): %v", err)
+	}
+
+	for _, id := range ids {
+		if st := waitForState(t, e, id, engine.StateErrored); !errors.Is(st.Err, ErrInsufficientSpace) {
+			t.Fatalf("torrent %s: err %v, want ErrInsufficientSpace", id, st.Err)
+		}
+	}
+
+	free.Store(1 << 40)
+
+	e.mu.Lock()
+	firstShared := e.torrents[first].sharedName
+	secondLeft, secondShared := e.torrents[second].leftName, e.torrents[second].sharedName
+	e.mu.Unlock()
+
+	if firstShared != "queue-twin" {
+		t.Fatalf("first refusal: sharedName = %q, want %q (the queued torrent had the name)", firstShared, "queue-twin")
+	}
+
+	if secondLeft != "" || secondShared != "queue-twin" {
+		t.Errorf("second refusal: leftName %q, sharedName %q; want none and %q",
+			secondLeft, secondShared, "queue-twin")
+	}
+
+	removeKeeps(t, e, second, shared, true)
+	removeKeeps(t, e, first, shared, true)
 }

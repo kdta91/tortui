@@ -241,7 +241,7 @@ func TestRemoveWithDataSaysWhenItKeptAnotherDownloadsData(t *testing.T) {
 		t.Fatalf("Add(other): %v", err)
 	}
 
-	attachedTorrent(t, e, other)
+	infoChecked(t, e, other)
 
 	free.Store(0)
 
