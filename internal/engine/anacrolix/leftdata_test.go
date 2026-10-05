@@ -102,13 +102,17 @@ func TestRemoveWithDataOfARefusedEntrySparesATorrentSharingItsName(t *testing.T)
 				t.Fatalf("write the other's data: %v", err)
 			}
 
-			addOther := func() {
+			addOther := func() string {
 				t.Helper()
 
 				path := writeTorrentFile(t, buildInfo("twin", [][]string{{"a.bin"}}))
-				if _, err := e.Add(ctx, engine.AddSource{FilePath: path}); err != nil {
+
+				id, err := e.Add(ctx, engine.AddSource{FilePath: path})
+				if err != nil {
 					t.Fatalf("Add(other): %v", err)
 				}
+
+				return id
 			}
 
 			slot, err := e.Add(ctx, engine.AddSource{Magnet: magnetURI("twin-slot")})
@@ -117,7 +121,9 @@ func TestRemoveWithDataOfARefusedEntrySparesATorrentSharingItsName(t *testing.T)
 			}
 
 			if tc.otherFirst {
-				addOther()
+				// Live, not refused, when this test's entry is refused: its
+				// own free-space check runs after Add returns (T-9177).
+				infoChecked(t, e, addOther())
 			} else {
 				// Hold the second slot so the refused torrent queues.
 				if _, err := e.Add(ctx, engine.AddSource{Magnet: magnetURI("twin-slot-2")}); err != nil {

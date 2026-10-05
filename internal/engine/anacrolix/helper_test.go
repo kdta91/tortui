@@ -198,6 +198,26 @@ func waitForState(t *testing.T, e *Engine, id string, want engine.State) engine.
 	return last
 }
 
+// infoChecked waits until awaitInfo has run its checks on torrent id's info
+// dictionary, the free-space check among them, and let it start: it leaves
+// StateChecking only then. A test that lowers the free space before that
+// can have the check refuse the torrent it meant to keep live (T-9177).
+func infoChecked(t *testing.T, e *Engine, id string) {
+	t.Helper()
+
+	var st engine.TorrentStatus
+
+	waitUntil(t, "torrent "+id+" past its info checks", func() bool {
+		st = statusOf(t, e, id)
+
+		return st.State != engine.StateChecking
+	})
+
+	if st.State == engine.StateErrored {
+		t.Fatalf("torrent %s was refused by its info checks: %v", id, st.Err)
+	}
+}
+
 // discardLogger returns a slog.Logger that records nothing, so a test's
 // expectations are about behaviour rather than about log output.
 func discardLogger() *slog.Logger {

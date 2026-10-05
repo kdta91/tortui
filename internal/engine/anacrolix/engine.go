@@ -1678,8 +1678,11 @@ func (e *Engine) refuse(tr *tracked, t *torrent.Torrent, info *metainfo.Info, er
 // keepLeftLocked records left, the name of data on disk at refused entry tr's
 // destination, as tr's leftName — or as its sharedName when another tracked
 // entry keeps its data under that name there, which is not tr's to delete or
-// to name (T-9127, T-9133). dirs compares tr's destination with the others'
-// (destMatches). Engine.mu must be held.
+// to name (T-9127, T-9133), or when another refused entry there already kept
+// that data as shared (T-9177). That entry deferred to whichever download
+// had the name when it was refused, maybe tr while it was queued, and the
+// data may be its own, so tr does not claim it either. dirs compares tr's
+// destination with the others' (destMatches). Engine.mu must be held.
 func (e *Engine) keepLeftLocked(tr *tracked, left string, dirs map[string]dirMatch) {
 	tr.leftName, tr.sharedName = "", ""
 
@@ -1687,12 +1690,30 @@ func (e *Engine) keepLeftLocked(tr *tracked, left string, dirs map[string]dirMat
 		return
 	}
 
-	if taken, _ := e.dataNameUsedLocked(tr, left, dirs); taken {
+	if taken, _ := e.dataNameUsedLocked(tr, left, dirs); taken || e.sharedNameKeptLocked(tr, left, dirs) {
 		tr.sharedName = left
 		return
 	}
 
 	tr.leftName = left
+}
+
+// sharedNameKeptLocked reports whether a refused entry other than self, at
+// self's destination, keeps data under name as shared (sharedName). It fails
+// closed like dataNameUsedLocked: a destination it cannot show is elsewhere,
+// and a name that differs only in case, count. Engine.mu must be held.
+func (e *Engine) sharedNameKeptLocked(self *tracked, name string, dirs map[string]dirMatch) bool {
+	for _, tr := range e.torrents {
+		if tr == self || !tr.refused || tr.sharedName == "" || !mayBeSameDir(self.savePath, tr.savePath, dirs) {
+			continue
+		}
+
+		if mayBeSameName(tr.sharedName, name) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // dataNameUsedLocked reports whether a tracked entry other than self, at
@@ -2369,8 +2390,9 @@ func (e *Engine) endDelete(d *inflightDelete) {
 // named its data yet does not stop it: it has written nothing, and the data
 // is this entry's own. A refused entry deletes the data it left, unless
 // another tracked entry at the destination keeps data under that name or has
-// not named its data yet (DEC-167). dirs compares tr's destination with the
-// others' (destMatches; dataNameUsedLocked). Data whose name another entry
+// not named its data yet (DEC-167), or is a refused entry that kept data
+// under that name as shared (DEC-189). dirs compares tr's destination with
+// the others' (destMatches; dataNameUsedLocked). Data whose name another entry
 // used when this one was refused (sharedName) was never this entry's: it is
 // kept even after that entry is gone, which may have kept it on purpose.
 // Engine.mu must be held.
@@ -2391,6 +2413,10 @@ func (e *Engine) removeTargetLocked(tr *tracked, deleteData bool, dirs map[strin
 		return own, "", false
 	case tr.leftName != "":
 		taken, pending := e.dataNameUsedLocked(tr, tr.leftName, dirs)
+		// Another refused entry that kept this data as shared may own it:
+		// which of two such entries took it as its own follows only the
+		// order they were refused or restored in (T-9177, DEC-189).
+		pending = pending || e.sharedNameKeptLocked(tr, tr.leftName, dirs)
 		if taken || pending {
 			return "", tr.leftName, !taken
 		}
