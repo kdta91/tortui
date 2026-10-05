@@ -466,7 +466,7 @@ func (r *Registry) searchOne(ctx context.Context, src *source, q Query) ([]Resul
 		return cached, true, nil
 	}
 
-	switch r.reserveFetch(src) {
+	switch r.reserveFetch(id, src) {
 	case fetchGone:
 		return nil, false, &SourceError{IndexerID: id, Err: ErrUnknownIndexer}
 	case fetchThrottled:
@@ -676,14 +676,15 @@ const (
 // first. A cache hit never calls this: it makes no request, so it must not
 // push the next allowed one further out.
 //
-// src must still be the source registered under its id. One that was removed
+// id is src's id as the caller already read it: adapter code (ID) never runs
+// under the registry lock. src must still be the source registered under id. One that was removed
 // or replaced since the fan-out selected it is fetchGone: it is not asked, and
 // a replacement's slot is never spent on the old adapter's request.
-func (r *Registry) reserveFetch(src *source) fetchSlot {
+func (r *Registry) reserveFetch(id string, src *source) fetchSlot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.sources[src.ix.ID()] != src {
+	if r.sources[id] != src {
 		return fetchGone
 	}
 	now := r.now()
@@ -722,7 +723,11 @@ type merged struct {
 //
 // The surviving copy is the one with the most seeders, which is the copy whose
 // magnet is most likely to actually resolve into a swarm. When copies tie on
-// seeders the first one met survives (only strictly more seeders replaces it):
+// seeders the first one met survives (only strictly more seeders replaces it),
+// with one exception: a copy whose count is known replaces a tied copy whose
+// count is unknown (ExtraKeySeedersUnknown), so a real zero is never hidden
+// behind a placeholder zero and the S/L cell does not depend on which source
+// replied first (T-9022, DEC-186). Among equals, the survivor is
 // the earlier source in selection order (the ids given, else registration
 // order), and within one source the earlier row. Every contributing source id
 // is recorded in Extra under ExtraKeySources, in selection order, so the TUI
@@ -765,7 +770,8 @@ func mergeResults(mode Mode, ids []string, groups [][]Result, cacheHit map[strin
 			if !slices.Contains(existing.sources, id) {
 				existing.sources = append(existing.sources, id)
 			}
-			if res.Seeders > existing.res.Seeders {
+			if res.Seeders > existing.res.Seeders ||
+				(res.Seeders == existing.res.Seeders && seedersUnknown(existing.res) && !seedersUnknown(res)) {
 				existing.res = res
 				existing.fromCache = cacheHit[id]
 			}

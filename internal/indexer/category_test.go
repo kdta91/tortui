@@ -38,6 +38,32 @@ func walkCategories() []Category {
 	return cs
 }
 
+// TestFoldFullwidthEdges pins both edges of the fullwidth fold: U+FF01 and
+// U+FF5E map to ASCII, and the runes just outside them (U+FF00, U+FF5F,
+// U+FF61, U+FF9F) are left alone. Through CategoryFromString alone the
+// punctuation neighbours are indistinguishable from their folded forms (both
+// are separators), so the mapping is checked directly (T-9169).
+func TestFoldFullwidthEdges(t *testing.T) {
+	tests := []struct {
+		in, want rune
+	}{
+		{0xFF01, '!'},
+		{0xFF21, 'A'},
+		{0xFF5E, '~'},
+		{0xFF00, 0xFF00},
+		{0xFF5F, 0xFF5F},
+		{0xFF61, 0xFF61},
+		{0xFF71, 0xFF71},
+		{0xFF9F, 0xFF9F},
+		{'a', 'a'},
+	}
+	for _, tt := range tests {
+		if got := foldFullwidth(tt.in); got != tt.want {
+			t.Errorf("foldFullwidth(%U) = %U, want %U", tt.in, got, tt.want)
+		}
+	}
+}
+
 // categoryConstNames returns the identifiers of the Category enum's iota const
 // block, in declaration order, parsed out of the package's own non-test source.
 //
@@ -535,6 +561,10 @@ func TestCategoryFromString(t *testing.T) {
 		{"fullwidth mixed with ascii", "\uFF33oftware", CategorySoftware},
 		{"fullwidth substring is not a token", "\uFF41\uFF55\uFF44\uFF49\uFF4Fphile", CategoryOther},
 		{"fullwidth digits", "\uFF15\uFF10\uFF13\uFF10", CategoryOther},
+		// Just past the fold's upper edge: halfwidth forms are letters and
+		// stay letters, so they glue to a neighbouring token. Widening the
+		// fold would turn them into separators and match "audio".
+		{"halfwidth katakana glues to the token", "audio\uFF71", CategoryOther},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

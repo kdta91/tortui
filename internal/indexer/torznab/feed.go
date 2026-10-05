@@ -750,8 +750,14 @@ func isBase32(s string) bool {
 // that is not (DEC-066).
 func torrentAddress(it feedItem) string {
 	for _, candidate := range []string{it.Enclosure.Address, it.Link} {
-		if isWebAddress(candidate) {
-			return linkWithoutUserinfo(candidate)
+		if !isWebAddress(candidate) {
+			continue
+		}
+
+		// A candidate that will not parse is unusable; try the next one
+		// rather than leaving the result without a link (T-9047).
+		if link := linkWithoutUserinfo(candidate); link != "" {
+			return link
 		}
 	}
 
@@ -762,13 +768,16 @@ func torrentAddress(it feedItem) string {
 // keybind opens.
 //
 // It is <comments> — the page a Torznab item points at for a human — or a
-// guid that claims to be a permalink. It is deliberately never the
+// guid that claims to be a permalink; when <comments> is unusable (it will not
+// parse) the guid is tried next (T-9047). It is deliberately never the
 // enclosure or <link>, which are download URLs: opening one in a browser
 // downloads a file instead of showing a page, and indexer.Result documents
 // this field as the page.
 func sourceAddress(it feedItem) string {
 	if isWebAddress(it.Comments) {
-		return linkWithoutUserinfo(it.Comments)
+		if link := linkWithoutUserinfo(it.Comments); link != "" {
+			return link
+		}
 	}
 
 	if set, ok := boolAttr(it.GUID.IsPermaLink); ok && set && isWebAddress(it.GUID.Value) {

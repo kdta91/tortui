@@ -20,3 +20,10 @@ func MeetsMinSeeders(r Result, min int) bool {
 
 	return r.Seeders >= min
 }
+
+// seedersUnknown reports whether r's source reported no seeder count, so
+// Seeders is a placeholder zero. mergeResults uses it to prefer a known count
+// on a seeder tie (T-9022, DEC-186).
+func seedersUnknown(r Result) bool {
+	return r.Extra[ExtraKeySeedersUnknown] != ""
+}

@@ -717,6 +717,17 @@ func TestSourceAddressIsThePageAndNeverTheDownload(t *testing.T) {
 			item: feedItem{Enclosure: feedLink{Address: download}, Link: download},
 			want: "",
 		},
+		"an unparseable comments falls through to the permalink guid": {
+			item: feedItem{
+				Comments: "https://feed.example.org/%zz",
+				GUID:     feedGUID{IsPermaLink: "true", Value: "https://feed.example.org/details/4"},
+			},
+			want: "https://feed.example.org/details/4",
+		},
+		"an unparseable comments and no usable guid": {
+			item: feedItem{Comments: "https://feed.example.org/%zz"},
+			want: "",
+		},
 	}
 
 	for name, tc := range cases {
@@ -742,6 +753,14 @@ func TestTorrentAddressPrefersTheEnclosure(t *testing.T) {
 		"link when there is no enclosure": {
 			item: feedItem{Link: "http://feed.example.org/b.torrent"},
 			want: "http://feed.example.org/b.torrent",
+		},
+		"an unparseable enclosure falls through to the link": {
+			item: feedItem{Enclosure: feedLink{Address: "https://feed.example.org/%zz"}, Link: "https://feed.example.org/b.torrent"},
+			want: "https://feed.example.org/b.torrent",
+		},
+		"an unparseable enclosure and link": {
+			item: feedItem{Enclosure: feedLink{Address: "https://feed.example.org/%zz"}, Link: "https://feed.example.org/%yy"},
+			want: "",
 		},
 		"a magnet link is not a torrent URL": {
 			item: feedItem{Link: "magnet:?xt=urn:btih:x"},

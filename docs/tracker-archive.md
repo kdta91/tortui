@@ -5969,3 +5969,31 @@ in-process transport), T-924 (`reserveFetch` checks the source pointer), T-918 (
 refactored into `scanCategoryDecls` with a shape table; open: untyped constant returns and arithmetic, DEC-184), T-927
 (regex identifier suffix), T-929 (`Config.LogValue`), T-935 (`ErrSearchUnsupported`). Each new test failed before its
 fix (torznab and tripwire checked by reverting the fix); the gated seeder-tie test pins existing behaviour. No new Backlog entry.
+
+### T-9169 · Backlog batch D5: merge tie, torznab fallback, closures
+
+```
+status: done
+depends: none
+tier: M
+```
+Promotes Backlog T-9022, T-9047, T-9015 and T-944, each checked against the current code first, plus four follow-ups
+from the PR #111 review. Nothing here touches a security boundary, persistence or concurrency design.
+
+**Acceptance:**
+1. [x] Each of the four entries is fixed or closed with evidence in the Notes (T-9022, T-9047 fixed; T-9015, T-944 closed).
+2. [x] A known seeder count survives a tied unknown one in either source order; a test fails on the old code (T-9022, DEC-186).
+3. [x] A torznab link candidate that will not parse falls through to the next candidate; tests fail on the old code (T-9047).
+4. [x] DEC-051 carries the DEC-184 supersession marker; the categoryConstNames godoc already states the current limits.
+5. [x] The fullwidth fold's edges are pinned by tests (U+FF00, U+FF5F, U+FF61, U+FF9F stay unchanged); widening the range fails them.
+6. [x] reserveFetch takes the id searchOne already read, so no adapter code runs under the registry lock.
+7. [x] Backlog T-9170 records the capsGatedIndexer hang risk.
+8. [x] No live network; example.org names only.
+
+**Notes:** T-9022 fixed: `mergeResults` replaces a tied survivor only when the survivor's seeders are unknown and the
+newcomer's are known (DEC-186). T-9047 fixed in `torrentAddress` and `sourceAddress` (a non-parsing candidate no longer
+ends the search). T-9015 closed: already done by T-9099 and DEC-156 (`strictForCredentialedRequests`; the option's godoc
+says so; `TestSubdomainRedirectRefusesACredentialedRequest`). T-944 closed: decided by DEC-079 (`*.yml` only, documented
+in `docs/indexer-definitions.md`; `TestOnlyYMLFilesAreRead`). Edge tests: U+FF5F and U+FF61 are separators either way, so
+they are pinned on `foldFullwidth` directly; a halfwidth katakana letter glued to "audio" pins the CategoryFromString side.
+New Backlog: T-9170.

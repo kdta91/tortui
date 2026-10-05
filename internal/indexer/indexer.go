@@ -265,8 +265,10 @@ const ExtraKeyFiles = "tortui.files"
 // without changing the Result struct (T-9012). Absent means the count is
 // as reported, including a real zero. Like ExtraKeyFiles they are a
 // documented, source-agnostic convention: a display layer may read them,
-// and no core logic may branch on them, with one deliberate exception:
-// MeetsMinSeeders lets an unknown-seeders result through a minimum (T-9021).
+// and no core logic may branch on them, with two deliberate exceptions:
+// MeetsMinSeeders lets an unknown-seeders result through a minimum (T-9021),
+// and the registry's merge prefers a known count over an unknown one when
+// two copies tie on seeders (T-9022).
 const (
 	ExtraKeySeedersUnknown  = "tortui.seeders_unknown"
 	ExtraKeyLeechersUnknown = "tortui.leechers_unknown"
