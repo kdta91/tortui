@@ -4194,6 +4194,38 @@ through the store's own handle with no Close. Left in Backlog: T-9038 (the same 
 
 ---
 
+### T-9177 · A refused entry never claims data an earlier refusal kept as shared
+
+```
+status: done
+depends: none
+tier: H
+```
+The required `make check (macos-latest)` job on PR #114 failed once (run 37289790057, job 111697238946) in
+`TestRemoveWithDataOfARefusedEntrySparesATorrentSharingItsName/other_tracked_when_refused` and passed on rerun. Decide
+whether it is a test race or a production race in the fail-closed delete guard (DEC-163, DEC-164, DEC-167, DEC-177), and
+fix it.
+
+**Acceptance:**
+1. [x] The cause is stated with evidence: test race, production race, or both (both).
+2. [x] A production race that lets a refused entry adopt, then delete, data another download may have is fixed so the
+   guard fails closed, with a deterministic test (no timing) that fails without the fix, and a DEC (DEC-189).
+3. [x] The test race is fixed by waiting on a real condition, never a sleep.
+4. [x] The test passes `-race -count=500` at `-cpu 1,2,8` after the fix and fails with the fix reverted; output in the PR.
+5. [x] Lock discipline kept (DEC-161 to DEC-177): the new check is in memory under `Engine.mu`, no new I/O there;
+   nothing OS-specific.
+
+**Notes:** Both. Test: the other torrent's free-space check in `awaitInfo` runs after `Add` returns, so the test's
+`free.Store(0)` could refuse it before the queued entry. Production: the other, refused first, kept the data as shared
+(the queued entry had the name); the queued entry, refused next, saw no claim, kept the data as its own and its remove
+with data deleted it (DEC-189). Fix: `keepLeftLocked` also counts another refused entry's `sharedName`. The new test
+orders both refusals through a one-slot queue and fails 1500/1500 without the fix. The flaky test and two others with
+the same gap (`...WhoseNameWasAnothersKeepsIt`, which the fix would otherwise make flaky, and
+`...SaysWhenItKeptAnotherDownloadsData`) wait on `infoChecked`, a state predicate. Repro: 9/500 at `-cpu 2` before;
+0/1500 after, even on the original test.
+
+---
+
 ---
 
 ## Blocked — Resolved
