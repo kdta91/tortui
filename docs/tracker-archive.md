@@ -5856,3 +5856,30 @@ Owner request 2026-10-05, before promoting the repo.
 (the other fixture rows have emoji and CJK titles that render off-width) and removes the demo's scripted
 failed and stalled Downloads rows off camera with Remove, keep data; `TMPDIR` is set to a short path so the
 sandbox path is short. Frames checked at 1 fps: 16.6 s, about 0.4 MB.
+
+### T-9158 · Results table batch
+
+```
+status: done
+depends: none
+tier: M
+```
+Promotes Backlog T-957, T-958, T-959, T-960, T-961, T-962, T-963 and T-9023 (QA findings on the results screen),
+each checked against the current code first. 80x24 layout and the column-drop order (DEC-173) stay as they are.
+
+**Acceptance:**
+1. [x] Undated results sort last in both Age directions, including the Latest default (T-957).
+2. [x] No Size cell is wider than its column; the column width is unchanged (T-958).
+3. [x] The Results help overlay fits 24 lines at 80x24, or the entry is closed with evidence it already does (T-959).
+4. [x] A test pins that the trust column sets Accent (T-960).
+5. [x] The trust-filter teatests assert absence on the frame that proves the update, with no sleep-then-read (T-961).
+6. [x] The first `s` onto Trust sorts descending; the choice is in a DEC and no help or README text contradicts it (T-962).
+7. [x] A fresh result set selects the top row after the default sort (T-963).
+8. [x] Results goldens at 80x24, 120x40 and 60x20 are rendered through setResults, resultRow and formatSwarm (T-9023).
+
+**Notes:** Code: T-957 (Age SortMissingLast), T-958 (formatSize truncates, no decimal from 1000), T-962 (cycleSort), T-963
+(new Table.SelectFirst), T-960, T-961 (the absence checks assert on the final model's whole screen: the renderer re-emits only changed lines, so the output stream cannot prove a row is gone), T-9023 (tests; goldens in internal/tui/testdata). Closed with evidence:
+T-959, already fixed: the help is 13 lines at 80x24 (tabular layout), TestHelpOverlayFitsAndKeepsHeading covers every
+screen at 80x24, 100x30 and 120x40. DEC-179 (trust first direction), DEC-180 (undated last, size text, top-row
+selection). README and the key help say "cycle sort column" with no direction, so neither changed. The component
+goldens in components stay (that package cannot import tui); the real-path goldens are new. Backlog T-9159.

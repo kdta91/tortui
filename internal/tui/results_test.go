@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"io"
 	"math/rand"
 	"slices"
 	"strconv"
@@ -476,13 +475,13 @@ func TestResultsScreenSortCyclingChangesSortIndicator(t *testing.T) {
 	// Default for a Search-mode result set: seeders (S/L) descending.
 	waitForOutput(t, tm, "S/L v")
 
-	// The Trust column is only 6 wide, too narrow to ever show "Trust ^"
-	// (its own header text plus the indicator overflows and gets
+	// The Trust column is only 6 wide, too narrow to ever show its sort
+	// indicator (its own header text plus the indicator overflows and gets
 	// ellipsised — a real, if incidental, consequence of AGENT.md §7's
 	// column widths, not a defect this test needs to chase) — so the
 	// second "s" is sent immediately rather than waiting on that
 	// intermediate frame, landing on Age, which does fit its indicator.
-	tm.Send(keyRune("s")) // -> Trust, ascending (not independently observable at this width)
+	tm.Send(keyRune("s")) // -> Trust, descending (not independently observable at this width)
 	tm.Send(keyRune("s")) // -> Age, ascending
 	waitForOutput(t, tm, "Age ^")
 
@@ -490,17 +489,45 @@ func TestResultsScreenSortCyclingChangesSortIndicator(t *testing.T) {
 	waitForOutput(t, tm, "Age v")
 }
 
-// TestResultsScreenTrustFilterTogglesVisibleRows is T-062's teatest
-// coverage: "t" restricts the table to TrustTrusted and above, the header
-// names the active filter, and a second "t" restores every row — driven
-// through the real running program (keymap -> root.go's handleKey ->
-// resultsModel), not resultsModel directly.
-func TestResultsScreenTrustFilterTogglesVisibleRows(t *testing.T) {
-	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
-	searcher.outcome = stubOutcome{results: []indexer.Result{
+// finalScreen quits the program and returns the whole screen its final
+// model renders. bubbletea's renderer re-emits only the lines that changed,
+// so the output stream cannot prove a row is gone: a stale row on an
+// unchanged line is simply never written again. The final model's View is
+// the full screen state (T-961).
+func finalScreen(tb testing.TB, tm *teatest.TestModel) string {
+	tb.Helper()
+
+	if err := tm.Quit(); err != nil {
+		tb.Fatalf("Quit: %v", err)
+	}
+
+	final, ok := tm.FinalModel(tb, teatest.WithFinalTimeout(3*time.Second)).(Model)
+	if !ok {
+		tb.Fatal("final model is not a Model")
+	}
+
+	return final.View()
+}
+
+// trustFilterResults is one VIP row and one unrated row.
+func trustFilterResults() []indexer.Result {
+	return []indexer.Result{
 		{IndexerID: "alpha", ID: "1", Title: "vip-upload.iso", Seeders: 5, Trust: indexer.TrustVIP},
 		{IndexerID: "alpha", ID: "2", Title: "plain-upload.iso", Seeders: 50},
-	}}
+	}
+}
+
+// TestResultsScreenTrustFilterTogglesVisibleRows is T-062's teatest
+// coverage: "t" restricts the table to TrustTrusted and above and the
+// header names the active filter — driven through the real running program
+// (keymap -> root.go's handleKey -> resultsModel), not resultsModel
+// directly. The header suffix is what the wait uses to know "t" was handled
+// (it does not depend on the rows being filtered); the absence of the
+// excluded row is then asserted on the final model's whole screen, since
+// the output stream only carries changed lines.
+func TestResultsScreenTrustFilterTogglesVisibleRows(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	searcher.outcome = stubOutcome{results: trustFilterResults()}
 
 	tm, _ := newSearchTestModel(t, searcher, nil)
 	waitForOutput(t, tm, "Query:")
@@ -508,31 +535,39 @@ func TestResultsScreenTrustFilterTogglesVisibleRows(t *testing.T) {
 	dispatchNonEmptySearch(tm, "x")
 	waitForAllOutput(t, tm, "vip-upload", "plain-upload")
 
-	// Flush the backlog so the post-toggle read below reports only what
-	// the filtered render actually contains, not a stale frame from
-	// before "t" was pressed still sitting in the pipe — the same pattern
-	// search_test.go's TestInFlightSpinnerAndEscCancels uses to check a
-	// disappearance.
-	if _, err := io.ReadAll(tm.Output()); err != nil {
-		t.Fatalf("io.ReadAll (pre-toggle flush): %v", err)
-	}
-
 	tm.Send(keyRune("t"))
-	waitForAllOutput(t, tm, "vip-upload", "trust filter")
+	waitForOutput(t, tm, "trust filter")
 
-	time.Sleep(150 * time.Millisecond)
-
-	after, err := io.ReadAll(tm.Output())
-	if err != nil {
-		t.Fatalf("io.ReadAll (post-toggle): %v", err)
+	screen := finalScreen(t, tm)
+	if strings.Contains(screen, "plain-upload") {
+		t.Fatalf("filtered screen still shows plain-upload.iso, want it excluded (below Trusted):\n%s", screen)
 	}
 
-	if strings.Contains(string(after), "plain-upload") {
-		t.Fatalf("filtered render still shows plain-upload.iso, want it excluded (below Trusted):\n%s", after)
+	if !strings.Contains(screen, "vip-upload") {
+		t.Fatalf("filtered screen lost vip-upload.iso:\n%s", screen)
 	}
+}
 
-	tm.Send(keyRune("t"))
+// TestResultsScreenTrustFilterToggleRestoresRows confirms a second "t"
+// brings the excluded row back.
+func TestResultsScreenTrustFilterToggleRestoresRows(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	searcher.outcome = stubOutcome{results: trustFilterResults()}
+
+	tm, _ := newSearchTestModel(t, searcher, nil)
+	waitForOutput(t, tm, "Query:")
+
+	dispatchNonEmptySearch(tm, "x")
 	waitForAllOutput(t, tm, "vip-upload", "plain-upload")
+
+	tm.Send(keyRune("t"))
+	waitForOutput(t, tm, "trust filter")
+	tm.Send(keyRune("t"))
+
+	screen := finalScreen(t, tm)
+	if !strings.Contains(screen, "plain-upload") || strings.Contains(screen, "trust filter") {
+		t.Fatalf("second t did not restore every row:\n%s", screen)
+	}
 }
 
 // TestResultsScreenTrustFilterEmptyStateNamesTheFilter confirms that when
@@ -552,26 +587,20 @@ func TestResultsScreenTrustFilterEmptyStateNamesTheFilter(t *testing.T) {
 	dispatchNonEmptySearch(tm, "x")
 	waitForOutput(t, tm, "plain-upload")
 
-	if _, err := io.ReadAll(tm.Output()); err != nil {
-		t.Fatalf("io.ReadAll (pre-toggle flush): %v", err)
-	}
-
 	tm.Send(keyRune("t"))
-	waitForOutput(t, tm, "Press t to clear the filter")
+	waitForOutput(t, tm, "trust filter")
 
-	time.Sleep(150 * time.Millisecond)
-
-	after, err := io.ReadAll(tm.Output())
-	if err != nil {
-		t.Fatalf("io.ReadAll (post-toggle): %v", err)
+	screen := finalScreen(t, tm)
+	if strings.Contains(screen, "plain-upload") {
+		t.Fatalf("filtered-empty screen still shows plain-upload.iso:\n%s", screen)
 	}
 
-	if strings.Contains(string(after), "plain-upload") {
-		t.Fatalf("filtered-empty render still shows plain-upload.iso:\n%s", after)
+	if strings.Contains(screen, "Sources queried") {
+		t.Fatalf("filtered-empty screen used the T-061 zero-results empty state instead of naming the filter:\n%s", screen)
 	}
 
-	if strings.Contains(string(after), "Sources queried") {
-		t.Fatalf("filtered-empty render used the T-061 zero-results empty state instead of naming the filter:\n%s", after)
+	if !strings.Contains(screen, "Press t to clear the filter") {
+		t.Fatalf("filtered-empty screen lacks the filter message:\n%s", screen)
 	}
 }
 
