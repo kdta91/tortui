@@ -46,7 +46,11 @@ type safeStorage struct {
 // its verified pieces (T-041). Where no persistent record can be opened the
 // in-memory one is the fallback, logged: the torrent still works, it just
 // re-downloads after a restart.
-func newSafeStorage(dest string, logger *slog.Logger) safeStorage {
+//
+// group is the engine's store group, which every destination's backend
+// shares so a discard sees every open torrent (T-9131); nil gives the
+// backend a group of its own.
+func newSafeStorage(dest string, logger *slog.Logger, group *storeGroup) safeStorage {
 	completion, err := storage.NewDefaultPieceCompletionForDir(dest)
 	if err != nil {
 		logger.Warn("anacrolix: no persistent piece-completion record; progress will not survive a restart",
@@ -55,9 +59,14 @@ func newSafeStorage(dest string, logger *slog.Logger) safeStorage {
 		completion = storage.NewMapPieceCompletion()
 	}
 
+	inner := newFileStore(dest, completion, logger)
+	if group != nil {
+		inner.group = group
+	}
+
 	return safeStorage{
 		dest:       dest,
-		inner:      newFileStore(dest, completion, logger),
+		inner:      inner,
 		completion: completion,
 	}
 }

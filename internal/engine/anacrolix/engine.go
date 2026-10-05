@@ -142,6 +142,15 @@ type Options struct {
 	// torrent has at that point, or land a Pause or Resume there (T-9134).
 	onAttach func(attachStage, *torrent.Torrent)
 
+	// beforeDelete, when set, is called by Remove with the torrent's ID
+	// just before it deletes the torrent's data, with the delete recorded
+	// as in flight; onDeleteWait, when set, is called by awaitInfo with a
+	// torrent's ID when it finds an in-flight delete of data under its name
+	// and is about to wait for it. Together they let a package test land a
+	// torrent's info dictionary inside a delete (T-9143).
+	beforeDelete func(id string)
+	onDeleteWait func(id string)
+
 	// SpaceCheckInterval is how often downloading torrents' destinations
 	// are re-checked for free space. Zero uses DefaultSpaceCheckInterval.
 	// It is measured against sample-tick times, so a test driving the
@@ -151,6 +160,10 @@ type Options struct {
 	// freeSpace, when set, replaces platform.FreeSpace, so a test can
 	// report a nearly-full disk without filling one.
 	freeSpace func(string) (uint64, error)
+
+	// filesystemID, when set, replaces platform.FilesystemID, so a test can
+	// put two destinations on one filesystem or on two (T-9143).
+	filesystemID func(string) (string, error)
 
 	// listenHost, when set together with Offline, keeps a TCP listener on
 	// that host (loopback in tests) so the listen-port fallback can be
@@ -346,6 +359,7 @@ type Engine struct {
 	metadataTimeout time.Duration
 	spaceInterval   time.Duration
 	freeSpace       func(string) (uint64, error)
+	filesystemID    func(string) (string, error)
 	maxActive       int
 	margin          int64
 	seed            engine.SeedPolicy
@@ -356,6 +370,8 @@ type Engine struct {
 	beforeAttach    func()
 	afterInfo       func(id string)
 	onAttach        func(attachStage, *torrent.Torrent)
+	beforeDelete    func(id string)
+	onDeleteWait    func(id string)
 
 	done      chan struct{}
 	wg        sync.WaitGroup
@@ -369,6 +385,23 @@ type Engine struct {
 	order    []string
 	queue    []string
 	storages map[string]safeStorage
+
+	// files is the store group every destination's backend shares
+	// (T-9131).
+	files *storeGroup
+
+	// deleting holds the data deletes Remove has decided on and not yet
+	// finished, which a torrent whose info dictionary names the same data
+	// waits for before it downloads anything (T-9143, DEC-177).
+	deleting map[*inflightDelete]struct{}
+}
+
+// inflightDelete is one data delete Remove is running: the data's name under
+// savePath, and done, closed once the delete has returned.
+type inflightDelete struct {
+	savePath string
+	name     string
+	done     chan struct{}
 }
 
 // Compile-time proof that Engine satisfies the frozen contract.
@@ -429,6 +462,11 @@ func New(opts Options) (*Engine, error) {
 		freeSpace = platform.FreeSpace
 	}
 
+	filesystemID := opts.filesystemID
+	if filesystemID == nil {
+		filesystemID = platform.FilesystemID
+	}
+
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
 		// A source's download address may hand the .torrent off to a
@@ -453,6 +491,7 @@ func New(opts Options) (*Engine, error) {
 		metadataTimeout: metadataTimeout,
 		spaceInterval:   spaceInterval,
 		freeSpace:       freeSpace,
+		filesystemID:    filesystemID,
 		maxActive:       settings.maxActive,
 		margin:          settings.margin,
 		seed:            settings.seed,
@@ -463,9 +502,13 @@ func New(opts Options) (*Engine, error) {
 		beforeAttach:    opts.beforeAttach,
 		afterInfo:       opts.afterInfo,
 		onAttach:        opts.onAttach,
+		beforeDelete:    opts.beforeDelete,
+		onDeleteWait:    opts.onDeleteWait,
 		done:            make(chan struct{}),
 		torrents:        make(map[string]*tracked),
 		storages:        make(map[string]safeStorage),
+		files:           newStoreGroup(),
+		deleting:        make(map[*inflightDelete]struct{}),
 	}
 
 	newTicker := opts.newTicker
@@ -948,7 +991,7 @@ func (e *Engine) track(ctx context.Context, dest, rawURL, name string, prov prov
 // readable reason (AGENT.md §6.11, T-034). attach checks both again when the
 // torrent actually starts, since a queued torrent may start much later.
 func (e *Engine) addSpec(spec *torrent.TorrentSpec, dest string, prov provenance) (string, error) {
-	if err := e.precheckSpec(spec, dest); err != nil {
+	if err := e.precheckSpec(spec, dest, nil); err != nil {
 		return "", err
 	}
 
@@ -1042,7 +1085,7 @@ func (e *Engine) untrackLocked(tr *tracked) {
 // concurrent Adds can never together overshoot max_active_downloads.
 func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string, prov provenance) (tr *tracked, existingID string, queued bool, err error) {
 	hex, name := spec.InfoHash.HexString(), displayName(spec)
-	gone := e.goneLeftData(hex)
+	left := e.leftDataView(hex, dest)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1051,7 +1094,7 @@ func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string, prov proven
 		return nil, "", false, ErrClosed
 	}
 
-	if id, ok, err := e.claimInfoHashLocked(hex, nil, dest, gone); err != nil {
+	if id, ok, err := e.claimInfoHashLocked(hex, nil, dest, left); err != nil {
 		return nil, "", false, err
 	} else if ok {
 		return nil, id, false, nil
@@ -1079,8 +1122,9 @@ func (e *Engine) findOrTrack(spec *torrent.TorrentSpec, dest string, prov proven
 
 // precheckSpec validates a spec's declared paths and its space requirement
 // when it already carries an info dictionary; a magnet carries none yet, and
-// is checked by awaitInfo when its dictionary arrives.
-func (e *Engine) precheckSpec(spec *torrent.TorrentSpec, dest string) error {
+// is checked by awaitInfo when its dictionary arrives. self is the tracked
+// entry the spec is for, when there is one yet (checkSpace).
+func (e *Engine) precheckSpec(spec *torrent.TorrentSpec, dest string, self *tracked) error {
 	info, err := specInfo(spec)
 	if err != nil || info == nil {
 		return err
@@ -1090,7 +1134,7 @@ func (e *Engine) precheckSpec(spec *torrent.TorrentSpec, dest string) error {
 		return err
 	}
 
-	return e.checkSpace(dest, bytesNeeded(info, dest))
+	return e.checkSpace(dest, bytesNeeded(info, dest), self)
 }
 
 // addFromURL accepts a .torrent URL immediately and fetches it in the
@@ -1238,7 +1282,7 @@ func (e *Engine) attach(tr *tracked, spec *torrent.TorrentSpec, dest string) err
 	// disk or fetched over HTTP — check it here, so an unsafe torrent is
 	// refused with our own readable error instead of surfacing as whatever
 	// the library makes of a storage backend that said no.
-	if err := e.precheckSpec(spec, dest); err != nil {
+	if err := e.precheckSpec(spec, dest, tr); err != nil {
 		return err
 	}
 
@@ -1435,7 +1479,7 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 	// A magnet's size is unknown until now; this is its add-time
 	// free-space precheck. (A .torrent's already ran in addSpec/attach, and
 	// passes again here trivially unless the disk filled in between.)
-	if err := e.checkSpace(dest, bytesNeeded(info, dest)); err != nil {
+	if err := e.checkSpace(dest, bytesNeeded(info, dest), tr); err != nil {
 		e.refuse(tr, t, info, err)
 		e.logger.Warn("anacrolix: refused a torrent for lack of free space",
 			"id", tr.id, "destination", dest, "error", err)
@@ -1472,6 +1516,13 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 	}
 	e.mu.Unlock()
 
+	// A remove with data that named this torrent's data before its info
+	// arrived may still be deleting it: wait, so nothing is written into
+	// files the delete then takes away (T-9143, DEC-177).
+	if !e.awaitDeletes(tr, info.BestName()) {
+		return
+	}
+
 	if e.afterInfo != nil {
 		e.afterInfo(tr.id)
 	}
@@ -1480,6 +1531,41 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 	// priorities and file wantedness are independent of the transfer
 	// gate above.
 	t.DownloadAll()
+}
+
+// awaitDeletes waits until no in-flight delete (Engine.deleting) is of data
+// under a name mayBeSameName matches with name, at any destination: the
+// directory is not compared, which only ever waits more and needs no I/O. It
+// returns false when the engine closes or tr is removed while it waits.
+func (e *Engine) awaitDeletes(tr *tracked, name string) bool {
+	for {
+		var wait chan struct{}
+
+		e.mu.Lock()
+		for d := range e.deleting {
+			if mayBeSameName(d.name, name) {
+				wait = d.done
+				break
+			}
+		}
+		e.mu.Unlock()
+
+		if wait == nil {
+			return true
+		}
+
+		if e.onDeleteWait != nil {
+			e.onDeleteWait(tr.id)
+		}
+
+		select {
+		case <-wait:
+		case <-e.done:
+			return false
+		case <-tr.done:
+			return false
+		}
+	}
 }
 
 // specInfo decodes the info dictionary a spec already carries, or returns nil
@@ -1539,7 +1625,7 @@ func (e *Engine) storageFor(dest string) (safeStorage, error) {
 		return safeStorage{}, fmt.Errorf("anacrolix: create destination %s: %w", dest, err)
 	}
 
-	s := newSafeStorage(dest, e.logger)
+	s := newSafeStorage(dest, e.logger, e.files)
 	e.storages[dest] = s
 
 	return s, nil
@@ -1579,27 +1665,29 @@ func (e *Engine) refuse(tr *tracked, t *torrent.Torrent, info *metainfo.Info, er
 	}
 
 	left := leftData(info, tr.savePath)
+	_, dirs := e.destMatches("", tr.savePath)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	e.failLocked(tr, err)
 	tr.refused = true
-	e.keepLeftLocked(tr, left)
+	e.keepLeftLocked(tr, left, dirs)
 }
 
 // keepLeftLocked records left, the name of data on disk at refused entry tr's
 // destination, as tr's leftName — or as its sharedName when another tracked
 // entry keeps its data under that name there, which is not tr's to delete or
-// to name (T-9127, T-9133). Engine.mu must be held.
-func (e *Engine) keepLeftLocked(tr *tracked, left string) {
+// to name (T-9127, T-9133). dirs compares tr's destination with the others'
+// (destMatches). Engine.mu must be held.
+func (e *Engine) keepLeftLocked(tr *tracked, left string, dirs map[string]dirMatch) {
 	tr.leftName, tr.sharedName = "", ""
 
 	if left == "" {
 		return
 	}
 
-	if taken, _ := e.dataNameUsedLocked(tr, left); taken {
+	if taken, _ := e.dataNameUsedLocked(tr, left, dirs); taken {
 		tr.sharedName = left
 		return
 	}
@@ -1611,10 +1699,16 @@ func (e *Engine) keepLeftLocked(tr *tracked, left string) {
 // self's destination, keeps its data under name (taken), or has not named its
 // data there yet and so may come to (pending) — a magnet still waiting for its
 // info dictionary, a .torrent still queued or being fetched, a torrent still
-// joining the client (T-9135, DEC-167). Engine.mu must be held.
-func (e *Engine) dataNameUsedLocked(self *tracked, name string) (taken, pending bool) {
+// joining the client (T-9135, DEC-167).
+//
+// It fails closed (T-9130): an entry is at self's destination when dirs
+// (destMatches for self's destination) cannot show it is elsewhere, so a
+// symlinked alias, a case-insensitive file system, or a destination it could
+// not check all count; and names that differ only in case are one name.
+// Engine.mu must be held.
+func (e *Engine) dataNameUsedLocked(self *tracked, name string, dirs map[string]dirMatch) (taken, pending bool) {
 	for _, tr := range e.torrents {
-		if tr == self || tr.savePath != self.savePath {
+		if tr == self || !mayBeSameDir(self.savePath, tr.savePath, dirs) {
 			continue
 		}
 
@@ -1624,7 +1718,7 @@ func (e *Engine) dataNameUsedLocked(self *tracked, name string) (taken, pending 
 			continue
 		}
 
-		if n != "" && n == name {
+		if mayBeSameName(n, name) {
 			return true, false
 		}
 	}
@@ -1680,31 +1774,39 @@ func leftData(info *metainfo.Info, dest string) string {
 }
 
 // claimInfoHash is claimInfoHashLocked under Engine.mu, after
-// goneLeftData.
+// leftDataView.
 func (e *Engine) claimInfoHash(hex string, self *tracked, dest string) (string, bool, error) {
-	gone := e.goneLeftData(hex)
+	left := e.leftDataView(hex, dest)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	return e.claimInfoHashLocked(hex, self, dest, gone)
+	return e.claimInfoHashLocked(hex, self, dest, left)
 }
 
-// goneLeftData returns the left-data paths of the refused entries for hex
-// that are no longer on disk: the user deleted them by hand (T-9129). It
-// reads the disk without Engine.mu held, so the claim that takes the result
-// does no I/O under the lock.
-func (e *Engine) goneLeftData(hex string) map[string]bool {
+// leftView is what the left-data claim reads from disk before it takes
+// Engine.mu: which refused entries' left data is gone (deleted by hand,
+// T-9129), and how each one's destination compares with the add's (T-9130).
+type leftView struct {
+	gone map[string]bool
+	dirs map[string]dirMatch
+}
+
+// leftDataView reads, without Engine.mu held, the left data of the refused
+// entries for hex and how their destinations compare with dest, so the claim
+// that takes the result does no I/O under the lock.
+func (e *Engine) leftDataView(hex, dest string) leftView {
 	if hex == "" {
-		return nil
+		return leftView{}
 	}
 
-	var paths []string
+	var paths, dirs []string
 
 	e.mu.Lock()
 	for _, tr := range e.torrents {
 		if tr.refused && tr.infoHash == hex && tr.leftName != "" {
 			paths = append(paths, filepath.Join(tr.savePath, tr.leftName))
+			dirs = append(dirs, tr.savePath)
 		}
 	}
 	e.mu.Unlock()
@@ -1717,7 +1819,7 @@ func (e *Engine) goneLeftData(hex string) map[string]bool {
 		}
 	}
 
-	return gone
+	return leftView{gone: gone, dirs: dirMatches(dest, dirs)}
 }
 
 // claimInfoHashLocked returns the ID of a tracked torrent other than self
@@ -1727,10 +1829,13 @@ func (e *Engine) goneLeftData(hex string) map[string]bool {
 // refused torrent again evaluates it afresh instead of handing back the
 // stale, errored entry (T-948) — unless that entry left data on disk at a
 // destination other than dest, when the claim fails with ErrLeftData and
-// nothing is untracked (T-9127, DEC-163). Left data whose path is in gone
-// (goneLeftData) was deleted by hand: that entry left nothing, and is
+// nothing is untracked (T-9127, DEC-163). A destination is dest when it is
+// shown to be the same directory: the same path, or the same directory
+// through a symlink or a case-insensitive file system; when that cannot be
+// shown it is another one, so the claim refuses (T-9130). Left data that
+// left.gone holds was deleted by hand: that entry left nothing, and is
 // untracked like any other (T-9129). Engine.mu must be held.
-func (e *Engine) claimInfoHashLocked(hex string, self *tracked, dest string, gone map[string]bool) (string, bool, error) {
+func (e *Engine) claimInfoHashLocked(hex string, self *tracked, dest string, left leftView) (string, bool, error) {
 	if hex == "" {
 		return "", false, nil
 	}
@@ -1751,13 +1856,13 @@ func (e *Engine) claimInfoHashLocked(hex string, self *tracked, dest string, gon
 	}
 
 	for _, tr := range refused {
-		if tr.leftName == "" || tr.savePath == dest {
+		if tr.leftName == "" || isSameDir(dest, tr.savePath, left.dirs) {
 			continue
 		}
 
-		left := filepath.Join(tr.savePath, tr.leftName)
-		if !gone[left] {
-			return "", false, &engine.LeftDataError{Path: left}
+		path := filepath.Join(tr.savePath, tr.leftName)
+		if !left.gone[path] {
+			return "", false, &engine.LeftDataError{Path: path}
 		}
 	}
 
@@ -1815,7 +1920,7 @@ func (e *Engine) statusLocked(tr *tracked) engine.TorrentStatus {
 		return st
 	}
 
-	st.TotalBytes = tr.t.Length()
+	st.TotalBytes = torrentLength(tr.t)
 	st.DownloadedBytes = min(tr.t.BytesCompleted(), st.TotalBytes)
 	st.Progress = progress(st.DownloadedBytes, st.TotalBytes)
 
@@ -2156,6 +2261,13 @@ func (e *Engine) Resume(id string) error {
 // refuses the delete with a logged, wrapped ErrOutsideRoots rather than
 // deleting nothing found there but also never touching data it should not.
 func (e *Engine) Remove(id string, deleteData bool) error {
+	// How the other destinations compare with this one, read from disk
+	// before the lock; a torrent added since counts as at this destination.
+	var dirs map[string]dirMatch
+	if deleteData {
+		_, dirs = e.destMatches(id, "")
+	}
+
 	e.mu.Lock()
 
 	if e.closed {
@@ -2171,7 +2283,16 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 
 	t := tr.t
 	savePath := tr.savePath
-	name, kept, maybe := e.removeTargetLocked(tr, deleteData)
+	name, kept, maybe := e.removeTargetLocked(tr, deleteData, dirs)
+
+	// Recorded in the same critical section that decided the delete, so a
+	// torrent whose info names this data afterwards waits for it
+	// (awaitDeletes), and one whose info came first kept it.
+	var inflight *inflightDelete
+	if name != "" {
+		inflight = &inflightDelete{savePath: savePath, name: name, done: make(chan struct{})}
+		e.deleting[inflight] = struct{}{}
+	}
 
 	tr.removed = true
 	close(tr.done)
@@ -2215,7 +2336,24 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 		return &engine.DataKeptError{Path: path, Maybe: maybe}
 	}
 
+	if inflight != nil {
+		defer e.endDelete(inflight)
+	}
+
+	if e.beforeDelete != nil {
+		e.beforeDelete(id)
+	}
+
 	return e.deleteTorrentData(id, savePath, name, roots)
+}
+
+// endDelete marks d finished: it leaves Engine.deleting and its waiters wake.
+func (e *Engine) endDelete(d *inflightDelete) {
+	e.mu.Lock()
+	delete(e.deleting, d)
+	e.mu.Unlock()
+
+	close(d.done)
 }
 
 // removeTargetLocked decides what a Remove of tr deletes when deleteData is
@@ -2225,32 +2363,41 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 // (T-9133, T-9135, DEC-167).
 //
 // An entry that is not refused deletes its torrent's own data, once the
-// library knows its name. A refused entry deletes the data it left, unless
+// library knows its name, unless another tracked entry at the destination
+// keeps data under that name: two torrents with one name at one destination
+// share their data, which neither remove deletes (T-9131). One that has not
+// named its data yet does not stop it: it has written nothing, and the data
+// is this entry's own. A refused entry deletes the data it left, unless
 // another tracked entry at the destination keeps data under that name or has
-// not named its data yet. Data whose name another entry used when this one
-// was refused (sharedName) was never this entry's: it is kept even after that
-// entry is gone, which may have kept it on purpose. Engine.mu must be held.
-func (e *Engine) removeTargetLocked(tr *tracked, deleteData bool) (name, kept string, maybe bool) {
+// not named its data yet (DEC-167). dirs compares tr's destination with the
+// others' (destMatches; dataNameUsedLocked). Data whose name another entry
+// used when this one was refused (sharedName) was never this entry's: it is
+// kept even after that entry is gone, which may have kept it on purpose.
+// Engine.mu must be held.
+func (e *Engine) removeTargetLocked(tr *tracked, deleteData bool, dirs map[string]dirMatch) (name, kept string, maybe bool) {
 	switch {
 	case !deleteData:
 		return "", "", false
 	case !tr.refused:
-		if tr.t != nil {
-			if info := tr.t.Info(); info != nil {
-				return info.BestName(), "", false
-			}
+		if tr.t == nil || tr.t.Info() == nil {
+			return "", "", false
 		}
 
-		return "", "", false
+		own := tr.t.Info().BestName()
+		if taken, _ := e.dataNameUsedLocked(tr, own, dirs); taken {
+			return "", own, false
+		}
+
+		return own, "", false
 	case tr.leftName != "":
-		taken, pending := e.dataNameUsedLocked(tr, tr.leftName)
+		taken, pending := e.dataNameUsedLocked(tr, tr.leftName, dirs)
 		if taken || pending {
 			return "", tr.leftName, !taken
 		}
 
 		return tr.leftName, "", false
 	case tr.sharedName != "":
-		taken, _ := e.dataNameUsedLocked(tr, tr.sharedName)
+		taken, _ := e.dataNameUsedLocked(tr, tr.sharedName, dirs)
 
 		return "", tr.sharedName, !taken
 	default:

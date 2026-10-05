@@ -487,8 +487,10 @@ Intended. A failing source never blocks the rest; the status bar shows
 **A download is refused, or an active one pauses itself with no peer error**
 Intended — `min_free_space` (default 1GB). Adding a torrent that would leave less than that much
 free at its destination is refused up front; one already downloading is re-checked every 10s and
-paused, not left to fill the disk, if free space drops below the margin partway through. Free up
-space at that destination (or lower `min_free_space` in Settings' preferences panel) and resume it
+paused, not left to fill the disk, if free space drops below the margin partway through. Downloads
+on one disk share its free space: what the others still have to write counts too, and when they no
+longer all fit the newest ones pause first. Paused, queued and finished downloads count nothing. Free
+up space at that destination (or lower `min_free_space` in Settings' preferences panel) and resume it
 with `p`.
 
 **Adding a torrent says "remove its errored row (x) first: left data in <folder>"**

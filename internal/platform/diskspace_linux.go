@@ -1,6 +1,10 @@
 package platform
 
-import "golang.org/x/sys/unix"
+import (
+	"fmt"
+
+	"golang.org/x/sys/unix"
+)
 
 // MaxPathLength is the longest absolute path, in bytes, this platform's
 // path APIs accept (PATH_MAX, less the terminating NUL). A torrent whose
@@ -21,4 +25,15 @@ func freeSpace(dir string) (uint64, error) {
 	}
 
 	return st.Bavail * uint64(st.Bsize), nil //nolint:gosec // Bsize is a positive block size.
+}
+
+// filesystemID is the device stat(2) reports for dir: every entry on one
+// mounted filesystem shares it.
+func filesystemID(dir string) (string, error) {
+	var st unix.Stat_t
+	if err := unix.Stat(dir, &st); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("dev:%d", st.Dev), nil
 }

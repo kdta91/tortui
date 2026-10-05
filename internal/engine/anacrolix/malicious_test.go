@@ -148,7 +148,7 @@ func dirNames(t *testing.T, dir string) string {
 // every fixture before touching the filesystem.
 func TestMaliciousFixturesAreRefusedByTheStorageGate(t *testing.T) {
 	dest := t.TempDir()
-	store := newSafeStorage(dest, discardLogger())
+	store := newSafeStorage(dest, discardLogger(), nil)
 
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {

@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"fmt"
+	"strings"
 	"unicode/utf16"
 
 	"golang.org/x/sys/windows"
@@ -33,4 +35,29 @@ func freeSpace(dir string) (uint64, error) {
 	}
 
 	return avail, nil
+}
+
+// filesystemID is the serial number of the volume holding dir, read from the
+// volume's root (GetVolumePathNameW, then GetVolumeInformationW): a volume
+// mounted under two drive letters or folders has one serial. When the serial
+// cannot be read, the volume root itself, case-folded, names it.
+func filesystemID(dir string) (string, error) {
+	p, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		return "", err
+	}
+
+	buf := make([]uint16, windows.MAX_LONG_PATH)
+	if err := windows.GetVolumePathName(p, &buf[0], uint32(len(buf))); err != nil {
+		return "", err
+	}
+
+	root := windows.UTF16ToString(buf)
+
+	var serial uint32
+	if err := windows.GetVolumeInformation(&buf[0], nil, 0, &serial, nil, nil, nil, 0); err != nil {
+		return "root:" + strings.ToLower(root), nil
+	}
+
+	return fmt.Sprintf("vol:%08x", serial), nil
 }

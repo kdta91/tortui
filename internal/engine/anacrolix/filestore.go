@@ -63,12 +63,17 @@ type fileStore struct {
 	mu       sync.Mutex
 	torrents map[*fileTorrent]struct{}
 
+	// group holds every open torrent of every store this one shares an
+	// engine with, which discard reads (T-9131). A store of its own gets a
+	// group of its own.
+	group *storeGroup
+
 	// open counts the data files open right now across every torrent.
 	open atomic.Int64
 }
 
 // newFileStore returns a file store rooted at dir recording piece state in
-// completion, which it owns and closes.
+// completion, which it owns and closes, in a group of its own.
 func newFileStore(dir string, completion storage.PieceCompletion, logger *slog.Logger) *fileStore {
 	return &fileStore{
 		dir:        dir,
@@ -77,7 +82,58 @@ func newFileStore(dir string, completion storage.PieceCompletion, logger *slog.L
 		openFile:   os.OpenFile,
 		closeFile:  (*os.File).Close,
 		torrents:   make(map[*fileTorrent]struct{}),
+		group:      newStoreGroup(),
 	}
+}
+
+// storeGroup is every open torrent across one engine's file stores, one per
+// destination. Two torrents with one name at one destination — or at two
+// destinations that are one directory, a symlinked alias or a case variant —
+// declare the same files, and a discard by one must not remove a file the
+// other may use (T-9131). Its lock is taken last and held for no I/O.
+type storeGroup struct {
+	mu       sync.Mutex
+	torrents map[*fileTorrent]struct{}
+}
+
+// newStoreGroup returns an empty group.
+func newStoreGroup() *storeGroup {
+	return &storeGroup{torrents: make(map[*fileTorrent]struct{})}
+}
+
+// add puts t in the group.
+func (g *storeGroup) add(t *fileTorrent) {
+	g.mu.Lock()
+	g.torrents[t] = struct{}{}
+	g.mu.Unlock()
+}
+
+// remove takes t out of the group.
+func (g *storeGroup) remove(t *fileTorrent) {
+	g.mu.Lock()
+	delete(g.torrents, t)
+	g.mu.Unlock()
+}
+
+// otherFiles lists the file paths every open torrent in the group but self
+// declares. A torrent's file list never changes once it is open.
+func (g *storeGroup) otherFiles(self *fileTorrent) []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	var out []string
+
+	for t := range g.torrents {
+		if t == self {
+			continue
+		}
+
+		for _, f := range t.files {
+			out = append(out, f.path)
+		}
+	}
+
+	return out
 }
 
 // storeFile is one file of a torrent: where it lives and where it sits in the
@@ -131,6 +187,7 @@ func (s *fileStore) OpenTorrent(
 	s.mu.Lock()
 	s.torrents[t] = struct{}{}
 	s.mu.Unlock()
+	s.group.add(t)
 
 	return storage.TorrentImpl{Piece: t.piece, Close: t.Close}, nil
 }
@@ -216,6 +273,7 @@ func (t *fileTorrent) Close() error {
 	t.store.mu.Lock()
 	delete(t.store.torrents, t)
 	t.store.mu.Unlock()
+	t.store.group.remove(t)
 
 	return errors.Join(errs...)
 }
@@ -352,13 +410,20 @@ func (t *fileTorrent) install(i int, write bool) error {
 // eviction; a directory is kept when it holds a kept or in-use file. A
 // directory something else has filled is left alone too, as os.Remove never
 // removes a directory that is not empty.
+//
+// Nor what another torrent may use (T-9131): a file another open torrent in
+// the store group declares — by path, or as the same file through a
+// symlinked or case-variant destination — is kept, and so is a directory one
+// declares a file under, whether or not that torrent has opened it yet.
 func (t *fileTorrent) discard(i int, f *os.File, created, inUse []string) error {
 	err := t.store.closeFile(f)
 
 	keep := inUse
+	others := t.store.group.otherFiles(t)
 
 	for _, path := range created {
-		if holdsAny(path, keep) || (path == t.files[i].path && written(path)) {
+		if holdsAny(path, keep) || holdsAny(path, others) ||
+			(path == t.files[i].path && (written(path) || anySameData(path, others))) {
 			keep = append(keep, path)
 			continue
 		}
@@ -385,6 +450,18 @@ func (t *fileTorrent) pathsInUseLocked() []string {
 	}
 
 	return out
+}
+
+// anySameData reports whether path may be the same file as any of paths
+// (sameDataPath).
+func anySameData(path string, paths []string) bool {
+	for _, p := range paths {
+		if sameDataPath(path, p) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // holdsAny reports whether path is one of paths or a directory above one.
