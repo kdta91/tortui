@@ -5676,3 +5676,32 @@ Refused entries now delete by leftName only. Review fix: on amd64 the library tu
 burst into a negative one, so no client ever connected to a peer (DEC-171); the seed-policy stop and counts are
 persisted (DEC-170); test engines shorten the keep-alive past a library lost wake-up. Mutations in the PR body.
 Backlog T-9136 to T-9139.
+
+### T-9140 · Category glyph column and local category filter
+
+```
+status: done
+depends: T-9135
+tier: M
+```
+Owner request 2026-10-05: see and filter search results by category without changing the frozen Category enum.
+No adult-content concept anywhere; the app platform is a later task (T-9141).
+
+**Acceptance:**
+1. [x] The results table has a one-cell category glyph column for the seven buckets (other, audio, video, image,
+   text, software, data), Unicode and plain-ASCII sets chosen through the theme's glyph set (so `--ascii` and
+   `ascii = true` pick the fallback), widths measured through the theme width helpers; sortable by bucket order.
+2. [x] The glyph column is the first to be dropped as the terminal narrows (before Source, Age, Trust); at 80x24
+   it is shown; at any width the other columns lay out as they did without it.
+3. [x] Details shows the glyph and the bucket's word.
+4. [x] A category filter is applied locally, in the registry, to results from a source whose `Caps.Categories` is
+   false; a source that pushed the filter down is not filtered again. Results in the Other bucket are kept under
+   any filter. The Category enum is unchanged.
+5. [x] Tests: glyph sets (Unicode and ASCII, one cell wide, distinct, enum order pinned), column drop widths,
+   Details, the local filter including the Other rule and the push-down exemption.
+
+**Notes:** Glyphs live in the theme's GlyphSet as an array in enum order (the theme cannot import indexer; a tui test
+pins the order). DEC-172: Other is kept under a local filter. DEC-173: the glyph column drops first, so no
+documented column is lost to keep it. NO_COLOR does not change the glyph set (it never has; only `--ascii` and
+a non-Unicode terminal do). Real-terminal width of the chosen symbols (some are East Asian ambiguous width) is an
+owner check under T-9065. T-938 stays open for pushing the filter down to scraped sources.

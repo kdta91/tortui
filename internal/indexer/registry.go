@@ -479,8 +479,35 @@ func (r *Registry) searchOne(ctx context.Context, src *source, q Query) ([]Resul
 	if err != nil {
 		return nil, false, &SourceError{IndexerID: id, Err: err}
 	}
+	if !ix.Caps().Categories {
+		results = FilterByCategories(results, q.Categories)
+	}
 	r.storeResults(key, src, results)
 	return results, false, nil
+}
+
+// FilterByCategories applies a Query.Categories filter locally to results a
+// source returned without being able to push it down (Caps.Categories
+// false). An empty filter keeps everything. A result in one of the wanted
+// buckets is kept. A result in CategoryOther is kept as well: Other means
+// "unclassified" (AGENT.md §13), not "a different kind of data", so it is
+// not evidence of a mismatch and dropping it would hide results the user
+// may well have asked for (DEC-172). Every other bucket not in the filter is
+// dropped. The input slice is not modified.
+func FilterByCategories(results []Result, want []Category) []Result {
+	if len(want) == 0 {
+		return results
+	}
+
+	out := make([]Result, 0, len(results))
+
+	for _, res := range results {
+		if res.Category == CategoryOther || slices.Contains(want, res.Category) {
+			out = append(out, res)
+		}
+	}
+
+	return out
 }
 
 // supports reports whether caps allow mode, as the error explaining the skip

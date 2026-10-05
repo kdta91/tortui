@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kdta91/tortui/internal/tui/theme"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 
@@ -178,7 +180,7 @@ func sampleResultsForSort(now time.Time) []indexer.Result {
 // sort follows the mode: seeders desc for Search".
 func TestApplyModeDefaultSearchSortsSeedersDescending(t *testing.T) {
 	now := time.Now()
-	m := newResultsModel().setResults(sampleResultsForSort(now), indexer.ModeSearch, now)
+	m := newResultsModel().setResults(sampleResultsForSort(now), indexer.ModeSearch, now, theme.UnicodeGlyphs)
 
 	rows := m.table.Rows()
 	if rows[0].ID != resultRowID(sampleResultsForSort(now)[1]) { // "high"
@@ -194,7 +196,7 @@ func TestApplyModeDefaultSearchSortsSeedersDescending(t *testing.T) {
 // "... age ascending (newest first) for Latest".
 func TestApplyModeDefaultLatestSortsAgeAscendingNewestFirst(t *testing.T) {
 	now := time.Now()
-	m := newResultsModel().setResults(sampleResultsForSort(now), indexer.ModeLatest, now)
+	m := newResultsModel().setResults(sampleResultsForSort(now), indexer.ModeLatest, now, theme.UnicodeGlyphs)
 
 	rows := m.table.Rows()
 	if rows[0].ID != "alpha|high" { // published 1h ago, the most recent
@@ -210,7 +212,7 @@ func TestApplyModeDefaultLatestSortsAgeAscendingNewestFirst(t *testing.T) {
 // column exactly once before wrapping back to where it started.
 func TestCycleSortWrapsThroughAllColumns(t *testing.T) {
 	now := time.Now()
-	m := newResultsModel().setResults(sampleResultsForSort(now), indexer.ModeSearch, now)
+	m := newResultsModel().setResults(sampleResultsForSort(now), indexer.ModeSearch, now, theme.UnicodeGlyphs)
 
 	start := m.table.SortColumn()
 	seen := map[int]bool{start: true}
@@ -234,7 +236,7 @@ func TestCycleSortWrapsThroughAllColumns(t *testing.T) {
 // direction and flips it back on a second press.
 func TestReverseSortTogglesDirection(t *testing.T) {
 	now := time.Now()
-	m := newResultsModel().setResults(sampleResultsForSort(now), indexer.ModeSearch, now)
+	m := newResultsModel().setResults(sampleResultsForSort(now), indexer.ModeSearch, now, theme.UnicodeGlyphs)
 
 	initial := m.table.SortAscending()
 
@@ -325,7 +327,7 @@ func TestTrustSortIsATotalOrder(t *testing.T) {
 			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 		})
 
-		m := newResultsModel().setResults(shuffled, indexer.ModeSearch, now)
+		m := newResultsModel().setResults(shuffled, indexer.ModeSearch, now, theme.UnicodeGlyphs)
 		m.table = m.table.SortBy(colTrust) // ascending
 
 		if got := trustRowIDs(m); !slices.Equal(got, wantAsc) {
@@ -344,7 +346,7 @@ func TestTrustSortIsATotalOrder(t *testing.T) {
 // filter toggle restricts to TrustTrusted and above".
 func TestApplyTrustFilterRestrictsToTrustedAndAbove(t *testing.T) {
 	now := time.Now()
-	m := newResultsModel().setResults(sampleResultsForTrust(now), indexer.ModeSearch, now)
+	m := newResultsModel().setResults(sampleResultsForTrust(now), indexer.ModeSearch, now, theme.UnicodeGlyphs)
 
 	m = m.toggleTrustFilter()
 
@@ -374,7 +376,7 @@ func TestApplyTrustFilterRestrictsToTrustedAndAbove(t *testing.T) {
 // second time brings back every row the filter had hidden.
 func TestToggleTrustFilterRestoresAllRows(t *testing.T) {
 	now := time.Now()
-	m := newResultsModel().setResults(sampleResultsForTrust(now), indexer.ModeSearch, now)
+	m := newResultsModel().setResults(sampleResultsForTrust(now), indexer.ModeSearch, now, theme.UnicodeGlyphs)
 
 	before := len(m.table.Rows())
 
@@ -394,14 +396,14 @@ func TestToggleTrustFilterRestoresAllRows(t *testing.T) {
 // does, rather than silently resetting.
 func TestTrustFilterPersistsAcrossNewResults(t *testing.T) {
 	now := time.Now()
-	m := newResultsModel().setResults(sampleResultsForTrust(now), indexer.ModeSearch, now)
+	m := newResultsModel().setResults(sampleResultsForTrust(now), indexer.ModeSearch, now, theme.UnicodeGlyphs)
 	m = m.toggleTrustFilter()
 
 	if len(m.table.Rows()) != 2 {
 		t.Fatalf("setup: expected 2 rows after filtering, got %d", len(m.table.Rows()))
 	}
 
-	m = m.setResults(sampleResultsForTrust(now), indexer.ModeSearch, now)
+	m = m.setResults(sampleResultsForTrust(now), indexer.ModeSearch, now, theme.UnicodeGlyphs)
 	if !m.trustFilter {
 		t.Fatal("trustFilter should still be on after a new result set")
 	}
@@ -435,6 +437,7 @@ func TestResultsScreenRendersColumnsAndHeader(t *testing.T) {
 			IndexerID: "alpha", ID: "1", Title: "debian-13.0.0-amd64-netinst.iso",
 			SizeBytes: 700 * 1024 * 1024, Seeders: 42, Leechers: 3,
 			Trust: indexer.TrustVIP, Published: time.Now().Add(-3 * time.Hour),
+			Category: indexer.CategorySoftware,
 		},
 	}}
 
@@ -450,7 +453,7 @@ func TestResultsScreenRendersColumnsAndHeader(t *testing.T) {
 		// width (80 - the five fixed columns - separators), so the full
 		// 32-character filename is exactly what theme.Truncate cuts to —
 		// checking the un-truncated prefix rather than the whole title.
-		"debian-13.0.0-amd64-netinst", "700.0 MB", "42/3", "VIP", "3h", "alpha",
+		"debian-13.0.0-amd64-net", "⌘", "700.0 MB", "42/3", "VIP", "3h", "alpha",
 	)
 }
 
@@ -824,7 +827,7 @@ func TestSeedersSortKeepsUnknownLastBothDirections(t *testing.T) {
 		return out
 	}
 
-	desc := newResultsModel().setResults(results, indexer.ModeSearch, now).sortDescBy(colSL)
+	desc := newResultsModel().setResults(results, indexer.ModeSearch, now, theme.UnicodeGlyphs).sortDescBy(colSL)
 	if got, want := ids(desc), []string{"a|ten", "a|two", "a|zero", "a|unknown"}; !equalStrings(got, want) {
 		t.Fatalf("descending = %v, want %v", got, want)
 	}

@@ -26,7 +26,7 @@ straight away. Runs on **macOS, Linux, and Windows**.
   endpoint (Prowlarr, Jackett, or anything else speaking the API), or write a small YAML
   definition for a site that doesn't have one.
 - **Results you can actually read.** Title, size, seeders/leechers, uploader trust badge, age,
-  and which source it came from. Sort on any column.
+  and which source it came from. A one-cell category glyph (ASCII letters under `--ascii`) marks audio, video, image, text, software, data. Sort on any column.
 - **Built-in torrent engine.** Add a magnet or `.torrent` and it downloads in-process.
 - **Pick where it goes.** Choose a destination per torrent when you add it — the default, a
   saved or recently used location, or any path you type (`~` and environment variables expand;

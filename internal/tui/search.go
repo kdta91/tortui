@@ -620,7 +620,7 @@ func (m Model) handleSearchResult(msg searchResultMsg) (tea.Model, tea.Cmd) {
 	m.lastSourceErrs = msg.sourceErrs
 	m.lastQuery = msg.query
 	m.lastQueriedIDs = msg.queriedIDs
-	m.results = m.results.setResults(msg.results, msg.query.Mode, time.Now())
+	m.results = m.results.setResults(msg.results, msg.query.Mode, time.Now(), m.theme.Glyphs)
 	m.statusBar.CacheHint = cacheSummary(msg.results)
 
 	failed := make([]string, 0, len(msg.sourceErrs))

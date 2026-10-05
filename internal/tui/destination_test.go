@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kdta91/tortui/internal/tui/theme"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 
@@ -626,7 +628,7 @@ func pickerModel(eng engine.Engine, r indexer.Result, opts ...Option) Model {
 	m := New(eng, testTheme(), opts...)
 	m.screen = ScreenResults
 	m.lastResults = []indexer.Result{r}
-	m.results = m.results.setResults(m.lastResults, indexer.ModeSearch, time.Now())
+	m.results = m.results.setResults(m.lastResults, indexer.ModeSearch, time.Now(), theme.UnicodeGlyphs)
 
 	return m
 }
