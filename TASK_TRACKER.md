@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet · `T-9127` Storage discard keeps others' data; dropped resume records and refused re-adds tell the user · `T-9133` A user's pause survives a restart; failed restores keep their name and infohash; kept data is reported · `T-9135` Seeding works; a refused entry's remove spares data another download may use; a restored pause holds from the start · `T-9140` Category glyph column and local category filter · `T-9141` Source's own category name in Details · `T-9143` Free space shared per disk; canonical destinations; cross-torrent delete guards · `T-9156` Close obsolete Backlog entries, with evidence · `T-9153` README launch polish and demo GIF · `T-9158` Results table batch: undated last, size width, selection, trust sort · `T-9162` Scripts and CI/Make batch · `T-9163` Docs Backlog batch · `T-9168` Indexer and httpx Backlog batch.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet · `T-9127` Storage discard keeps others' data; dropped resume records and refused re-adds tell the user · `T-9133` A user's pause survives a restart; failed restores keep their name and infohash; kept data is reported · `T-9135` Seeding works; a refused entry's remove spares data another download may use; a restored pause holds from the start · `T-9140` Category glyph column and local category filter · `T-9141` Source's own category name in Details · `T-9143` Free space shared per disk; canonical destinations; cross-torrent delete guards · `T-9156` Close obsolete Backlog entries, with evidence · `T-9153` README launch polish and demo GIF · `T-9158` Results table batch: undated last, size width, selection, trust sort · `T-9162` Scripts and CI/Make batch · `T-9163` Docs Backlog batch · `T-9168` Indexer and httpx Backlog batch · `T-9169` Backlog batch D5: merge tie, torznab fallback, closures.
 
 ---
 
@@ -347,11 +347,6 @@ deferrals stay deferred to Backlog T-9004.
   T-023 deliberately did not pick, because the wiring task is the one that can see both sides.
   Found while building T-023.
 
-- `T-944` Decide whether `*.yaml` should be read as well as `*.yml`. T-023's criterion says
-  `*.yml` and the loader reads exactly that, so a user who names a file `archive.yaml` gets
-  silence: it is not loaded and, because it is never opened, it is not reported as skipped
-  either. Options are to read both extensions, or to keep reading only `.yml` and warn about a
-  `.yaml` file sitting in the directory. Found while building T-023.
 - `T-951` Downloads screen: a row whose `Err` wraps `engine.ErrDataMissing` offers removal (the
   `x` dialog, keep-data default) as its primary action, not just the truncated reason (T-071,
   T-072). From T-041.
@@ -476,12 +471,6 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9013` The bundled Internet Archive definition maps no `source_url`, so `u` opens nothing for
   its results. The T-9010 field `template` can now build `/details/{{value}}` from `identifier`;
   verify that address against the Archive's docs and map it. Found in T-9010.
-- `T-9015` On an httpx client built with `FollowSubdomainRedirects`, a per-request header set by
-  the caller (a `Cookie` or `Authorization` in the Request's own headers, as opposed to injected
-  credentials) would be forwarded by net/http to the subdomain a redirect lands on. Not reachable
-  today: the engine's `.torrent` fetch passes no headers. Either strip or refuse sensitive
-  per-request headers when the option is on, or document the limitation on the option. Found in
-  review of T-9010 (PR #64).
 - `T-9016` Pressing enter on an empty "Import from (path or URL)" field does nothing, silently
   (`internal/tui/settings.go`, the `fieldImport` enter branch returns `m, nil`). It should show a
   hint such as "type a file path or URL first". The owner expected a file picker. Found in an
@@ -492,10 +481,6 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9020` `TestSearchResultAlwaysMovesToResults` (`internal/tui/startup_test.go`) only starts from
   `ScreenSearch`, so a stay-put guard coming back would pass it. It should also start from
   `ScreenDownloads`. Found in review of T-9011.
-- `T-9022` `registry.mergeResults` replaces a duplicate only when it has strictly more seeders. When
-  one source reports a real 0 and another reports unknown, whichever arrived first wins, so the S/L
-  cell can show `–` or `0` depending on order. Prefer a known count on a tie. Found in review of
-  T-9012 (PR #66).
 - `T-9028` The Windows `go test -race` job installs make and mingw through Chocolatey, which DEC-107
   moved shellcheck off after the T-932 outage; a Chocolatey outage would turn that advisory check
   red for a cause unrelated to the code. Found in review of T-9025 (PR #70), non-blocking.
@@ -528,10 +513,6 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9044` Opening Details on a link-less scraper result does not call `Resolve`, so no magnet shows
   there until the user adds it. UX follow-up from review of T-9037 (PR #74); a fetch on open must
   stay user-initiated and cached per AGENT.md §6.13.
-- `T-9047` Torznab `torrentAddress`/`sourceAddress` return the first http(s) candidate (enclosure
-  then link; comments then permalink guid) through `linkWithoutUserinfo`, which gives "" when it
-  does not parse, so the result has no link even if a later candidate is usable. Fall back to the
-  next candidate instead. Non-blocking note from review of T-9045 (PR #76).
 - `T-9048` T-9045's "existing tests unchanged" criterion conflicted with its criterion 1:
   `TestListedLinksNeverCarryUserinfo` had to move to a clean base_url once a base_url with
   userinfo no longer reaches `New`. The change was justified. Future criteria: "existing tests
@@ -625,6 +606,9 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9155` `awaitDeletes` spins on a closed channel if a delete record is ever left in the map. Only reachable
   under mutation today; check the record's done channel before waiting again. Note from the review of T-9143
   (PR #105).
+- `T-9170` The `capsGatedIndexer` tests in `internal/indexer/registry_test.go` rely on `SearchAll` not calling
+  `Caps()` under the registry lock. If a refactor ever does, the gated `Caps` holds the lock and the test hangs until the
+  go test timeout instead of failing. Give the gate a bounded wait that fails cleanly. Note from the review of PR #111.
 
 ---
 
@@ -820,6 +804,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-183 | 2026-10-05 | T-9168 (T-924): a source removed or replaced after selection, before its request, is an ErrUnknownIndexer failure and is never asked; it no longer spends a replacement's refresh slot. |
 | DEC-184 | 2026-10-05 | T-9168 (T-918, T-919): CategoryFromString folds fullwidth ASCII forms; the bucket tripwire sees parenthesised types, aliases and any conversion to Category. |
 | DEC-185 | 2026-10-05 | T-9168 (T-927, T-929): the free-text masker redacts a suffixed credential key (CookieHeader:); httpx.Config has a credential-free LogValue. |
+| DEC-186 | 2026-10-05 | T-9169 (T-9022): on a seeder tie the registry's merge keeps a known seeder count over an unknown one, whichever source came first. |
 
 ## Blocked
 

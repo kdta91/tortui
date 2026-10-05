@@ -1351,6 +1351,42 @@ func TestSearchAllSeederTieKeepsTheFirstCopy(t *testing.T) {
 	}
 }
 
+// TestMergePrefersAKnownSeederCountOnATie pins T-9022: when one source
+// reports a real 0 and another reports nothing, the known count survives
+// whichever source is met first, so the S/L cell never depends on order.
+func TestMergePrefersAKnownSeederCountOnATie(t *testing.T) {
+	const infoHash = "0011223344556677889900112233445566778899"
+	row := func(id string, seeders int, unknown bool) Result {
+		r := Result{IndexerID: id, ID: "1", Title: "tie", InfoHash: infoHash, Magnet: testMagnet, Seeders: seeders}
+		if unknown {
+			r.Extra = map[string]string{ExtraKeySeedersUnknown: "1"}
+		}
+		return r
+	}
+	cases := []struct {
+		name   string
+		groups [][]Result
+		want   string
+	}{
+		{"known first", [][]Result{{row("alpha", 0, false)}, {row("beta", 0, true)}}, "alpha"},
+		{"unknown first", [][]Result{{row("alpha", 0, true)}, {row("beta", 0, false)}}, "beta"},
+		{"both known keeps the first", [][]Result{{row("alpha", 3, false)}, {row("beta", 3, false)}}, "alpha"},
+		{"both unknown keeps the first", [][]Result{{row("alpha", 0, true)}, {row("beta", 0, true)}}, "alpha"},
+		{"more seeders still wins", [][]Result{{row("alpha", 0, false)}, {row("beta", 5, false)}}, "beta"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := mergeResults(ModeSearch, []string{"alpha", "beta"}, tc.groups, nil)
+			if len(out) != 1 {
+				t.Fatalf("merged %d rows, want 1", len(out))
+			}
+			if out[0].IndexerID != tc.want {
+				t.Errorf("survivor = %s, want %s", out[0].IndexerID, tc.want)
+			}
+		})
+	}
+}
+
 func TestSearchAllOrdering(t *testing.T) {
 	old := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 	mid := time.Date(2024, time.June, 1, 0, 0, 0, 0, time.UTC)
@@ -1484,7 +1520,7 @@ func TestReserveFetchRejectsAnUnknownSource(t *testing.T) {
 	// the refresh floor, and it is told the source is gone, not throttled.
 	r := NewRegistry(Config{})
 	ghost := &source{ix: okSource("ghost"), enabled: true}
-	if got := r.reserveFetch(ghost); got != fetchGone {
+	if got := r.reserveFetch("ghost", ghost); got != fetchGone {
 		t.Errorf("reserveFetch(ghost) = %d for an unregistered source, want fetchGone", got)
 	}
 }
