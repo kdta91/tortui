@@ -578,6 +578,21 @@ deferrals stay deferred to Backlog T-9004.
   periodic tick rewrites all buckets. DEC-188's race analysis relies on Close's final flush always writing, so any fix
   must re-check that assumption (and see T-9038, the same flush window). Found in review of T-9175 (PR #114).
 
+- `T-9178` A refused entry's kept-data message says another download may use the data (`DataKeptError` with `Maybe`)
+  even when the download it deferred to is gone: a `sharedName` entry keeps the data after the other is removed
+  (DEC-167, DEC-189). Re-check at remove time whether any claimant is still tracked, or reword. Found in review of
+  T-9177 (PR #115).
+- `T-9179` **Owner decision needed.** A live torrent's remove with data runs RemoveAll on the folder its name shares
+  with a tracked refused failed-restore entry holding `sharedName`, which can take that restore's own files. T-9131 and
+  DEC-177 pin this on purpose, but it conflicts with deletes failing closed (DEC-189 keeps the refused-entry side
+  closed). Found in review of T-9177 (PR #115).
+- `T-9180` A .torrent-file entry refused at queue start (its spec dropped by promote) saves a resume record with no
+  source: no metainfo, no magnet, no URL. After a restart it comes back as an `ErrNoSource` row with no infohash or left
+  data. Older bug, fails safe. Keep the spec's metainfo on the entry when it is refused. Found in review of T-9177.
+- `T-9181` The `infoChecked` test helper returns once a torrent leaves `StateChecking`, so `StateQueued` or
+  `StatePaused` pass it without the torrent having been attached and checked. Fail on those, or document it. Found in
+  review of T-9177 (PR #115).
+
 ---
 
 ## Decision Log
@@ -775,7 +790,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-186 | 2026-10-05 | T-9169 (T-9022): on a seeder tie the registry's merge keeps a known seeder count over an unknown one, whichever source came first. |
 | DEC-187 | 2026-10-05 | T-9171 (T-966, T-9043, T-971): Resolve and Add carry a 30 s deadline; esc cancels an in-flight details fetch; ctrl+c quits from every text-entry modal. |
 | DEC-188 | 2026-10-05 | T-9175 (T-9039): a ClearHistory that races a Close reports Close's final-flush outcome, not the closed-file error. |
-| DEC-189 | 2026-10-05 | T-9177: a refused entry keeps data as shared, not as its own, when another refused entry at that destination already kept it as shared; neither remove deletes it. |
+| DEC-189 | 2026-10-05 | T-9177: another refused entry's sharedName at the destination is a claim: a refusal keeps that data as shared, and a leftName holder's remove with data keeps it. |
 
 ## Blocked
 
