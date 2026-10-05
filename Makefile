@@ -122,7 +122,7 @@ ALLOWED_LICENSES := MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
 ALLOWED_MPL_MODULES := github.com/anacrolix/torrent,github.com/anacrolix/dht/v2,github.com/anacrolix/generics,github.com/anacrolix/log,github.com/anacrolix/mmsg,github.com/anacrolix/multiless,github.com/anacrolix/sync,github.com/anacrolix/upnp,github.com/anacrolix/utp,github.com/go-llsqlite/adapter
 NOTICE_TMP := .notice.tmp
 
-.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames check-goos-scope test-scripts race lint-cross vuln next test-integration completions release-check
+.PHONY: build run test lint fmt fmt-check check cover clean scan hooks build-all licenses check-hostnames check-goos-scope test-scripts race lint-cross vuln next test-integration completions release-check demo-gif
 
 # T-091's integration timeout for the same reason downloadCompleteTimeout is
 # generous in the test itself: DHT peer discovery for a magnet with no
@@ -370,3 +370,16 @@ release-check:
 		: "$${WINGET_GITHUB_TOKEN:=}"; \
 		export HOMEBREW_TAP_GITHUB_TOKEN SCOOP_BUCKET_GITHUB_TOKEN WINGET_GITHUB_TOKEN; \
 		goreleaser release --snapshot --skip=$(RELEASE_SKIP) --clean
+
+# T-9153: regenerate the README demo GIF. Dev-only (DEC-178): vhs (with ttyd and
+# ffmpeg) is never a runtime or Go dependency, and this target is not part of
+# `make check` or CI. The tape records `tortui --demo` only: synthetic data,
+# no network. Rebuild the binary first so the GIF shows the tree.
+demo-gif:
+	@set -eu; command -v vhs >/dev/null 2>&1 || { \
+		echo "make demo-gif: vhs is not installed."; \
+		echo "install it (e.g. 'brew install vhs', which also brings ttyd and ffmpeg) and re-run."; \
+		exit 1; \
+	}
+	$(MAKE) build
+	set -eu; vhs docs/demo/demo.tape

@@ -5824,3 +5824,35 @@ Kept (8):
 - T-9048: the criteria-wording advice appears in no process doc (AGENT.md, Protocol, agent definitions).
 - T-9064: DEC-148 does not mention a secret in a hostname; the entry is its only record.
 - T-9087: `validMagnet` (`internal/indexer/httpx/magnet.go:97`) still passes C1 bytes; accepted residual, only record.
+
+### T-9153 · README launch polish and demo GIF
+
+```
+status: done
+depends: T-9141
+tier: L
+```
+Owner request 2026-10-05, before promoting the repo.
+
+**Acceptance:**
+1. `docs/demo/demo.tape` and the generated `docs/demo/demo.gif` are committed; the tape records
+   `tortui --demo` only (synthetic data, no network) and shows search, results with the category
+   glyph column, Details, add, and Downloads progress. The GIF is readable at about 80x24 or a bit
+   larger and well under 3 MB; no frame names a real site or a title suggesting infringing content.
+2. `make demo-gif` builds the binary, regenerates the GIF, and fails with a clear message when vhs
+   is missing. It is not part of `make check` or CI. vhs is dev-only: not a Go dependency, not in
+   the binary (DEC-178).
+3. The README embeds the GIF near the top with alt text; the stale "v1.0.0 is released" status and
+   the `TASK_TRACKER.md` release-checklist pointer are gone from the intro (the latest-release link
+   and the `tortui --demo` sentence stay); a one-line "why" and static CI/release/license badges
+   are added; the claims stay honest (no "privacy-first"; "no telemetry" only). The Development
+   section mentions the dev-process docs and `make demo-gif`.
+4. "What it deliberately doesn't do" and "Legal notice" are unchanged; the category-glyph line is
+   wrapped at about 98 columns and removed from Backlog T-9142.
+5. `make check` and `make licenses` are green; `NOTICE` and `go.mod` show no diff.
+
+**Notes:** DEC-178. The tape uses `Set Shell "bash"` (vhs has no plain `sh`). The fixtures are clean
+(invented titles, example.org hosts) and unchanged. For the take, the tape selects only the mirror source
+(the other fixture rows have emoji and CJK titles that render off-width) and removes the demo's scripted
+failed and stalled Downloads rows off camera with Remove, keep data; `TMPDIR` is set to a short path so the
+sandbox path is short. Frames checked at 1 fps: 16.6 s, about 0.4 MB.
