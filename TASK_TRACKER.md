@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet · `T-9127` Storage discard keeps others' data; dropped resume records and refused re-adds tell the user · `T-9133` A user's pause survives a restart; failed restores keep their name and infohash; kept data is reported · `T-9135` Seeding works; a refused entry's remove spares data another download may use; a restored pause holds from the start · `T-9140` Category glyph column and local category filter · `T-9141` Source's own category name in Details.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet · `T-9127` Storage discard keeps others' data; dropped resume records and refused re-adds tell the user · `T-9133` A user's pause survives a restart; failed restores keep their name and infohash; kept data is reported · `T-9135` Seeding works; a refused entry's remove spares data another download may use; a restored pause holds from the start · `T-9140` Category glyph column and local category filter · `T-9141` Source's own category name in Details · `T-9143` Free space shared per disk; canonical destinations; cross-torrent delete guards.
 
 ---
 
@@ -426,10 +426,6 @@ deferrals stay deferred to Backlog T-9004.
   page path, and building that path today would mean hand-formatting a string no response field
   actually carries, which AGENT.md §16 treats as inference rather than verification. Found while
   building T-024; see `docs/bundled-sources.md`.
-- `T-947` The free-space checks (add-time and the periodic re-check) are per torrent and ignore the
-  remaining need of other active downloads on the same destination/filesystem, so several
-  downloads can together overcommit a disk each one fits alone. Sum the remaining need per
-  destination (ideally per filesystem). Found in review of T-034 (PR #36).
 - `T-950` *(resolved by T-095)* Wire `lifecycle.Session` into the composition root when one exists: `NewSession` after
   `OpenStore` and the engine, `Resume` before the TUI starts (show `ResumeReport.Missing` on
   first render), `Save` after every add/remove, and `ShutdownOptions.Session`. The add flow
@@ -774,12 +770,6 @@ deferrals stay deferred to Backlog T-9004.
   they now name sources.example.org. Non-blocking note from review of T-9120 (PR #98).
 - `T-9124` The top of the Backlog is out of numeric order (T-9004, then T-991 down to T-982). Sort it.
   Non-blocking note from review of T-9120 (PR #98).
-- `T-9130` The claim's "same destination" test is string equality, so a case-insensitive file system or a
-  symlinked alias of the destination gets ErrLeftData for what is the same folder. Non-blocking note N3 from
-  review of T-9127 (PR #100).
-- `T-9131` Storage `discard` only sees its own torrent's handle table, so a different torrent with the same name at
-  the same destination can lose an empty file it opened; the same root cause as two live torrents sharing a name
-  and destination (remove-with-data of one deletes the other's files). Note N4 from review of T-9127 (PR #100).
 - `T-9132` `TestProbeListenPortLetsUDPPickWhenTCPPicksKeepLandingOnReservedUDPPorts`
   (`internal/engine/listen_test.go:100`) failed once on the advisory `go test -race (windows-latest)` job and passed
   on rerun (run 37101913567). Flaky; find what it races on. Logged during review of T-9127 (PR #100).
@@ -804,6 +794,22 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9142` Cosmetic leftovers from the PR #103 review: the README line 29 wrap (the category-glyph sentence is a
   long unwrapped line); the theme import grouping in four test files; and the `T-938` text above, now partly stale
   because T-9140 filters scraped results locally (the remaining gap is only pushing the filter to the source).
+- `T-9144` The rune set in `indexer.CleanSourceCategory` is a copy of the engine's `dropInvisible`. They agree today but
+  can drift; share one helper from a neutral package both import. Non-blocking note from the review of T-9141 (PR #104).
+- `T-9145` Private-use runes and U+2800 (braille blank) pass through both display sanitisers (`engine.SafeName` and
+  `indexer.CleanSourceCategory`), consistently. Decide whether both should drop them. Non-blocking note from the
+  review of T-9141 (PR #104).
+- `T-9146` In Torznab's source-category choice, a named subcategory from a different parent outranks a named
+  top-level id the item lists first. That follows DEC-174's wording, but nothing else records it: add a test and a
+  doc comment. Non-blocking note from the review of T-9141 (PR #104).
+- `T-9147` The engine keys its storage backends by destination string, so two names for one directory (a symlinked
+  alias, a case variant) get two backends and two piece-completion records in one folder; with the bolt record
+  (CGO off) the second open waits its 1 s lock timeout under the engine lock and falls back to memory, so that
+  torrent's progress is not saved. Key backends by directory identity, compared outside the lock. Found in T-9143.
+- `T-9148` Two different torrents with one name at one destination write into the same files. T-9143 keeps their
+  data on a remove or discard, but nothing stops the second from overwriting the first's pieces; consider refusing
+  or warning when a torrent's info names data another tracked torrent there already names. The delete guard folds
+  case but not Unicode normalisation (NFC and NFD names are one file on APFS); cover that too. Found in T-9143.
 
 ---
 
@@ -988,6 +994,9 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-172 | 2026-10-05 | T-9140: a category filter is applied locally in the registry to sources whose Caps.Categories is false; Other results are kept under any filter (unclassified is not a mismatch); pushing sources are not re-filtered |
 | DEC-173 | 2026-10-05 | T-9140: the category glyph column is the first dropped on narrowing (priority 1, Source 2, Age 3, Trust 4); glyphs sit in the theme GlyphSet; NO_COLOR leaves them unchanged |
 | DEC-174 | 2026-10-05 | T-9141: the Result struct gains one optional string, SourceCategory (the source's own category name, owner-approved §5 change); Torznab fills it from its caps names, one sanitiser, shown in Details only; no taxonomy, mapping, filter or enum |
+| DEC-175 | 2026-10-05 | T-9143 (T-947): the free-space checks sum what other downloads writing to one filesystem still need; paused, queued, seeding, refused and size-unknown torrents count nothing; the re-check pauses the newest that no longer fit; the refusal says the need is shared |
+| DEC-176 | 2026-10-05 | T-9143 (T-9130): destinations compare by path, resolved symlinks, then directory identity, read outside the lock; an unknown answer is the same directory to the delete guard and another one to the left-data claim; the guard folds name case |
+| DEC-177 | 2026-10-05 | T-9143 (T-9131): a live torrent's remove with data keeps data another tracked torrent at the same directory names (an unnamed one does not block it); storage discard keeps a file or directory any open torrent of the engine declares, by path or by file identity |
 
 ## Blocked
 

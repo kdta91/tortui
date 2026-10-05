@@ -46,6 +46,8 @@ seed_duration = "24h"
 
 # Refuse to start a download that would leave less than this much free
 # space on its destination, and pause one that would during download.
+# Downloads on one disk share its free space: what they still have to
+# write is counted together.
 # Accepts a plain byte count or a suffix of B, KB, MB, GB, or TB.
 min_free_space = "1GB"
 

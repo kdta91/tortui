@@ -346,6 +346,8 @@ func (e *Engine) trackErrored(prov provenance, dest, name string, cause error, r
 		left = leftData(info, dest)
 	}
 
+	_, dirs := e.destMatches("", dest)
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -358,7 +360,7 @@ func (e *Engine) trackErrored(prov provenance, dest, name string, cause error, r
 	tr.err = fmt.Errorf("anacrolix: torrent %s: %w", tr.id, cause)
 	tr.infoHash = hex
 	tr.refused = true
-	e.keepLeftLocked(tr, left)
+	e.keepLeftLocked(tr, left, dirs)
 
 	e.torrents[tr.id] = tr
 	e.order = append(e.order, tr.id)

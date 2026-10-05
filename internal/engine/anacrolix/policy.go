@@ -47,26 +47,138 @@ func spaceShortfall(free uint64, need, margin int64) int64 {
 	return want - int64(free)
 }
 
+// sharedNeed is what other downloads writing to the same filesystem still
+// need (T-9143): their count and the bytes they have left to write.
+type sharedNeed struct {
+	downloads int
+	bytes     int64
+}
+
+// add counts one more download with n bytes left.
+func (s *sharedNeed) add(n int64) {
+	s.downloads++
+	s.bytes += n
+}
+
 // insufficientSpaceError builds the readable refusal: how much the torrent
-// needs, the margin, what is free, and how much is short.
-func insufficientSpaceError(dest string, free uint64, need, margin, short int64) error {
-	return fmt.Errorf("%w at %s: needs %s plus the %s min_free_space margin, %s free — %s short",
-		ErrInsufficientSpace, dest, formatBytes(need), formatBytes(margin),
+// needs, what the other downloads on the same disk still need from the same
+// free space, the margin, what is free, and how much is short.
+func insufficientSpaceError(dest string, free uint64, need int64, others sharedNeed, margin, short int64) error {
+	shared := ""
+	if others.downloads > 0 {
+		noun, verb := "downloads", "need"
+		if others.downloads == 1 {
+			noun, verb = "download", "needs"
+		}
+
+		shared = fmt.Sprintf(", sharing the disk with %d other %s that still %s %s,",
+			others.downloads, noun, verb, formatBytes(others.bytes))
+	}
+
+	return fmt.Errorf("%w at %s: needs %s%s plus the %s min_free_space margin, %s free — %s short",
+		ErrInsufficientSpace, dest, formatBytes(need), shared, formatBytes(margin),
 		formatBytes(int64(min(free, 1<<62))), formatBytes(short))
 }
 
-// checkSpace refuses when dest cannot hold need more bytes plus the margin.
-func (e *Engine) checkSpace(dest string, need int64) error {
+// checkSpace refuses when dest cannot hold need more bytes, plus what the
+// other downloads writing to the same filesystem still need, plus the margin
+// (T-9143). self, when set, is the torrent being checked, never counted as
+// one of the others.
+func (e *Engine) checkSpace(dest string, need int64, self *tracked) error {
+	writers := e.writers(self)
+
 	free, err := e.freeSpace(dest)
 	if err != nil {
 		return fmt.Errorf("anacrolix: check free space: %w", err)
 	}
 
-	if short := spaceShortfall(free, need, e.margin); short > 0 {
-		return insufficientSpaceError(dest, free, need, e.margin, short)
+	keys := make(map[string]string)
+	key := e.filesystemKey(dest, keys)
+
+	var others sharedNeed
+
+	for _, w := range writers {
+		if e.filesystemKey(w.dest, keys) == key {
+			others.add(w.remaining)
+		}
+	}
+
+	if short := spaceShortfall(free, need+others.bytes, e.margin); short > 0 {
+		return insufficientSpaceError(dest, free, need, others, e.margin, short)
 	}
 
 	return nil
+}
+
+// filesystemKey names the filesystem holding dest, so the destinations that
+// draw on one free space are summed together (T-9143): the platform's
+// filesystem identity, or, when that cannot be read, dest resolved through
+// any symlink. keys caches it per destination for one check. It does I/O, so
+// it never runs under Engine.mu.
+func (e *Engine) filesystemKey(dest string, keys map[string]string) string {
+	if k, ok := keys[dest]; ok {
+		return k
+	}
+
+	k, err := e.filesystemID(dest)
+	if err != nil {
+		e.logger.Debug("anacrolix: filesystem identity unreadable; summing by destination", "destination", dest, "error", err)
+
+		k = dest
+		if resolved, rerr := resolveSymlinks(dest); rerr == nil {
+			k = resolved
+		}
+
+		k = "path:" + k
+	}
+
+	keys[dest] = k
+
+	return k
+}
+
+// writer is one torrent writing data, as the free-space checks count it: its
+// destination and how much it still has to write.
+type writer struct {
+	tr        *tracked
+	dest      string
+	remaining int64
+}
+
+// writers lists, in add order, every torrent but self that is writing data
+// (writingLocked), taken under Engine.mu.
+func (e *Engine) writers(self *tracked) []writer {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	var out []writer
+
+	for _, id := range e.order {
+		tr := e.torrents[id]
+		if tr == self || !writingLocked(tr) {
+			continue
+		}
+
+		out = append(out, writer{tr: tr, dest: tr.savePath, remaining: max(0, tr.t.Length()-tr.t.BytesCompleted())})
+	}
+
+	return out
+}
+
+// writingLocked reports whether tr counts toward the free space others need
+// (T-9143): still tracked, attached with its size known, and downloading or
+// about to (checking with its info dictionary in hand). A paused torrent
+// (StatePaused, or StateErrored when the space check paused it) writes
+// nothing until resumed, when the periodic re-check counts it again; a queued
+// one is checked when it starts; a seeding or completed one needs nothing
+// more; a refused one is errored; and one with no info dictionary yet has no
+// known size. Engine.mu must be held.
+func writingLocked(tr *tracked) bool {
+	if tr.removed || tr.t == nil || tr.t.Info() == nil {
+		return false
+	}
+
+	return tr.state == engine.StateDownloading || tr.state == engine.StateChecking
 }
 
 // bytesNeeded is how much more data an info dictionary's files will write
@@ -325,47 +437,29 @@ func (e *Engine) applyPolicyLocked(tr *tracked, now time.Time) {
 	e.logger.Info("anacrolix: seed policy satisfied, stopped uploading", "id", tr.id, "seed_policy", e.seed.String())
 }
 
-// spaceTarget is one downloading torrent the periodic free-space check looks
-// at: its destination and how much it still has to write.
-type spaceTarget struct {
-	tr        *tracked
-	dest      string
-	remaining int64
-}
-
-// recheckSpace re-checks free space for every downloading torrent and pauses
-// any whose destination can no longer hold what it still has to write plus
-// the margin, with a readable reason, rather than letting it fill the disk.
-// The filesystem queries run outside Engine.mu.
+// recheckSpace re-checks free space for every torrent writing data and
+// pauses downloads the disk can no longer hold, with a readable reason,
+// rather than letting them fill it. Torrents writing to one filesystem share
+// its free space (T-9143): taken in add order, each counts what it still has
+// to write on top of what the ones before it still need, and a download that
+// no longer fits with them and the margin is paused, after which it needs
+// nothing and the ones after it are counted without it. So the oldest
+// downloads keep going and a disk that each one fits alone, but not all of
+// them together, is never overcommitted. The filesystem queries run outside
+// Engine.mu.
 func (e *Engine) recheckSpace() {
-	e.mu.Lock()
-
-	var targets []spaceTarget
-
-	for _, id := range e.order {
-		tr := e.torrents[id]
-		if tr.paused || tr.state != engine.StateDownloading || tr.t == nil || tr.t.Info() == nil {
-			continue
-		}
-
-		targets = append(targets, spaceTarget{
-			tr:        tr,
-			dest:      tr.savePath,
-			remaining: max(0, tr.t.Length()-tr.t.BytesCompleted()),
-		})
-	}
-
-	e.mu.Unlock()
-
+	targets := e.writers(nil)
 	if len(targets) == 0 {
 		return
 	}
 
-	free := make(map[string]uint64, len(targets))
+	keys := make(map[string]string)
+	free := make(map[string]uint64)
 	failed := make(map[string]bool)
 
 	for _, tg := range targets {
-		if _, ok := free[tg.dest]; ok || failed[tg.dest] {
+		k := e.filesystemKey(tg.dest, keys)
+		if _, ok := free[k]; ok || failed[k] {
 			continue
 		}
 
@@ -375,25 +469,36 @@ func (e *Engine) recheckSpace() {
 			// treated as full: an unmounted network share should not
 			// pause every torrent on a transient error.
 			e.logger.Warn("anacrolix: free-space re-check failed", "destination", tg.dest, "error", err)
-			failed[tg.dest] = true
+			failed[k] = true
 
 			continue
 		}
 
-		free[tg.dest] = n
+		free[k] = n
 	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	ahead := make(map[string]sharedNeed)
+
 	for _, tg := range targets {
-		n, ok := free[tg.dest]
-		if !ok {
+		k := keys[tg.dest]
+
+		n, ok := free[k]
+		if !ok || !writingLocked(tg.tr) {
 			continue
 		}
 
-		short := spaceShortfall(n, tg.remaining, e.margin)
-		if short == 0 || tg.tr.paused || tg.tr.state != engine.StateDownloading || tg.tr.removed {
+		others := ahead[k]
+
+		short := spaceShortfall(n, others.bytes+tg.remaining, e.margin)
+		if short == 0 || tg.tr.state != engine.StateDownloading {
+			// It fits, or it is not downloading yet and cannot be paused
+			// here: either way it writes, so the ones after it count it.
+			others.add(tg.remaining)
+			ahead[k] = others
+
 			continue
 		}
 
@@ -403,7 +508,7 @@ func (e *Engine) recheckSpace() {
 		tr.prePauseState = engine.StateDownloading
 		tr.state = engine.StateErrored
 		tr.err = fmt.Errorf("anacrolix: torrent %s paused: %w; free up space, then resume",
-			tr.id, insufficientSpaceError(tg.dest, n, tg.remaining, e.margin, short))
+			tr.id, insufficientSpaceError(tg.dest, n, tg.remaining, others, e.margin, short))
 		tr.down.reset()
 		tr.up.reset()
 		tr.t.DisallowDataDownload()

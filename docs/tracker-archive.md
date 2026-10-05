@@ -5735,3 +5735,41 @@ concept, no filtering or hiding by the label; `indexer.Category` is unchanged.
 again by Details; GlyphSet gained a `Sep` field (middle dot, ASCII hyphen). XML 1.0 rejects control characters, so
 the Torznab test uses bidi, zero-width, BOM and tab; control and ESC runes are tested on the cleaner directly.
 Nested ids: a named subcategory beats a named parent; an unnamed subcategory falls back to the parent.
+
+### T-9143 · Free space shared per disk; canonical destinations; cross-torrent delete guards
+
+```
+status: done
+depends: T-9141
+tier: H
+```
+Promotes Backlog T-947 (review of T-034, PR #36) and notes N3 and N4 from the review of T-9127 (PR #100), which were
+Backlog T-9130 and T-9131.
+
+**Acceptance:**
+1. [x] The add-time free-space check and the periodic re-check sum the remaining need of the downloads writing to the
+   same filesystem (the platform's filesystem identity, else the destination resolved through symlinks), with no
+   `runtime.GOOS` outside `internal/platform`. Paused, queued, seeding, completed, refused and size-unknown torrents
+   count nothing. Two downloads that each fit a disk alone but not together: the second add is refused, and the
+   re-check pauses the newer one while the older keeps going (T-947).
+2. [x] The refusal and the pause reason say the need is shared with other downloads on the same disk, how many and
+   how much they still need; a torrent alone on its disk reads as before.
+3. [x] The left-data claim compares canonical destinations: a symlinked alias of the refused entry's folder, or a
+   case variant on a case-insensitive file system, is the same destination and gets no ErrLeftData; a different
+   folder still does (T-9130).
+4. [x] Deletions fail closed: the delete guard counts a destination it cannot show is elsewhere as the same one, and
+   names differing only in case as one name. Canonicalising only ever keeps more.
+5. [x] A live torrent's remove with data keeps data another tracked torrent at the same canonical destination names
+   (DataKeptError), and storage discard keeps a file or directory another open torrent of the engine declares, by
+   path or file identity (T-9131).
+6. [x] Tests: the overcommit cases (add and re-check), symlinked and case-variant destinations (skipped where the file
+   system cannot express them), cross-torrent discard and remove with data; green on `make race` for the engine
+   packages; paths built with filepath.Join.
+7. [x] Backlog entries for the PR #104 review notes (T-9144 to T-9146).
+
+**Notes:** DEC-175 (shared free space), DEC-176 (canonical destinations), DEC-177 (cross-torrent guards). Directory
+comparisons run outside Engine.mu on a snapshot; an entry added since counts as the same directory for the delete
+guard. A live entry's remove is not blocked by a torrent with no name yet (it has written nothing), unlike a refused
+entry's (DEC-167). Discard reads a store group shared by every destination's backend. `platform.FilesystemID`: st_dev
+on macOS and Linux, the volume serial on Windows. Mutations in the PR body. Backlog T-9147 (one backend per directory)
+and T-9148 (two torrents with one name share files; NFC and NFD names).
