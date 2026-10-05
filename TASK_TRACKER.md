@@ -810,6 +810,18 @@ deferrals stay deferred to Backlog T-9004.
   data on a remove or discard, but nothing stops the second from overwriting the first's pieces; consider refusing
   or warning when a torrent's info names data another tracked torrent there already names. The delete guard folds
   case but not Unicode normalisation (NFC and NFD names are one file on APFS); cover that too. Found in T-9143.
+- `T-9149` Zero-length files can be lost in two windows: the file store's open creates a torrent's empty files
+  before the torrent joins the store group, so a discard by another torrent in between can remove a new empty file;
+  and another torrent's empty files at the same path can go during a remove with data's delete. Neither is ever
+  rewritten. Note (a) from the review of T-9143 (PR #105).
+- `T-9150` Windows volume serial numbers are 32 bits and can collide (cloned volumes, shares on one server), so two
+  disks can be summed as one: false free-space refusals or pauses, never a deletion. Note (b) from the review of
+  T-9143 (PR #105).
+- `T-9151` No dedicated test pins DEC-177's rule that a torrent with no name yet does not block a live torrent's
+  remove with data (the in-flight delete test exercises it only on the way). Note (c) from the review of T-9143
+  (PR #105).
+- `T-9152` A torrent checking with its info dictionary in hand counts as a writer in the free-space checks, but no
+  test covers it. Note (d) from the review of T-9143 (PR #105).
 
 ---
 
@@ -996,7 +1008,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-174 | 2026-10-05 | T-9141: the Result struct gains one optional string, SourceCategory (the source's own category name, owner-approved §5 change); Torznab fills it from its caps names, one sanitiser, shown in Details only; no taxonomy, mapping, filter or enum |
 | DEC-175 | 2026-10-05 | T-9143 (T-947): the free-space checks sum what other downloads writing to one filesystem still need; paused, queued, seeding, refused and size-unknown torrents count nothing; the re-check pauses the newest that no longer fit; the refusal says the need is shared |
 | DEC-176 | 2026-10-05 | T-9143 (T-9130): destinations compare by path, resolved symlinks, then directory identity, read outside the lock; an unknown answer is the same directory to the delete guard and another one to the left-data claim; the guard folds name case |
-| DEC-177 | 2026-10-05 | T-9143 (T-9131): a live torrent's remove with data keeps data another tracked torrent at the same directory names (an unnamed one does not block it); storage discard keeps a file or directory any open torrent of the engine declares, by path or by file identity |
+| DEC-177 | 2026-10-05 | T-9143 (T-9131): a live torrent's remove with data keeps data another tracked torrent at the same directory names (an unnamed one does not block it, but one whose info then names that data waits for the in-flight delete); storage discard keeps a file or directory any open torrent of the engine declares, by path or by file identity |
 
 ## Blocked
 

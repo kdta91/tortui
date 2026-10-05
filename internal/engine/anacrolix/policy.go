@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
 
 	"github.com/kdta91/tortui/internal/engine"
@@ -159,7 +160,7 @@ func (e *Engine) writers(self *tracked) []writer {
 			continue
 		}
 
-		out = append(out, writer{tr: tr, dest: tr.savePath, remaining: max(0, tr.t.Length()-tr.t.BytesCompleted())})
+		out = append(out, writer{tr: tr, dest: tr.savePath, remaining: max(0, torrentLength(tr.t)-tr.t.BytesCompleted())})
 	}
 
 	return out
@@ -211,6 +212,19 @@ func existingSize(p string) int64 {
 	}
 
 	return st.Size()
+}
+
+// torrentLength is the total length of t's data from its info dictionary, or 0
+// before it has one. The library's own Length reads a cached value it writes,
+// with no lock, after it publishes the info dictionary, so reading it as soon
+// as Info is set races with that write; Info and the dictionary it returns
+// are safe to read (T-9143).
+func torrentLength(t *torrent.Torrent) int64 {
+	if info := t.Info(); info != nil {
+		return info.TotalLength()
+	}
+
+	return 0
 }
 
 // formatBytes renders n in binary units, e.g. "1.5 GiB".
@@ -405,7 +419,7 @@ func (e *Engine) applyPolicyLocked(tr *tracked, now time.Time) {
 		return
 	}
 
-	length := tr.t.Length()
+	length := torrentLength(tr.t)
 
 	if tr.state == engine.StateDownloading && length > 0 && tr.t.BytesCompleted() >= length {
 		tr.state = engine.StateSeeding

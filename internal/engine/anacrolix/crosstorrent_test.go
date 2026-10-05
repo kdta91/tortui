@@ -3,10 +3,16 @@ package anacrolix
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/anacrolix/torrent"
+	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
 
@@ -265,5 +271,130 @@ func TestRemoveWithDataSparesALiveTorrentSharingItsName(t *testing.T) {
 
 			requireGone(t, shared)
 		})
+	}
+}
+
+// TestATorrentNamingDataBeingDeletedWaitsForTheDelete is the PR #105 review's
+// finding 1: a torrent with no name yet does not stop a live torrent's remove
+// with data (DEC-177), so its info dictionary can arrive, naming the same
+// data, after the remove decided to delete it and before the delete runs. It
+// must download nothing until the delete has finished, or its writes land in
+// files the delete then takes away.
+func TestATorrentNamingDataBeingDeletedWaitsForTheDelete(t *testing.T) {
+	t.Parallel()
+
+	var (
+		e          *Engine
+		pendingID  atomic.Value // string
+		pendingT   atomic.Pointer[torrent.Torrent]
+		waited     = make(chan struct{})
+		afterOrder = make(chan error, 1)
+	)
+
+	infoB := buildInfo("twin", [][]string{{"b.bin"}})
+
+	infoBytes, err := bencode.Marshal(infoB)
+	if err != nil {
+		t.Fatalf("bencode: %v", err)
+	}
+
+	e = newTestEngine(t, func(o *Options) {
+		o.Config.MaxActiveDownloads = 4
+		o.MetadataTimeout = time.Hour
+
+		o.beforeDelete = func(string) {
+			// The remove has decided and recorded its delete: the
+			// unnamed torrent's info dictionary arrives now.
+			if err := pendingT.Load().SetInfoBytes(infoBytes); err != nil {
+				t.Errorf("SetInfoBytes: %v", err)
+				return
+			}
+
+			select {
+			case <-waited:
+			case <-time.After(5 * time.Second):
+				t.Error("the torrent whose info named the data being deleted did not wait for the delete")
+			}
+		}
+
+		o.onDeleteWait = func(id string) {
+			if id == pendingID.Load() {
+				select {
+				case <-waited:
+				default:
+					close(waited)
+				}
+			}
+		}
+
+		o.afterInfo = func(id string) {
+			if id != pendingID.Load() {
+				return
+			}
+
+			// Past the wait: the delete has finished, and nothing of
+			// the data it deleted is back.
+			_, err := os.Lstat(filepath.Join(e.downloadDir, "twin"))
+			if !errors.Is(err, fs.ErrNotExist) {
+				afterOrder <- fmt.Errorf("the data is still there as the torrent starts (stat err %w)", err)
+				return
+			}
+
+			afterOrder <- nil
+		}
+	})
+
+	ctx := context.Background()
+
+	live, err := e.Add(ctx, engine.AddSource{FilePath: writeTorrentFile(t, buildInfo("twin", [][]string{{"a.bin"}}))})
+	if err != nil {
+		t.Fatalf("Add(live): %v", err)
+	}
+
+	waitForStarted(t, e, live)
+
+	if err := os.MkdirAll(filepath.Join(e.downloadDir, "twin"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(e.downloadDir, "twin", "a.bin"), []byte("the live torrent's data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", metainfo.HashBytes(infoBytes).HexString())
+
+	pending, err := e.Add(ctx, engine.AddSource{Magnet: magnet})
+	if err != nil {
+		t.Fatalf("Add(pending): %v", err)
+	}
+
+	pendingID.Store(pending)
+
+	waitUntil(t, "the magnet attached", func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+
+		if tt := e.torrents[pending].t; tt != nil {
+			pendingT.Store(tt)
+			return true
+		}
+
+		return false
+	})
+
+	if err := e.Remove(live, true); err != nil {
+		t.Fatalf("Remove(live, with data) = %v, want the data deleted", err)
+	}
+
+	if err := wait(t, afterOrder, "the waiting torrent to start"); err != nil {
+		t.Fatal(err)
+	}
+
+	e.mu.Lock()
+	n := len(e.deleting)
+	e.mu.Unlock()
+
+	if n != 0 {
+		t.Errorf("%d deletes still recorded in flight after the remove returned", n)
 	}
 }

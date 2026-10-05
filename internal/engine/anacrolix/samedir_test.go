@@ -299,3 +299,105 @@ func TestRemoveWithDataOfARefusedEntrySparesATwinThroughAnAlias(t *testing.T) {
 		})
 	}
 }
+
+// TestSameDataPath is the PR #105 review's finding 2: discard keeps a file
+// another torrent declares when the two paths may be one file. Equal paths
+// are; a case-folded name that stats as the same file is; different base
+// names are not; one path missing is not; and when a stat fails for another
+// reason the answer fails closed, as one file.
+func TestSameDataPath(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "Data.bin")
+	other := filepath.Join(dir, "other.bin")
+
+	for _, p := range []string{file, other} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{name: "equal paths", a: file, b: file, want: true},
+		{name: "different base names", a: file, b: other, want: false},
+		{name: "one missing", a: file, b: filepath.Join(t.TempDir(), "Data.bin"), want: false},
+		{name: "same base name, two files", a: file, b: writeFile(t, filepath.Join(t.TempDir(), "Data.bin")), want: false},
+	} {
+		if got := sameDataPath(tc.a, tc.b); got != tc.want {
+			t.Errorf("%s: sameDataPath = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	if anySameData(file, []string{other}) || !anySameData(file, []string{other, file}) {
+		t.Error("anySameData does not report exactly when one of the paths may be the file")
+	}
+
+	t.Run("case-folded name, same file", func(t *testing.T) {
+		t.Parallel()
+
+		variant := filepath.Join(dir, swapCase("Data.bin"))
+
+		a, errA := os.Stat(file)
+		b, errB := os.Stat(variant)
+
+		if errA != nil {
+			t.Fatalf("stat: %v", errA)
+		}
+
+		if errB != nil || !os.SameFile(a, b) {
+			t.Skip("the file system is case-sensitive")
+		}
+
+		if !sameDataPath(file, variant) {
+			t.Errorf("sameDataPath(%s, %s) = false, want true: one file on this file system", file, variant)
+		}
+	})
+
+	t.Run("stat error fails closed", func(t *testing.T) {
+		t.Parallel()
+
+		locked := filepath.Join(t.TempDir(), "locked")
+		hidden := writeFile(t, filepath.Join(locked, "Data.bin"))
+
+		if err := os.Chmod(locked, 0o000); err != nil {
+			t.Skipf("this file system will not drop the mode: %v", err)
+		}
+
+		t.Cleanup(func() {
+			if err := os.Chmod(locked, 0o700); err != nil {
+				t.Errorf("restore the mode: %v", err)
+			}
+		})
+
+		// Root, and Windows, where the mode is only a read-only bit, can
+		// still stat it: nothing to test there.
+		if _, err := os.Stat(hidden); err == nil || errors.Is(err, os.ErrNotExist) {
+			t.Skipf("a mode-0000 parent does not make a stat fail here (err %v)", err)
+		}
+
+		if !sameDataPath(file, hidden) {
+			t.Error("sameDataPath with a stat that failed = false, want true (fail closed)")
+		}
+	})
+}
+
+// writeFile creates path, with its parent directories, holding one byte, and
+// returns it.
+func writeFile(t *testing.T, path string) string {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	return path
+}

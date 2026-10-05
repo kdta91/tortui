@@ -142,6 +142,15 @@ type Options struct {
 	// torrent has at that point, or land a Pause or Resume there (T-9134).
 	onAttach func(attachStage, *torrent.Torrent)
 
+	// beforeDelete, when set, is called by Remove with the torrent's ID
+	// just before it deletes the torrent's data, with the delete recorded
+	// as in flight; onDeleteWait, when set, is called by awaitInfo with a
+	// torrent's ID when it finds an in-flight delete of data under its name
+	// and is about to wait for it. Together they let a package test land a
+	// torrent's info dictionary inside a delete (T-9143).
+	beforeDelete func(id string)
+	onDeleteWait func(id string)
+
 	// SpaceCheckInterval is how often downloading torrents' destinations
 	// are re-checked for free space. Zero uses DefaultSpaceCheckInterval.
 	// It is measured against sample-tick times, so a test driving the
@@ -361,6 +370,8 @@ type Engine struct {
 	beforeAttach    func()
 	afterInfo       func(id string)
 	onAttach        func(attachStage, *torrent.Torrent)
+	beforeDelete    func(id string)
+	onDeleteWait    func(id string)
 
 	done      chan struct{}
 	wg        sync.WaitGroup
@@ -378,6 +389,19 @@ type Engine struct {
 	// files is the store group every destination's backend shares
 	// (T-9131).
 	files *storeGroup
+
+	// deleting holds the data deletes Remove has decided on and not yet
+	// finished, which a torrent whose info dictionary names the same data
+	// waits for before it downloads anything (T-9143, DEC-177).
+	deleting map[*inflightDelete]struct{}
+}
+
+// inflightDelete is one data delete Remove is running: the data's name under
+// savePath, and done, closed once the delete has returned.
+type inflightDelete struct {
+	savePath string
+	name     string
+	done     chan struct{}
 }
 
 // Compile-time proof that Engine satisfies the frozen contract.
@@ -478,10 +502,13 @@ func New(opts Options) (*Engine, error) {
 		beforeAttach:    opts.beforeAttach,
 		afterInfo:       opts.afterInfo,
 		onAttach:        opts.onAttach,
+		beforeDelete:    opts.beforeDelete,
+		onDeleteWait:    opts.onDeleteWait,
 		done:            make(chan struct{}),
 		torrents:        make(map[string]*tracked),
 		storages:        make(map[string]safeStorage),
 		files:           newStoreGroup(),
+		deleting:        make(map[*inflightDelete]struct{}),
 	}
 
 	newTicker := opts.newTicker
@@ -1489,6 +1516,13 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 	}
 	e.mu.Unlock()
 
+	// A remove with data that named this torrent's data before its info
+	// arrived may still be deleting it: wait, so nothing is written into
+	// files the delete then takes away (T-9143, DEC-177).
+	if !e.awaitDeletes(tr, info.BestName()) {
+		return
+	}
+
 	if e.afterInfo != nil {
 		e.afterInfo(tr.id)
 	}
@@ -1497,6 +1531,41 @@ func (e *Engine) awaitInfo(tr *tracked, t *torrent.Torrent, dest string) {
 	// priorities and file wantedness are independent of the transfer
 	// gate above.
 	t.DownloadAll()
+}
+
+// awaitDeletes waits until no in-flight delete (Engine.deleting) is of data
+// under a name mayBeSameName matches with name, at any destination: the
+// directory is not compared, which only ever waits more and needs no I/O. It
+// returns false when the engine closes or tr is removed while it waits.
+func (e *Engine) awaitDeletes(tr *tracked, name string) bool {
+	for {
+		var wait chan struct{}
+
+		e.mu.Lock()
+		for d := range e.deleting {
+			if mayBeSameName(d.name, name) {
+				wait = d.done
+				break
+			}
+		}
+		e.mu.Unlock()
+
+		if wait == nil {
+			return true
+		}
+
+		if e.onDeleteWait != nil {
+			e.onDeleteWait(tr.id)
+		}
+
+		select {
+		case <-wait:
+		case <-e.done:
+			return false
+		case <-tr.done:
+			return false
+		}
+	}
 }
 
 // specInfo decodes the info dictionary a spec already carries, or returns nil
@@ -1851,7 +1920,7 @@ func (e *Engine) statusLocked(tr *tracked) engine.TorrentStatus {
 		return st
 	}
 
-	st.TotalBytes = tr.t.Length()
+	st.TotalBytes = torrentLength(tr.t)
 	st.DownloadedBytes = min(tr.t.BytesCompleted(), st.TotalBytes)
 	st.Progress = progress(st.DownloadedBytes, st.TotalBytes)
 
@@ -2216,6 +2285,15 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 	savePath := tr.savePath
 	name, kept, maybe := e.removeTargetLocked(tr, deleteData, dirs)
 
+	// Recorded in the same critical section that decided the delete, so a
+	// torrent whose info names this data afterwards waits for it
+	// (awaitDeletes), and one whose info came first kept it.
+	var inflight *inflightDelete
+	if name != "" {
+		inflight = &inflightDelete{savePath: savePath, name: name, done: make(chan struct{})}
+		e.deleting[inflight] = struct{}{}
+	}
+
 	tr.removed = true
 	close(tr.done)
 
@@ -2258,7 +2336,24 @@ func (e *Engine) Remove(id string, deleteData bool) error {
 		return &engine.DataKeptError{Path: path, Maybe: maybe}
 	}
 
+	if inflight != nil {
+		defer e.endDelete(inflight)
+	}
+
+	if e.beforeDelete != nil {
+		e.beforeDelete(id)
+	}
+
 	return e.deleteTorrentData(id, savePath, name, roots)
+}
+
+// endDelete marks d finished: it leaves Engine.deleting and its waiters wake.
+func (e *Engine) endDelete(d *inflightDelete) {
+	e.mu.Lock()
+	delete(e.deleting, d)
+	e.mu.Unlock()
+
+	close(d.done)
 }
 
 // removeTargetLocked decides what a Remove of tr deletes when deleteData is

@@ -5761,7 +5761,8 @@ Backlog T-9130 and T-9131.
    names differing only in case as one name. Canonicalising only ever keeps more.
 5. [x] A live torrent's remove with data keeps data another tracked torrent at the same canonical destination names
    (DataKeptError), and storage discard keeps a file or directory another open torrent of the engine declares, by
-   path or file identity (T-9131).
+   path or file identity (T-9131). A torrent whose info names data a remove is deleting waits for the delete before
+   it downloads (PR #105 review finding 1).
 6. [x] Tests: the overcommit cases (add and re-check), symlinked and case-variant destinations (skipped where the file
    system cannot express them), cross-torrent discard and remove with data; green on `make race` for the engine
    packages; paths built with filepath.Join.
@@ -5770,6 +5771,7 @@ Backlog T-9130 and T-9131.
 **Notes:** DEC-175 (shared free space), DEC-176 (canonical destinations), DEC-177 (cross-torrent guards). Directory
 comparisons run outside Engine.mu on a snapshot; an entry added since counts as the same directory for the delete
 guard. A live entry's remove is not blocked by a torrent with no name yet (it has written nothing), unlike a refused
-entry's (DEC-167). Discard reads a store group shared by every destination's backend. `platform.FilesystemID`: st_dev
-on macOS and Linux, the volume serial on Windows. Mutations in the PR body. Backlog T-9147 (one backend per directory)
-and T-9148 (two torrents with one name share files; NFC and NFD names).
+entry's (DEC-167); review fix: the delete is recorded in flight and such a torrent's info waits for it. Discard reads
+a store group shared by every destination's backend. `platform.FilesystemID`: st_dev on macOS and Linux, the volume
+serial on Windows. Lengths are read from the info dictionary: the library's own Length races with its info set
+(found by -race). Mutations in the PR body. Backlog T-9147, T-9148; review notes T-9149 to T-9152.
