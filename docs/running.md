@@ -37,7 +37,9 @@ screen (no query runs until the user searches or presses `L`) and, on first run,
 shutdown (pause, save session, flush, close) and release the lock; `--ascii` or `ascii = true`
 selects the ASCII glyphs. **`make run`** is the same binary with `--config ./dev-config.toml`
 (written with defaults the first time) and `TORTUI_HOME` set to `./.dev-home` (git-ignored; override
-with `make run DEV_HOME=...`), so state, lock and downloads are sandboxed too.
+with `make run DEV_HOME=...`), so state, lock and downloads are sandboxed too. That first run also
+saves the `download_dir` it resolved into `dev-config.toml`, and later runs keep it, so changing
+`DEV_HOME` does not move downloads for an existing file: delete the old `dev-config.toml` first.
 
 **`TORTUI_HOME`** redirects config, state, and downloads under one directory. Use it for any
 manual testing so real config is never touched:

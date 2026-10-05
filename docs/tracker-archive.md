@@ -5911,3 +5911,30 @@ holds the merge result); scripts/pre-merge-commit_test.sh builds a scratch repo,
 A fast-forward runs no hook; CONTRIBUTING says so. T-913 and T-9029: two cases in check-indexer-hostnames_test.sh, both
 fail on the old script (DEC-181). T-991: new advisory job `make cover (coverage floors)`; `make cover` passes locally.
 T-9027: the step now exits 1 unless CGO_ENABLED is 1. T-9078: DEV_HOME defaults to $(CURDIR)/.dev-home. No new Backlog entry.
+
+---
+
+### T-9163 · Docs Backlog batch
+
+```
+status: done
+depends: none
+tier: L
+```
+Promotes Backlog T-988, T-987, T-915, T-925 and T-9006, each checked against the current docs and code first; the
+PR #109 review notes become Backlog T-9164 to T-9167, and the scanner comment placeholder is fixed.
+
+**Acceptance:**
+1. [x] Each of the five entries is closed with evidence or fixed, and docs claims were checked against the code.
+2. [x] The seeder-tie survivor is stated in the `mergeResults` godoc and DEC-056, with a test that fails if a tie replaces the first copy (T-925).
+3. [x] The terminal matrix marks alignment and colour N/A for the non-TTY refusal row (T-9006).
+4. [x] README and docs/running.md say a stale dev-config.toml keeps its download_dir (Backlog from the T-9162 review).
+5. [x] The PR #109 review notes are Backlog entries; the scanner comment uses the example placeholder.
+
+**Notes:** T-988 closed: the README sentence is gone (grep finds no "one exception this mirrors"; the restart
+paragraph reads cleanly). T-987 closed: `GlobalBindings()` Help is "view source errors, if any" and the README row
+matches. T-915 closed: docs/session-log.md exists, and its header records that earlier tasks' outcomes live in the
+archive and decisions, so it is not backfilled. T-925 fixed (godoc, DEC-056, `TestSearchAllSeederTieKeepsTheFirstCopy`;
+changing `>` to `>=` in `mergeResults` fails it). T-9006 fixed (the two cells read N/A). dev-config note checked
+against `config/load.go`, which writes the resolved default on first creation. New Backlog T-9164 to T-9167.
+

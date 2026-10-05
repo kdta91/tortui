@@ -59,7 +59,7 @@ Additional required conditions — same four columns, run in whichever terminal 
 | `NO_COLOR=1 ./bin/tortui --demo` | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
 | `TERM=xterm ./bin/tortui --demo` | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
 | `./bin/tortui --ascii --demo` | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
-| `printf '' \| ./bin/tortui` (non-TTY refusal) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
+| `printf '' \| ./bin/tortui` (non-TTY refusal) | N/A (a one-line refusal has no table) | N/A (no colour to degrade) | PASS (owner, macOS, 2026-09-28) | PASS (owner, macOS, 2026-09-28) |
 
 Resize check (run in at least the Terminal.app pass and one other):
 

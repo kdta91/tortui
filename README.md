@@ -547,7 +547,9 @@ make release-check  # validate .goreleaser.yaml + a local snapshot build (no pub
 
 `make run` passes `--config ./dev-config.toml` and sets `TORTUI_HOME` to `./.dev-home` (git-ignored;
 `make run DEV_HOME=/some/dir` to move it), so the state directory, lock file and downloads stay out of
-your real locations. For any other run, use a scratch directory:
+your real locations. `dev-config.toml` is written with defaults on the first run and keeps the
+`download_dir` resolved then, so changing `DEV_HOME` later does not move downloads: delete an old
+`dev-config.toml` first and `make run` writes a fresh one. For any other run, use a scratch directory:
 
 ```sh
 TORTUI_HOME=$(mktemp -d) ./bin/tortui
