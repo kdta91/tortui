@@ -1381,3 +1381,91 @@ func TestSourceError(t *testing.T) {
 		t.Errorf("skipped.Error() = %q, want it to say the source was skipped, not that it failed", skipped.Error())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// local category filter (T-9140)
+// ---------------------------------------------------------------------------
+
+func catHit(id string, c Category) Result {
+	r := hit("src", id, "title "+id, 5)
+	r.Category = c
+	return r
+}
+
+func TestFilterByCategories(t *testing.T) {
+	in := []Result{
+		catHit("a", CategoryAudio), catHit("v", CategoryVideo), catHit("o", CategoryOther), catHit("s", CategorySoftware),
+	}
+
+	ids := func(rs []Result) string {
+		var out []string
+		for _, r := range rs {
+			out = append(out, r.ID)
+		}
+		return joined(out)
+	}
+
+	if got := ids(FilterByCategories(in, nil)); got != "a,v,o,s" {
+		t.Errorf("no filter = %s, want everything", got)
+	}
+	// Other is unclassified, never a mismatch: it is kept under any filter.
+	if got := ids(FilterByCategories(in, []Category{CategoryVideo})); got != "v,o" {
+		t.Errorf("video filter = %s, want v,o", got)
+	}
+	if got := ids(FilterByCategories(in, []Category{CategoryAudio, CategorySoftware})); got != "a,o,s" {
+		t.Errorf("audio+software filter = %s, want a,o,s", got)
+	}
+	if len(in) != 4 {
+		t.Errorf("input was modified")
+	}
+}
+
+func TestSearchAllFiltersLocallyOnlyForSourcesThatCannotPushItDown(t *testing.T) {
+	mixed := func(id string) []Result {
+		return []Result{
+			{IndexerID: id, ID: id + "-v", Title: id + " video", Category: CategoryVideo, Seeders: 3},
+			{IndexerID: id, ID: id + "-a", Title: id + " audio", Category: CategoryAudio, Seeders: 2},
+			{IndexerID: id, ID: id + "-o", Title: id + " other", Category: CategoryOther, Seeders: 1},
+		}
+	}
+	plain := &stubIndexer{id: "plain", caps: Caps{Search: true}, fn: func(context.Context, Query) ([]Result, error) {
+		return mixed("plain"), nil
+	}}
+	// A pushing source is trusted to have filtered already: whatever it
+	// returns is shown as is, even a bucket outside the filter.
+	pushing := &stubIndexer{id: "push", caps: Caps{Search: true, Categories: true}, fn: func(context.Context, Query) ([]Result, error) {
+		return mixed("push"), nil
+	}}
+
+	reg, clk := newTestRegistry(t, Config{}, plain, pushing)
+
+	got, _, err := reg.SearchAll(context.Background(), Query{Text: "x", Categories: []Category{CategoryVideo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	have := map[string]bool{}
+	for _, r := range got {
+		have[r.ID] = true
+	}
+
+	for _, want := range []string{"plain-v", "plain-o", "push-v", "push-a", "push-o"} {
+		if !have[want] {
+			t.Errorf("missing %s; got %v", want, titles(got))
+		}
+	}
+
+	if have["plain-a"] {
+		t.Errorf("a non-pushing source's audio result survived a video filter: %v", titles(got))
+	}
+
+	// With no filter nothing is dropped from either.
+	clk.advance(time.Hour)
+	all, _, err := reg.SearchAll(context.Background(), Query{Text: "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 6 {
+		t.Errorf("unfiltered results = %d, want 6", len(all))
+	}
+}

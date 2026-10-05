@@ -131,7 +131,7 @@ func TestHandleOpenDetailsSelectsTheHighlightedRow(t *testing.T) {
 
 	m := New(newTestEngine(t), testTheme())
 	m.lastResults = results
-	m.results = m.results.setResults(results, indexer.ModeSearch, now)
+	m.results = m.results.setResults(results, indexer.ModeSearch, now, theme.UnicodeGlyphs)
 	m.screen = ScreenResults
 
 	initialID := m.results.table.SelectedID()
@@ -205,7 +205,7 @@ func TestActionDetailsOnlyActsOnResultsScreen(t *testing.T) {
 
 	base := New(newTestEngine(t), testTheme())
 	base.lastResults = results
-	base.results = base.results.setResults(results, indexer.ModeSearch, now)
+	base.results = base.results.setResults(results, indexer.ModeSearch, now, theme.UnicodeGlyphs)
 
 	for _, screen := range screenOrder {
 		m := base
@@ -1094,7 +1094,7 @@ func TestActionSelectOnResultsScreenAddsTheSelectedResult(t *testing.T) {
 
 	r := indexer.Result{Title: "from-results.iso", Magnet: "magnet:?xt=urn:btih:eeee5555"}
 	m.lastResults = []indexer.Result{r}
-	m.results = m.results.setResults(m.lastResults, indexer.ModeSearch, time.Now())
+	m.results = m.results.setResults(m.lastResults, indexer.ModeSearch, time.Now(), theme.UnicodeGlyphs)
 
 	if m.results.table.SelectedID() == "" {
 		t.Fatal("expected setResults to select the only row")

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kdta91/tortui/internal/tui/theme"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kdta91/tortui/internal/engine"
@@ -157,7 +159,7 @@ func addThroughScreen(t *testing.T, screen Screen, r indexer.Result, resolve fun
 	switch screen {
 	case ScreenResults:
 		m.lastResults = []indexer.Result{r}
-		m.results = m.results.setResults(m.lastResults, indexer.ModeSearch, time.Now())
+		m.results = m.results.setResults(m.lastResults, indexer.ModeSearch, time.Now(), theme.UnicodeGlyphs)
 	case ScreenDetails:
 		m.details = m.details.withResult(r)
 	default:

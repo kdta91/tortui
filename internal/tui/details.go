@@ -587,7 +587,7 @@ func (m Model) renderDetailsScreen() string {
 	b.WriteString("\n\n")
 	b.WriteString(detailsFieldLine(th, "Size", formatSize(r.SizeBytes)))
 	b.WriteString("\n")
-	b.WriteString(detailsFieldLine(th, "Category", r.Category.String()))
+	b.WriteString(detailsFieldLine(th, "Category", categoryGlyph(th.Glyphs, r.Category)+" "+r.Category.String()))
 	b.WriteString("\n")
 	b.WriteString(detailsFieldLine(th, "Trust", detailsTrustText(r.Trust)))
 	b.WriteString("\n")

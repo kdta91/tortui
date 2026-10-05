@@ -23,7 +23,8 @@ import (
 // Column indices into resultsColumns(), used by cycleSort/reverseSort and
 // by applyModeDefault to name a column without restating its position.
 const (
-	colTitle = iota
+	colCategory = iota
+	colTitle
 	colSize
 	colSL
 	colTrust
@@ -39,15 +40,24 @@ const (
 // columns for real data is exactly what T-053 left for this task to do.
 func resultsColumns() []components.Column {
 	return []components.Column{
+		// The category glyph (T-9140) is the first column to go as the
+		// terminal narrows (Priority 1, below Source's 2): it is an
+		// at-a-glance extra, so no documented column is ever dropped to
+		// make room for it, and at any width the remaining columns lay out
+		// exactly as they did without it.
+		{
+			Key: "category", Title: "C", Width: 1, Align: components.AlignLeft, Priority: 1,
+			Less: categoryLess,
+		},
 		{Key: "title", Title: "Title", Flex: true, MinWidth: 20, Align: components.AlignLeft},
 		{Key: "size", Title: "Size", Width: 8, Align: components.AlignRight, Less: sizeLess},
 		{Key: "sl", Title: "S/L", Width: 9, Align: components.AlignRight, Less: seedersLess, SortMissingLast: seedersSortMissing},
 		{
-			Key: "trust", Title: "Trust", Width: 6, Align: components.AlignLeft, Priority: 3,
+			Key: "trust", Title: "Trust", Width: 6, Align: components.AlignLeft, Priority: 4,
 			Less: trustLess, Accent: true,
 		},
-		{Key: "age", Title: "Age", Width: 6, Align: components.AlignRight, Priority: 2, Less: ageLess},
-		{Key: "source", Title: "Source", Width: 16, Align: components.AlignLeft, Priority: 1},
+		{Key: "age", Title: "Age", Width: 6, Align: components.AlignRight, Priority: 3, Less: ageLess},
+		{Key: "source", Title: "Source", Width: 16, Align: components.AlignLeft, Priority: 2},
 	}
 }
 
@@ -124,10 +134,10 @@ func cellAt0(r components.Row, i int) string {
 // set is exactly the "never mistaken for a stale search result" moment the
 // header text next to it also exists for. The trust filter (T-062), if on,
 // carries over to the new result set exactly like the sort column does.
-func (m resultsModel) setResults(results []indexer.Result, mode indexer.Mode, now time.Time) resultsModel {
+func (m resultsModel) setResults(results []indexer.Result, mode indexer.Mode, now time.Time, g theme.GlyphSet) resultsModel {
 	rows := make([]components.Row, 0, len(results))
 	for _, r := range results {
-		rows = append(rows, resultRow(r, now))
+		rows = append(rows, resultRow(r, now, g))
 	}
 
 	m.allRows = rows
@@ -246,10 +256,11 @@ func resultRowID(r indexer.Result) string {
 // reference point formatAge measures Published against — passed in rather
 // than read from time.Now() here, so a caller (a test, or setResults with a
 // fixed instant) controls it directly instead of racing a real clock.
-func resultRow(r indexer.Result, now time.Time) components.Row {
+func resultRow(r indexer.Result, now time.Time, g theme.GlyphSet) components.Row {
 	return components.Row{
 		ID: resultRowID(r),
 		Cells: []string{
+			categoryGlyph(g, r.Category),
 			r.Title,
 			formatSize(r.SizeBytes),
 			formatSwarm(r),
@@ -263,8 +274,27 @@ func resultRow(r indexer.Result, now time.Time) components.Row {
 		// identical blank text, so trustLess could never tell them apart
 		// from Cells alone. Every other index is left
 		// empty, falling back to that column's own Cells text.
-		SortKey: []string{"", "", seedersSortKey(r), strconv.Itoa(int(r.Trust)), "", ""},
+		SortKey: []string{strconv.Itoa(int(r.Category)), "", "", seedersSortKey(r), strconv.Itoa(int(r.Trust)), "", ""},
 	}
+}
+
+// categoryGlyph is the one-cell marker for c in g. A value outside the known
+// buckets shows the Other marker rather than panicking or going blank.
+func categoryGlyph(g theme.GlyphSet, c indexer.Category) string {
+	if c < 0 || int(c) >= len(g.Category) {
+		c = indexer.CategoryOther
+	}
+
+	return g.Category[c]
+}
+
+// categoryLess orders the category column by the bucket's enum order, read
+// from the row's SortKey (the glyph itself carries no useful order).
+func categoryLess(a, b string) bool {
+	x, _ := strconv.Atoi(a)
+	y, _ := strconv.Atoi(b)
+
+	return x < y
 }
 
 // parseTrustOrder reads the indexer.Trust order back off a trust column
