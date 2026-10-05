@@ -91,7 +91,7 @@ Single source of truth for build state. Read `AGENT.md` first.
 
 ## Phase 10 — Release hardening follow-ups
 
-**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet · `T-9127` Storage discard keeps others' data; dropped resume records and refused re-adds tell the user · `T-9133` A user's pause survives a restart; failed restores keep their name and infohash; kept data is reported · `T-9135` Seeding works; a refused entry's remove spares data another download may use; a restored pause holds from the start · `T-9140` Category glyph column and local category filter · `T-9141` Source's own category name in Details · `T-9143` Free space shared per disk; canonical destinations; cross-torrent delete guards · `T-9156` Close obsolete Backlog entries, with evidence · `T-9153` README launch polish and demo GIF · `T-9158` Results table batch: undated last, size width, selection, trust sort.
+**Done (archived in `docs/tracker-archive.md`):** `T-993` Engine destination-roots test · `T-994` Serialise session saves · `T-9008` Pin session-save wiring and shutdown window · `T-9010` Internet Archive results carry the .torrent URL · `T-9011` Open on Search, no startup Latest · `T-9012` Unknown seeders render as a dash · `T-9019` Shell-style path completion in the import field · `T-9024` Import-field tab follow-ups · `T-9021` Unknown seeders pass the minimum-seeders filter · `T-9025` Race-detector CI job · `T-9026` Hostname scanner ignores capitalised selector names · `T-9031` Scraper sources don't require the URL field · `T-9034` Clear recent searches; source-toggle hint · `T-9037` Scraper details-page resolve · `T-9041` Details-page address refuses userinfo · `T-9045` Userinfo hardening: base_url, redirects, torznab links · `T-9046` Same-origin userinfo redirects · `T-9049` Unparseable redirect Location never echoed · `T-9052` Scraper form: save runs a pending import · `T-9056` Add by one link; status-bar message stays visible · `T-9057` URL-added downloads never show their address · `T-9061` UI fixes from the README audit · `T-9069` Bundled sources are visible in Settings and `doctor` · `T-9073` README audit fixes · `T-9079` A .torrent link that redirects to a magnet adds by the magnet · `T-9082` v1.0.0 release records · `T-9090` CI runner and action versions · `T-9094` Every magnet drops its xs= and as= addresses · `T-9095` Credential hygiene: magnet redirects, userinfo schemes, unparseable names · `T-9099` SafeName hidden-prefix forms; credentialed requests keep the strict redirect rule · `T-9100` Styled-line truncation; tab bar and Settings list clip · `T-9101` Built-in source rows follow saves; Search empty state; one definition resolver for doctor · `T-9106` One Enter runs the Search; Trust sort is a total order · `T-9111` Settings and Search follow-ups from the T-9101 and T-9100 reviews · `T-9112` Downloads remembers its scroll offset; the block snap is tested · `T-9114` Doc and comment nits · `T-9118` httpx error tidy: one prefix, the right hop, fast 500 test · `T-9120` Test hardening: weak assertions, Downloads cases, retry-limit error text · `T-9121` Engine races, refused re-adds, duplicate resume records, storage lock, first-record magnet · `T-9127` Storage discard keeps others' data; dropped resume records and refused re-adds tell the user · `T-9133` A user's pause survives a restart; failed restores keep their name and infohash; kept data is reported · `T-9135` Seeding works; a refused entry's remove spares data another download may use; a restored pause holds from the start · `T-9140` Category glyph column and local category filter · `T-9141` Source's own category name in Details · `T-9143` Free space shared per disk; canonical destinations; cross-torrent delete guards · `T-9156` Close obsolete Backlog entries, with evidence · `T-9153` README launch polish and demo GIF · `T-9158` Results table batch: undated last, size width, selection, trust sort · `T-9162` Scripts and CI/Make batch.
 
 ---
 
@@ -144,9 +144,6 @@ deferrals stay deferred to Backlog T-9004.
   Windows Terminal, conhost, Linux-emulator, and PowerShell rows in `docs/terminal-matrix.md`
   and the Windows/Linux halves of the v1.0 release criteria's manual download-resume-remove and
   fresh-install bullets. CI and cross-builds on all three OSes are unaffected.
-- `T-991` `make cover` enforces AGENT.md §9's per-package floors (T-093) but no CI job runs it,
-  so a regression is caught only when an agent runs its verification row. Add it to a CI job;
-  which checks are required stays the owner's call (AGENT.md §12). From T-093.
 - `T-990` Bump `golang.org/x/crypto` past v0.55.0 (GO-2026-6354/6355, `ssh`) once the module's
   `go` directive may rise to 1.26: v0.56.0 requires it. Not reachable today — no `x/crypto/ssh` or
   `openpgp` package is compiled on any OS (DEC-127) — so this is hygiene, not a fix. From T-093.
@@ -211,22 +208,10 @@ deferrals stay deferred to Backlog T-9004.
 - `T-908` Apple notarisation (requires a paid Apple Developer account)
 - `T-909` Windows code signing (requires a certificate or signing service)
 - `T-910` Homebrew core submission (has notability requirements a tap does not)
-- `T-911` Install a `pre-merge-commit` hook. QA on T-004 (PR #4) demonstrated that merge commits
-  bypass `scripts/pre-commit` entirely: git invokes `pre-merge-commit` for merges, and that hook is
-  not installed. Reproduced by committing a secret on a side branch with hooks disabled, then
-  merging with `git merge --no-ff` while `pre-commit` was active — the merge succeeded and the
-  secret entered history uncaught.
 - `T-912` Close the binary-file gap in the secret scan. QA on T-004 (PR #4) confirmed that gitleaks
   skips binary content by design in both `gitleaks git --staged` (the hook) and `gitleaks dir`
   (`make scan` in CI), so a secret embedded in a binary-ish file is caught by neither the hook nor
   the CI backstop.
-- `T-913` Close the backtick raw-string bypass in `scripts/check-indexer-hostnames.sh`. QA on T-007
-  (PR #7) found that a Go raw string literal — a backtick-delimited value with no `http(s)://`
-  scheme, in a gated path — evades the check entirely, because the value-shape regex strips only an
-  optional `"` and never a backtick. This is outside the gaps (a)/(b)/(c) that T-007 documented.
-- `T-914` `docs/indexer-hostname-allowlist.md`'s prose enumeration of auto-allowed private IPv4
-  ranges omits `0.0.0.0/8`, which `is_private_ipv4()` in the script does allow and which DEC-040 and
-  the script header both list. Cosmetic doc inconsistency found by QA on T-007.
 - `T-915` Create `docs/session-log.md` and backfill T-001…T-010. AGENT.md §11 requires a running
   session log — one line per task with timestamp, task ID, and outcome — as the thing a human reads
   to catch up. It has never existed; `docs/` currently holds only `indexer-hostname-allowlist.md`.
@@ -555,16 +540,9 @@ deferrals stay deferred to Backlog T-9004.
   one source reports a real 0 and another reports unknown, whichever arrived first wins, so the S/L
   cell can show `–` or `0` depending on order. Prefer a known count on a tie. Found in review of
   T-9012 (PR #66).
-- `T-9027` The `go test -race` job's "Confirm C toolchain" step prints `go env CGO_ENABLED` but does
-  not assert it is `1`, so a runner where cgo silently ends up off would only fail later, less
-  clearly, in `-race` itself. Found in review of T-9025 (PR #70), non-blocking.
 - `T-9028` The Windows `go test -race` job installs make and mingw through Chocolatey, which DEC-107
   moved shellcheck off after the T-932 outage; a Chocolatey outage would turn that advisory check
   red for a cause unrelated to the code. Found in review of T-9025 (PR #70), non-blocking.
-- `T-9029` In `https://host.org@Other` the hostname scanner reads `host.org` as userinfo and never
-  checks it; it reports `other` instead, so the check still fails but names the wrong host.
-  Pre-existing, unchanged by T-9026. Consider checking a hostname-shaped userinfo too. Found in
-  review of T-9026 (PR #71).
 - `T-9030` Under `LC_ALL=C` (T-9026) the key/value shape no longer matches a value that starts with
   a non-ASCII letter, such as `Host: "İİİİ.some-host.example.zzz"`; main matched it after
   lowercasing. Non-ASCII letters are also no longer lowercased in reported names. Minor, since
@@ -606,8 +584,6 @@ deferrals stay deferred to Backlog T-9004.
   change planned.
 - `T-9065` Results rows with wide emoji (U+1F680, U+1F6F0 in the demo) may shift later columns.
   Verify in a real terminal (owner step).
-- `T-9078` `make run` should set TORTUI_HOME so the dev run does not touch real state, lock and
-  downloads. Noted in the README by T-9073.
 - `T-9087` Note only: the magnet validator allows non-ASCII and UTF-8 C1 control bytes. Harmless,
   because the display name is replaced. Found in review of T-9079 (PR #85).
 - `T-9091` Ubuntu 26.04: once the Linux CI jobs are green on it, move release.yml from ubuntu-24.04
@@ -883,6 +859,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-178 | 2026-10-05 | T-9153: the README demo GIF is recorded with vhs, a dev-only tool behind `make demo-gif` (not a Go dependency, not in the binary, outside `make check` and CI); the GIF is committed |
 | DEC-179 | 2026-10-05 | T-9158 (T-962): the first s onto the Trust column sorts descending, most trusted first; every other column still starts ascending, and S reverses. |
 | DEC-180 | 2026-10-05 | T-9158 (T-957, T-958, T-963): an undated result sorts last in both age directions; a size truncates (1023.9 MB reads "1023 MB") and drops the decimal from 1000; a fresh result set selects its top row. |
+| DEC-181 | 2026-10-05 | T-9162 (T-9029, T-913): the hostname scanner also checks a hostname-shaped userinfo and a backtick-quoted value; both add detections, nothing is relaxed. |
 
 ## Blocked
 

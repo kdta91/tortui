@@ -30,7 +30,9 @@ or, equivalently:
 git config core.hooksPath scripts
 ```
 
-Once active, `git commit` runs `scripts/pre-commit`, which blocks a commit when:
+Once active, `git commit` runs `scripts/pre-commit`, and a `git merge` that creates a merge
+commit runs `scripts/pre-merge-commit` (which calls the same checks; a fast-forward makes no
+commit and runs no hook). Either blocks the commit when:
 
 - gitleaks (`.gitleaks.toml`) finds an API-key-shaped string, a cookie, or any other
   secret-shaped value in the **staged** diff, or

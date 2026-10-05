@@ -447,4 +447,67 @@ if ! run_check "$head_case12" "$out_dir/out12.txt"; then
 	fail "a bare two-part selector-shaped value was flagged (DEC-141 gap changed)"
 fi
 
+# Case 13 (T-913): a Go raw string literal -- backtick-delimited, no scheme --
+# in a gated path is flagged, and a reserved-TLD one is still allowed.
+(
+	cd "$tmp_repo"
+	git checkout -q "$base_sha"
+	cat >internal/indexer/fixture/case_raw.go <<'EOF2'
+package fixture
+
+var raw = struct{ Host, Endpoint string }{
+	Host:     `raw-invented-source.zzz`,
+	Endpoint: `raw-fine-fixture.example`,
+}
+EOF2
+	git add -A
+	git commit -q -m "add raw string literal values"
+)
+head_case13=$(cd "$tmp_repo" && git rev-parse HEAD)
+
+if run_check "$head_case13" "$out_dir/out13.txt"; then
+	cat "$out_dir/out13.txt" >&2
+	fail "a backtick raw-string hostname was not flagged (T-913)"
+fi
+grep 'possible new indexer hostname:' "$out_dir/out13.txt" | grep -qF -e "raw-invented-source.zzz" || {
+	cat "$out_dir/out13.txt" >&2
+	fail "violation output did not name the raw-string hostname"
+}
+if grep -qF -e "raw-fine-fixture.example" "$out_dir/out13.txt"; then
+	cat "$out_dir/out13.txt" >&2
+	fail "a reserved-TLD raw-string value was flagged"
+fi
+
+# Case 14 (T-9029): a hostname-shaped userinfo is checked and named, not just
+# the host after the "@". A plain user name, and a userinfo on an allowed host
+# with an allowed name, are not flagged.
+(
+	cd "$tmp_repo"
+	git checkout -q "$base_sha"
+	cat >internal/indexer/fixture/case_userinfo.go <<'EOF2'
+package fixture
+
+var userinfo = []string{
+	"https://userinfo-invented.zzz@other-fine.example/feed",
+	"https://plainuser:secret@third-fine.example/feed",
+}
+EOF2
+	git add -A
+	git commit -q -m "add userinfo URLs"
+)
+head_case14=$(cd "$tmp_repo" && git rev-parse HEAD)
+
+if run_check "$head_case14" "$out_dir/out14.txt"; then
+	cat "$out_dir/out14.txt" >&2
+	fail "a hostname-shaped userinfo was not flagged (T-9029)"
+fi
+grep 'possible new indexer hostname:' "$out_dir/out14.txt" | grep -qF -e "userinfo-invented.zzz" || {
+	cat "$out_dir/out14.txt" >&2
+	fail "violation output did not name the userinfo hostname"
+}
+if grep 'possible new indexer hostname:' "$out_dir/out14.txt" | grep -qF -e "plainuser" -e "other-fine" -e "third-fine"; then
+	cat "$out_dir/out14.txt" >&2
+	fail "a plain user name or an allowed host was flagged"
+fi
+
 echo "check-indexer-hostnames_test: all cases passed"

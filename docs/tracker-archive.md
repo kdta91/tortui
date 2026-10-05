@@ -5883,3 +5883,31 @@ T-959, already fixed: the help is 13 lines at 80x24 (tabular layout), TestHelpOv
 screen at 80x24, 100x30 and 120x40. DEC-179 (trust first direction), DEC-180 (undated last, size text, top-row
 selection). README and the key help say "cycle sort column" with no direction, so neither changed. The component
 goldens in components stay (that package cannot import tui); the real-path goldens are new. Backlog T-9159.
+
+---
+
+### T-9162 · Scripts and CI/Make batch
+
+```
+status: done
+depends: none
+tier: M
+```
+Promotes Backlog T-911, T-913, T-914, T-9029 (scripts) and T-991, T-9027, T-9078 (CI/Make), each checked against the
+current code first. Branch protection and the required check names are untouched; the hostname scanner is only made
+stricter.
+
+**Acceptance:**
+1. [x] A merge commit runs the same secret checks as a commit, with a test that a merge bringing in a real config.toml is refused (T-911).
+2. [x] A backtick-quoted (Go raw string) value in a gated path is flagged, with a test (T-913).
+3. [x] The allowlist doc lists 0.0.0.0/8 with the other auto-allowed ranges (T-914).
+4. [x] A hostname-shaped userinfo is checked and named, with a test; the scanner relaxes nothing (T-9029).
+5. [x] A CI job runs `make cover`, as a new job: no required check is renamed (T-991).
+6. [x] The race job's C-toolchain step fails unless `go env CGO_ENABLED` is 1 (T-9027).
+7. [x] `make run` sets TORTUI_HOME to a git-ignored directory, with README and running.md updated (T-9078).
+
+**Notes:** All seven were still open and are fixed. T-911: scripts/pre-merge-commit execs pre-commit (the index already
+holds the merge result); scripts/pre-merge-commit_test.sh builds a scratch repo, and a mutation (hook that exits 0) fails it.
+A fast-forward runs no hook; CONTRIBUTING says so. T-913 and T-9029: two cases in check-indexer-hostnames_test.sh, both
+fail on the old script (DEC-181). T-991: new advisory job `make cover (coverage floors)`; `make cover` passes locally.
+T-9027: the step now exits 1 unless CGO_ENABLED is 1. T-9078: DEV_HOME defaults to $(CURDIR)/.dev-home. No new Backlog entry.

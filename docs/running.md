@@ -36,8 +36,8 @@ sources plus enabled `[[indexer]]` entries → session resume → TUI. It opens 
 screen (no query runs until the user searches or presses `L`) and, on first run, the welcome overlay. `q`, `SIGINT`, and `SIGTERM` all run the lifecycle
 shutdown (pause, save session, flush, close) and release the lock; `--ascii` or `ascii = true`
 selects the ASCII glyphs. **`make run`** is the same binary with `--config ./dev-config.toml`
-(written with defaults the first time); only the config file moves, so combine it with
-`TORTUI_HOME` to sandbox state and downloads too.
+(written with defaults the first time) and `TORTUI_HOME` set to `./.dev-home` (git-ignored; override
+with `make run DEV_HOME=...`), so state, lock and downloads are sandboxed too.
 
 **`TORTUI_HOME`** redirects config, state, and downloads under one directory. Use it for any
 manual testing so real config is never touched:

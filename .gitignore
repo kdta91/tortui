@@ -10,6 +10,7 @@ coverage.html
 
 # Local dev/config (never commit real secrets or config)
 /dev-config.toml
+/.dev-home/
 config.toml
 *.log
 
