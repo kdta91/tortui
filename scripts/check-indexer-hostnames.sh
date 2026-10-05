@@ -70,7 +70,7 @@
 #     a bare unquoted `name.Label` that really is a two-label hostname with a
 #     capitalised final label passes; reviewers still check (DEC-141).
 # T-913: a backtick-delimited value (a Go raw string) is read like a "-quoted
-# one. T-9029: a hostname-shaped userinfo ("host.org@other") is checked as well
+# one. T-9029: a hostname-shaped userinfo ("host.example@other") is checked as well
 # as the host after the "@". Both only add detections; nothing is relaxed.
 # This is a lightweight net that catches the common, careless case -- it is
 # not a substitute for human review, which is what CONTRIBUTING.md still asks
@@ -265,7 +265,7 @@ LC_ALL=C awk -v allowfile="$allow_file" -v allowlist_display="$ALLOWLIST" '
 		# Drop userinfo ("user:pass@host" -> "host"): a greedy match of
 		# everything up to the LAST "@" removes it even if the password
 		# itself contained "@".
-		# T-9029: a hostname-shaped userinfo ("host.org@other") is checked
+		# T-9029: a hostname-shaped userinfo ("host.example@other") is checked
 		# too, so the report names the host a reader would see first and a
 		# real hostname cannot hide there. Only the part before the first
 		# ":" counts, and only a dotted name with an alphabetic final

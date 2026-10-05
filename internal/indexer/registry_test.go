@@ -1210,6 +1210,32 @@ func TestSearchAllDeduplicatesWithinASingleSource(t *testing.T) {
 	}
 }
 
+// TestSearchAllSeederTieKeepsTheFirstCopy pins the tie rule documented on
+// mergeResults: only strictly more seeders replaces the survivor, so on a tie
+// the copy met first (earlier source in selection order, earlier row within a
+// source) stays.
+func TestSearchAllSeederTieKeepsTheFirstCopy(t *testing.T) {
+	const infoHash = "0011223344556677889900112233445566778899"
+	row := func(id, rid string) Result {
+		return Result{IndexerID: id, ID: rid, Title: "tie " + id + rid, InfoHash: infoHash, Magnet: testMagnet, Seeders: 7}
+	}
+	r, _ := newTestRegistry(t, Config{},
+		okSource("alpha", row("alpha", "1"), row("alpha", "2")),
+		okSource("beta", row("beta", "1")),
+	)
+
+	results, _, err := r.SearchAll(context.Background(), Query{Text: "x"})
+	if err != nil {
+		t.Fatalf("SearchAll: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %v, want one merged row", titles(results))
+	}
+	if got := results[0]; got.IndexerID != "alpha" || got.ID != "1" {
+		t.Errorf("survivor = %s/%s, want alpha/1: on a seeder tie the first copy met stays", got.IndexerID, got.ID)
+	}
+}
+
 func TestSearchAllOrdering(t *testing.T) {
 	old := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 	mid := time.Date(2024, time.June, 1, 0, 0, 0, 0, time.UTC)

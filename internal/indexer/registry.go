@@ -700,10 +700,13 @@ type merged struct {
 // unrelated rows together.
 //
 // The surviving copy is the one with the most seeders, which is the copy whose
-// magnet is most likely to actually resolve into a swarm. Every contributing
-// source id is recorded in Extra under ExtraKeySources, in the order the
-// sources were queried, so the TUI can show that a row came from several
-// places.
+// magnet is most likely to actually resolve into a swarm. When copies tie on
+// seeders the first one met survives (only strictly more seeders replaces it):
+// the earlier source in the order the sources were queried, and within one
+// source the earlier row. Every
+// contributing source id is recorded in Extra under ExtraKeySources, in the
+// order the sources were queried, so the TUI can show that a row came from
+// several places.
 //
 // Ordering is by mode: seeders descending for ModeSearch, published descending
 // for ModeLatest (AGENT.md §7 makes seeders the default sort of the results
