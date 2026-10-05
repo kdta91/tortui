@@ -70,12 +70,15 @@ func TestFormatSizeNeverExceedsTheSizeColumn(t *testing.T) {
 	}
 
 	cases := map[int64]string{
-		1023:                         "1023 B",
-		1024*1024 - 1:                "1024 KB",
-		1000 * 1024:                  "1000 KB",
-		1024*1024*1024 - 1:           "1024 MB",
-		1023*1024*1024 + 100*1024:    "1023 MB",
-		999*1024*1024 + 1024*1024/10: "999.1 MB",
+		1023:                        "1023 B",
+		1024*1024 - 1:               "1023 KB",
+		1000 * 1024:                 "1000 KB",
+		1024*1024*1024 - 1:          "1023 MB",
+		1023*1024*1024 + 100*1024:   "1023 MB",
+		999*1024*1024 + 1024*1024/2: "999.5 MB",
+		1024 * 1024:                 "1.0 MB",
+		1024 * 1024 * 1024:          "1.0 GB",
+		1024*1024*1024*1024 - 1:     "1023 GB",
 	}
 
 	for n, want := range cases {
@@ -224,5 +227,30 @@ func TestResultsTableGoldens(t *testing.T) {
 	for _, sz := range []struct{ w, h int }{{80, 24}, {120, 40}, {60, 20}} {
 		m := newResultsModel().setResults(goldenResults(now), indexer.ModeSearch, now, theme.UnicodeGlyphs)
 		compareResultsGolden(t, fmt.Sprintf("results_%dx%d.golden", sz.w, sz.h), m.table.View(sz.w, sz.h, testTheme()))
+	}
+}
+
+// TestUndatedResultsKeepTheTieBreakOrder: undated rows all sort last, and
+// among themselves in the table's total order (more seeders, then title, then
+// id), in both directions (T-957).
+func TestUndatedResultsKeepTheTieBreakOrder(t *testing.T) {
+	now := time.Now()
+	results := []indexer.Result{
+		{IndexerID: "alpha", ID: "dated", Title: "dated", Seeders: 1, Published: now.Add(-time.Hour)},
+		{IndexerID: "alpha", ID: "u-low", Title: "low", Seeders: 2},
+		{IndexerID: "alpha", ID: "u-high", Title: "high", Seeders: 40},
+		{IndexerID: "alpha", ID: "u-mid-b", Title: "Bravo", Seeders: 9},
+		{IndexerID: "alpha", ID: "u-mid-a", Title: "alpha", Seeders: 9},
+	}
+	want := []string{"alpha|dated", "alpha|u-high", "alpha|u-mid-a", "alpha|u-mid-b", "alpha|u-low"}
+
+	m := newResultsModel().setResults(results, indexer.ModeLatest, now, theme.UnicodeGlyphs)
+	if got := rowOrder(m); !equalIDs(got, want) {
+		t.Fatalf("age ascending = %v, want %v", got, want)
+	}
+
+	m = m.reverseSort()
+	if got := rowOrder(m); !equalIDs(got, want) {
+		t.Fatalf("age descending = %v, want %v", got, want)
 	}
 }

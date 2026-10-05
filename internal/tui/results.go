@@ -11,6 +11,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -418,13 +419,16 @@ func formatSize(n int64) string {
 		unit++
 	}
 
-	// One decimal keeps the text within 8 cells up to "999.9 MB". From 1000
-	// up (a value below 1024 in its unit, or one that rounds to 1000.0)
-	// the decimal would make "1023.9 MB", 9 cells in the 8-cell Size
-	// column, so it is dropped: "1023 MB" (T-958).
+	// One decimal keeps the text within 8 cells up to "999.9 MB". Rounding
+	// would turn 1023.9 MB into "1024 MB" (and 999.96 into "1000.0"), a size
+	// that reads as the next unit, so the value is truncated instead:
+	// 1023.9 MB is "1023 MB" and only a real 1024 steps up to "1.0 GB". From
+	// 1000 the decimal is dropped to stay within the column (T-958).
+	f = math.Floor(f*10) / 10
+
 	num := fmt.Sprintf("%.1f", f)
-	if len(num) > len("999.9") {
-		num = fmt.Sprintf("%.0f", f)
+	if f >= 1000 {
+		num = fmt.Sprintf("%.0f", math.Floor(f))
 	}
 
 	return num + " " + sizeUnits[unit]

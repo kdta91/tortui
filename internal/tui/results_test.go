@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"io"
 	"math/rand"
 	"slices"
 	"strconv"
@@ -490,17 +489,45 @@ func TestResultsScreenSortCyclingChangesSortIndicator(t *testing.T) {
 	waitForOutput(t, tm, "Age v")
 }
 
-// TestResultsScreenTrustFilterTogglesVisibleRows is T-062's teatest
-// coverage: "t" restricts the table to TrustTrusted and above, the header
-// names the active filter, and a second "t" restores every row — driven
-// through the real running program (keymap -> root.go's handleKey ->
-// resultsModel), not resultsModel directly.
-func TestResultsScreenTrustFilterTogglesVisibleRows(t *testing.T) {
-	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
-	searcher.outcome = stubOutcome{results: []indexer.Result{
+// finalScreen quits the program and returns the whole screen its final
+// model renders. bubbletea's renderer re-emits only the lines that changed,
+// so the output stream cannot prove a row is gone: a stale row on an
+// unchanged line is simply never written again. The final model's View is
+// the full screen state (T-961).
+func finalScreen(tb testing.TB, tm *teatest.TestModel) string {
+	tb.Helper()
+
+	if err := tm.Quit(); err != nil {
+		tb.Fatalf("Quit: %v", err)
+	}
+
+	final, ok := tm.FinalModel(tb, teatest.WithFinalTimeout(3*time.Second)).(Model)
+	if !ok {
+		tb.Fatal("final model is not a Model")
+	}
+
+	return final.View()
+}
+
+// trustFilterResults is one VIP row and one unrated row.
+func trustFilterResults() []indexer.Result {
+	return []indexer.Result{
 		{IndexerID: "alpha", ID: "1", Title: "vip-upload.iso", Seeders: 5, Trust: indexer.TrustVIP},
 		{IndexerID: "alpha", ID: "2", Title: "plain-upload.iso", Seeders: 50},
-	}}
+	}
+}
+
+// TestResultsScreenTrustFilterTogglesVisibleRows is T-062's teatest
+// coverage: "t" restricts the table to TrustTrusted and above and the
+// header names the active filter — driven through the real running program
+// (keymap -> root.go's handleKey -> resultsModel), not resultsModel
+// directly. The header suffix is what the wait uses to know "t" was handled
+// (it does not depend on the rows being filtered); the absence of the
+// excluded row is then asserted on the final model's whole screen, since
+// the output stream only carries changed lines.
+func TestResultsScreenTrustFilterTogglesVisibleRows(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	searcher.outcome = stubOutcome{results: trustFilterResults()}
 
 	tm, _ := newSearchTestModel(t, searcher, nil)
 	waitForOutput(t, tm, "Query:")
@@ -508,23 +535,39 @@ func TestResultsScreenTrustFilterTogglesVisibleRows(t *testing.T) {
 	dispatchNonEmptySearch(tm, "x")
 	waitForAllOutput(t, tm, "vip-upload", "plain-upload")
 
-	// Flush the backlog so the read below reports only what the filtered
-	// render contains, not a stale frame from before "t" was pressed.
-	if _, err := io.ReadAll(tm.Output()); err != nil {
-		t.Fatalf("io.ReadAll (pre-toggle flush): %v", err)
+	tm.Send(keyRune("t"))
+	waitForOutput(t, tm, "trust filter")
+
+	screen := finalScreen(t, tm)
+	if strings.Contains(screen, "plain-upload") {
+		t.Fatalf("filtered screen still shows plain-upload.iso, want it excluded (below Trusted):\n%s", screen)
 	}
 
-	tm.Send(keyRune("t"))
-
-	// The header suffix proves the filtered frame was rendered; every frame
-	// since the flush, that one included, must lack the excluded row.
-	after := readUntil(t, tm, "trust filter")
-	if strings.Contains(after, "plain-upload") {
-		t.Fatalf("filtered render still shows plain-upload.iso, want it excluded (below Trusted):\n%s", after)
+	if !strings.Contains(screen, "vip-upload") {
+		t.Fatalf("filtered screen lost vip-upload.iso:\n%s", screen)
 	}
+}
 
-	tm.Send(keyRune("t"))
+// TestResultsScreenTrustFilterToggleRestoresRows confirms a second "t"
+// brings the excluded row back.
+func TestResultsScreenTrustFilterToggleRestoresRows(t *testing.T) {
+	searcher := newStubSearcher(indexerfake.New("alpha", "Alpha", testCaps(true, true), nil))
+	searcher.outcome = stubOutcome{results: trustFilterResults()}
+
+	tm, _ := newSearchTestModel(t, searcher, nil)
+	waitForOutput(t, tm, "Query:")
+
+	dispatchNonEmptySearch(tm, "x")
 	waitForAllOutput(t, tm, "vip-upload", "plain-upload")
+
+	tm.Send(keyRune("t"))
+	waitForOutput(t, tm, "trust filter")
+	tm.Send(keyRune("t"))
+
+	screen := finalScreen(t, tm)
+	if !strings.Contains(screen, "plain-upload") || strings.Contains(screen, "trust filter") {
+		t.Fatalf("second t did not restore every row:\n%s", screen)
+	}
 }
 
 // TestResultsScreenTrustFilterEmptyStateNamesTheFilter confirms that when
@@ -544,51 +587,20 @@ func TestResultsScreenTrustFilterEmptyStateNamesTheFilter(t *testing.T) {
 	dispatchNonEmptySearch(tm, "x")
 	waitForOutput(t, tm, "plain-upload")
 
-	if _, err := io.ReadAll(tm.Output()); err != nil {
-		t.Fatalf("io.ReadAll (pre-toggle flush): %v", err)
-	}
-
 	tm.Send(keyRune("t"))
+	waitForOutput(t, tm, "trust filter")
 
-	after := readUntil(t, tm, "Press t to clear the filter")
-	if strings.Contains(after, "plain-upload") {
-		t.Fatalf("filtered-empty render still shows plain-upload.iso:\n%s", after)
+	screen := finalScreen(t, tm)
+	if strings.Contains(screen, "plain-upload") {
+		t.Fatalf("filtered-empty screen still shows plain-upload.iso:\n%s", screen)
 	}
 
-	if strings.Contains(after, "Sources queried") {
-		t.Fatalf("filtered-empty render used the T-061 zero-results empty state instead of naming the filter:\n%s", after)
+	if strings.Contains(screen, "Sources queried") {
+		t.Fatalf("filtered-empty screen used the T-061 zero-results empty state instead of naming the filter:\n%s", screen)
 	}
-}
 
-// readUntil accumulates everything the program writes from now on until it
-// contains want, and returns it. A caller asserting an absence reads the
-// frame that proves the update happened, then checks the returned text —
-// never a fixed sleep followed by one read that may see no frame at all
-// (T-961).
-func readUntil(tb testing.TB, tm *teatest.TestModel, want string) string {
-	tb.Helper()
-
-	var got strings.Builder
-
-	deadline := time.Now().Add(3 * time.Second)
-
-	for {
-		chunk, err := io.ReadAll(tm.Output())
-		if err != nil {
-			tb.Fatalf("io.ReadAll: %v", err)
-		}
-
-		got.Write(chunk)
-
-		if strings.Contains(got.String(), want) {
-			return got.String()
-		}
-
-		if time.Now().After(deadline) {
-			tb.Fatalf("timed out waiting for %q, got:\n%s", want, got.String())
-		}
-
-		time.Sleep(10 * time.Millisecond)
+	if !strings.Contains(screen, "Press t to clear the filter") {
+		t.Fatalf("filtered-empty screen lacks the filter message:\n%s", screen)
 	}
 }
 

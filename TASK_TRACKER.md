@@ -281,8 +281,10 @@ deferrals stay deferred to Backlog T-9004.
   dependency on that leg is not quite true. Pin and cache make and mingw the same way, or record
   that Chocolatey stays for them. Found closing T-932 (T-9156).
 - `T-9159` `TestInFlightSpinnerAndEscCancels` in `internal/tui/search_test.go` still checks the spinner is gone with
-  a 150ms sleep and one `io.ReadAll`, the weak pattern T-961 removed from the trust-filter tests. Use `readUntil`
-  (`results_test.go`) on a frame that proves the cancel rendered. Found while closing T-961 (T-9158).
+  a 150ms sleep and one `io.ReadAll`, the weak pattern T-961 removed. The output stream is not a screen: bubbletea's
+  renderer re-emits only changed lines, so a stale line is never written again. Quit and assert on the final model's
+  View (`finalScreen` in `results_test.go`), waiting first on text that proves the key was handled. Found while
+  closing T-961 (T-9158).
 - `T-9160` Showcase demo data. The `--demo` fake source ignores the query text and categories, and its fixtures
   deliberately include emoji and CJK titles and error rows for width and error testing, so the README GIF
   (docs/demo) shows only two Results rows. Its fake data is also inconsistent: Details and Add say 60.1 MB while the
@@ -880,7 +882,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-177 | 2026-10-05 | T-9143 (T-9131): a live torrent's remove with data keeps data another tracked torrent at the same directory names (an unnamed one does not block it, but one whose info then names that data waits for the in-flight delete); storage discard keeps a file or directory any open torrent of the engine declares, by path or by file identity |
 | DEC-178 | 2026-10-05 | T-9153: the README demo GIF is recorded with vhs, a dev-only tool behind `make demo-gif` (not a Go dependency, not in the binary, outside `make check` and CI); the GIF is committed |
 | DEC-179 | 2026-10-05 | T-9158 (T-962): the first s onto the Trust column sorts descending, most trusted first; every other column still starts ascending, and S reverses. |
-| DEC-180 | 2026-10-05 | T-9158 (T-957, T-958, T-963): an undated result sorts last in both age directions; a size from 1000 in its unit drops the decimal; a fresh result set selects its top row. |
+| DEC-180 | 2026-10-05 | T-9158 (T-957, T-958, T-963): an undated result sorts last in both age directions; a size truncates (1023.9 MB reads "1023 MB") and drops the decimal from 1000; a fresh result set selects its top row. |
 
 ## Blocked
 

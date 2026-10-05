@@ -5877,8 +5877,8 @@ each checked against the current code first. 80x24 layout and the column-drop or
 7. [x] A fresh result set selects the top row after the default sort (T-963).
 8. [x] Results goldens at 80x24, 120x40 and 60x20 are rendered through setResults, resultRow and formatSwarm (T-9023).
 
-**Notes:** Code: T-957 (Age SortMissingLast), T-958 (formatSize drops the decimal from 1000), T-962 (cycleSort), T-963
-(new Table.SelectFirst), T-960, T-961, T-9023 (tests; goldens in internal/tui/testdata). Closed with evidence:
+**Notes:** Code: T-957 (Age SortMissingLast), T-958 (formatSize truncates, no decimal from 1000), T-962 (cycleSort), T-963
+(new Table.SelectFirst), T-960, T-961 (the absence checks assert on the final model's whole screen: the renderer re-emits only changed lines, so the output stream cannot prove a row is gone), T-9023 (tests; goldens in internal/tui/testdata). Closed with evidence:
 T-959, already fixed: the help is 13 lines at 80x24 (tabular layout), TestHelpOverlayFitsAndKeepsHeading covers every
 screen at 80x24, 100x30 and 120x40. DEC-179 (trust first direction), DEC-180 (undated last, size text, top-row
 selection). README and the key help say "cycle sort column" with no direction, so neither changed. The component

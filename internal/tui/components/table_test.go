@@ -515,3 +515,32 @@ func TestTableAccentColumnUsesAccentStyleNotForeground(t *testing.T) {
 
 	t.Fatal("could not find the unselected \"TR\" row to compare")
 }
+
+// TestSelectFirstSelectsTheTopRowInTheCurrentOrder: SetRows and SortBy keep a
+// selection by identity, SelectFirst does not.
+func TestSelectFirstSelectsTheTopRowInTheCurrentOrder(t *testing.T) {
+	tbl := NewTable(resultColumns()).SetRows(goldenRows())
+	tbl = tbl.SortBy(1)
+	tbl.selectedID = tbl.Rows()[0].ID
+	tbl = tbl.MoveDown().MoveDown()
+
+	if tbl.SelectedIndex() != 2 {
+		t.Fatalf("setup: SelectedIndex = %d, want 2", tbl.SelectedIndex())
+	}
+
+	tbl = tbl.SelectFirst()
+	if tbl.SelectedIndex() != 0 || tbl.SelectedID() != tbl.Rows()[0].ID {
+		t.Fatalf("SelectFirst: index %d id %q, want the top row %q", tbl.SelectedIndex(), tbl.SelectedID(), tbl.Rows()[0].ID)
+	}
+
+	// After a re-sort the top is a different row; SelectFirst follows it.
+	tbl = tbl.SortBy(1).SelectFirst()
+	if tbl.SelectedID() != tbl.Rows()[0].ID {
+		t.Fatalf("after re-sort: selected %q, want %q", tbl.SelectedID(), tbl.Rows()[0].ID)
+	}
+
+	empty := NewTable(resultColumns()).SelectFirst()
+	if empty.SelectedID() != "" || empty.SelectedIndex() != -1 {
+		t.Fatalf("empty table: id %q index %d, want none", empty.SelectedID(), empty.SelectedIndex())
+	}
+}
