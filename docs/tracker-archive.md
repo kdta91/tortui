@@ -5729,7 +5729,7 @@ concept, no filtering or hiding by the label; `indexer.Category` is unchanged.
    empty; the Results table and 80x24 layout are unchanged.
 5. [x] Tests: named, unnamed and nested ids; hostile labels; Details with and without it, both glyph sets.
 6. [x] PR #103 review notes: cache-hit test for the local filter; DEC-172/173 rows have five cells; the stale
-   "five fixed columns" comment; one Backlog entry for the cosmetic leftovers (T-9141a).
+   "five fixed columns" comment; one Backlog entry for the cosmetic leftovers (T-9142).
 
 **Notes:** DEC-174. `indexer.CleanSourceCategory` is the single sanitiser (cap 40 runes), used by the adapter and
 again by Details; GlyphSet gained a `Sep` field (middle dot, ASCII hyphen). XML 1.0 rejects control characters, so

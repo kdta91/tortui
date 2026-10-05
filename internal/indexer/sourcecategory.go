@@ -28,7 +28,7 @@ func CleanSourceCategory(s string) string {
 
 	for _, r := range s {
 		switch {
-		case unicode.IsSpace(r) || r == ' ' || r == ' ':
+		case unicode.IsSpace(r):
 			space = true
 
 			continue

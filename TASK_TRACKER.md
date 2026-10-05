@@ -801,7 +801,7 @@ deferrals stay deferred to Backlog T-9004.
   pass without testing anything on a slow runner when the peer connection is not up yet; the `Seeding()`
   assertions carry the real load. Make them wait for a connected peer first. Non-blocking note (d) from the review
   of T-9135 (PR #102).
-- `T-9141a` Cosmetic leftovers from the PR #103 review: the README line 29 wrap (the category-glyph sentence is a
+- `T-9142` Cosmetic leftovers from the PR #103 review: the README line 29 wrap (the category-glyph sentence is a
   long unwrapped line); the theme import grouping in four test files; and the `T-938` text above, now partly stale
   because T-9140 filters scraped results locally (the remaining gap is only pushing the filter to the source).
 

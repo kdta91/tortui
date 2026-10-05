@@ -1450,3 +1450,25 @@ func TestDetailsCleansAndTruncatesAHostileSourceCategory(t *testing.T) {
 		t.Errorf("a 24-column details screen still shows the label; got:\n%s", narrow)
 	}
 }
+
+// TestDetailsCategoryTextLimitsItsOwnWidth tests the function directly, so the
+// whole-screen line clip cannot mask a missing Truncate.
+func TestDetailsCategoryTextLimitsItsOwnWidth(t *testing.T) {
+	th := theme.New(theme.DefaultThemeName, theme.Capability{Color: theme.ColorNone, Unicode: true})
+	r := indexer.Result{Category: indexer.CategorySoftware, SourceCategory: strings.Repeat("W", 30)}
+
+	for _, width := range []int{30, 40, 80} {
+		got := detailsCategoryText(th, r, width)
+		if w := theme.Width("Category: " + got); w > width {
+			t.Errorf("width %d: Category line is %d columns: %q", width, w, got)
+		}
+	}
+
+	if got := detailsCategoryText(th, r, 30); !strings.HasSuffix(got, "...") {
+		t.Errorf("width 30: want a truncated label, got %q", got)
+	}
+
+	if got := detailsCategoryText(th, r, 80); !strings.HasSuffix(got, strings.Repeat("W", 30)) {
+		t.Errorf("width 80: want the whole label, got %q", got)
+	}
+}
