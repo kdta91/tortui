@@ -5705,3 +5705,33 @@ pins the order). DEC-172: Other is kept under a local filter. DEC-173: the glyph
 documented column is lost to keep it. NO_COLOR does not change the glyph set (it never has; only `--ascii` and
 a non-Unicode terminal do). Real-terminal width of the chosen symbols (some are East Asian ambiguous width) is an
 owner check under T-9065. T-938 stays open for pushing the filter down to scraped sources.
+
+### T-9141 · Source's own category name in Details
+
+```
+status: done
+depends: T-9140
+tier: M
+```
+Owner decision 2026-10-05: apps should show their platform. A pass-through string, not a taxonomy; the owner
+approved one new optional string on the Result struct (§5). No new enum, no mapping table, no adult-content
+concept, no filtering or hiding by the label; `indexer.Category` is unchanged.
+
+**Acceptance:**
+1. [x] The Result struct has an optional `SourceCategory` string ("" means none); AGENT.md §5 lists it and cites
+   DEC-174.
+2. [x] The Torznab adapter fills it from the caps document's own category and subcategory names for the item's most
+   specific category id, with no extra request; an id the caps do not name leaves it empty. Scraper, Prowlarr and
+   fake sources leave it empty.
+3. [x] The label is sanitised like other remote display strings (control, format, invisible runes removed, white
+   space folded, length capped) and cut on display with the width-aware theme helpers.
+4. [x] Details shows it after the category (`⌘ software · PC/Mac`; ASCII `S software - PC/Mac`) and omits it when
+   empty; the Results table and 80x24 layout are unchanged.
+5. [x] Tests: named, unnamed and nested ids; hostile labels; Details with and without it, both glyph sets.
+6. [x] PR #103 review notes: cache-hit test for the local filter; DEC-172/173 rows have five cells; the stale
+   "five fixed columns" comment; one Backlog entry for the cosmetic leftovers (T-9141a).
+
+**Notes:** DEC-174. `indexer.CleanSourceCategory` is the single sanitiser (cap 40 runes), used by the adapter and
+again by Details; GlyphSet gained a `Sep` field (middle dot, ASCII hyphen). XML 1.0 rejects control characters, so
+the Torznab test uses bidi, zero-width, BOM and tab; control and ESC runes are tested on the cleaner directly.
+Nested ids: a named subcategory beats a named parent; an unnamed subcategory falls back to the parent.

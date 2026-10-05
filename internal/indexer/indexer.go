@@ -206,6 +206,14 @@ type Result struct {
 	// Unrecognised source categories map to the zero value, never dropped.
 	Category Category
 
+	// SourceCategory is the source's own name for this item's category, for
+	// example a Torznab indexer's caps category name, shown as it is beside
+	// Category on the details screen. It is remote text: an adapter sets it
+	// through CleanSourceCategory, and a display layer cleans it again.
+	// tortui never interprets it: no mapping, no filter, no logic branches
+	// on it (DEC-174). Empty when the source gives none.
+	SourceCategory string
+
 	// Published is when the source says the item was added. It is the zero
 	// time when the source publishes no date.
 	Published time.Time

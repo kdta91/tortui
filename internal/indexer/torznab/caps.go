@@ -56,11 +56,62 @@ type capsCategories struct {
 }
 
 // capsCategory is one top-level <category>. Its <subcat> children are not
-// read: a Torznab query for a top-level id covers its subcategories, and the
-// sub-ids only refine a source's own subject-matter labelling, which tortui
-// has no use for (see internal/indexer's category taxonomy).
+// used to build a filter: a Torznab query for a top-level id covers its
+// subcategories. Their names are read only to be shown as a result's
+// SourceCategory (DEC-174).
 type capsCategory struct {
-	ID string `xml:"id,attr"`
+	ID     string       `xml:"id,attr"`
+	Name   string       `xml:"name,attr"`
+	Subcat []capsSubcat `xml:"subcat"`
+}
+
+// capsSubcat is one <subcat> of a category.
+type capsSubcat struct {
+	ID   string `xml:"id,attr"`
+	Name string `xml:"name,attr"`
+}
+
+// sourceCategory is the source's own name for one category id.
+type sourceCategory struct {
+	name string
+	// sub is true for a <subcat>, the most specific kind of id.
+	sub bool
+}
+
+// categoryNames maps every id the caps document names, top-level or
+// subcategory, onto its cleaned name (indexer.CleanSourceCategory). An id
+// with no usable name is absent, and a name the document gives twice keeps
+// the first. It is what SourceCategory is read from; it adds no request.
+func categoryNames(doc capsDocument) map[int]sourceCategory {
+	names := make(map[int]sourceCategory)
+
+	add := func(rawID, rawName string, sub bool) {
+		id, err := strconv.Atoi(strings.TrimSpace(rawID))
+		if err != nil {
+			return
+		}
+
+		name := indexer.CleanSourceCategory(rawName)
+		if _, seen := names[id]; name == "" || seen {
+			return
+		}
+
+		names[id] = sourceCategory{name: name, sub: sub}
+	}
+
+	for _, c := range doc.Categories.Categories {
+		add(c.ID, c.Name, false)
+
+		for _, sc := range c.Subcat {
+			add(sc.ID, sc.Name, true)
+		}
+	}
+
+	if len(names) == 0 {
+		return nil
+	}
+
+	return names
 }
 
 // available reports whether an availability attribute says yes. Anything
@@ -97,6 +148,9 @@ type probeOutcome struct {
 	// filter is translated through, so the ids sent to a server are only
 	// ever ids that server itself published.
 	categoryIDs map[indexer.Category][]int
+	// categoryNames maps a source category id onto the source's own name
+	// for it, for Result.SourceCategory.
+	categoryNames map[int]sourceCategory
 }
 
 // probe asks the source what it can do and returns the outcome.
@@ -135,6 +189,7 @@ func (a *Adapter) probe(ctx context.Context) (probeOutcome, error) {
 
 	out.caps.Search = doc.Searching.Search.available()
 	out.categoryIDs = categoryIDs(doc)
+	out.categoryNames = categoryNames(doc)
 	out.caps.Categories = len(out.categoryIDs) > 0
 	out.caps.Pagination = paginated(doc.Limits)
 

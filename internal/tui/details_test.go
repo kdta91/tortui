@@ -1361,3 +1361,92 @@ func TestALinklessResultIsListedAndItsResolveErrorReachesTheStatusBar(t *testing
 		t.Fatalf("engine.List() has %d entries, want 0 — Add must not have been called", len(eng.List()))
 	}
 }
+
+// --- source category label (T-9141, DEC-174) ------------------------------
+
+func detailsCategoryText80(t *testing.T, cap theme.Capability, width int, r indexer.Result) string {
+	t.Helper()
+
+	m := New(newTestEngine(t), theme.New(theme.DefaultThemeName, cap))
+	m.width = width
+	m.details = m.details.withResult(r)
+
+	return m.renderDetailsScreen()
+}
+
+func TestDetailsShowsSourceCategoryBesideTheBucket(t *testing.T) {
+	r := indexer.Result{IndexerID: "a", ID: "1", Title: "x", Category: indexer.CategorySoftware, SourceCategory: "PC/Mac"}
+
+	for _, tc := range []struct {
+		name string
+		cap  theme.Capability
+		want string
+	}{
+		{"unicode", theme.Capability{Color: theme.ColorNone, Unicode: true}, "Category: ⌘ software · PC/Mac"},
+		{"ascii", theme.Capability{Color: theme.ColorNone, Unicode: false}, "Category: S software - PC/Mac"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := detailsCategoryText80(t, tc.cap, 80, r); !strings.Contains(got, tc.want) {
+				t.Errorf("details missing %q; got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestDetailsOmitsAnEmptySourceCategory(t *testing.T) {
+	uni := theme.Capability{Color: theme.ColorNone, Unicode: true}
+
+	for _, label := range []string{"", "  \u202e\u200b\t "} {
+		r := indexer.Result{IndexerID: "a", ID: "1", Title: "x", Category: indexer.CategorySoftware, SourceCategory: label}
+
+		got := detailsCategoryText80(t, uni, 80, r)
+		if !strings.Contains(got, "Category: ⌘ software\n") || strings.Contains(got, "software ·") {
+			t.Errorf("label %q: want the bucket alone; got:\n%s", label, got)
+		}
+	}
+}
+
+func TestDetailsCleansAndTruncatesAHostileSourceCategory(t *testing.T) {
+	uni := theme.Capability{Color: theme.ColorNone, Unicode: true}
+
+	r := indexer.Result{
+		IndexerID: "a", ID: "1", Title: "x", Category: indexer.CategorySoftware,
+		SourceCategory: "\x1b[31mA\u202eB\u200bC\x07" + strings.Repeat("W", 300),
+	}
+
+	got := detailsCategoryText80(t, uni, 80, r)
+
+	for _, bad := range []string{"\x1b[31m", "\u202e", "\u200b", "\x07"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("details kept %q; got:\n%s", bad, got)
+		}
+	}
+
+	for _, line := range strings.Split(got, "\n") {
+		if w := theme.Width(line); w > 80 {
+			t.Errorf("line is %d columns wide, want at most 80: %q", w, line)
+		}
+	}
+
+	if !strings.Contains(got, "[31mABC") {
+		t.Errorf("details lost the readable part of the label; got:\n%s", got)
+	}
+
+	// The cleaner caps the label; the display cuts it again to the room left.
+	mid := detailsCategoryText80(t, uni, 40, r)
+	if !strings.Contains(mid, "...") {
+		t.Errorf("a label wider than the room was not truncated with an ellipsis; got:\n%s", mid)
+	}
+
+	for _, line := range strings.Split(mid, "\n") {
+		if w := theme.Width(line); w > 40 {
+			t.Errorf("40-column line is %d wide: %q", w, line)
+		}
+	}
+
+	// With no room beside the bucket word the label is left out whole.
+	narrow := detailsCategoryText80(t, uni, 24, r)
+	if strings.Contains(narrow, "software ·") {
+		t.Errorf("a 24-column details screen still shows the label; got:\n%s", narrow)
+	}
+}

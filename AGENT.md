@@ -201,6 +201,7 @@ type Result struct {
     Seeders    int
     Leechers   int
     Category   Category
+    SourceCategory string        // the source's own category name, display only; "" = none (DEC-174)
     Published  time.Time
     Uploader   string
     Trust      Trust

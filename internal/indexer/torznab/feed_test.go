@@ -22,7 +22,7 @@ func parseFixtureFeed(t *testing.T, name string) []indexer.Result {
 
 	results := make([]indexer.Result, 0, len(doc.Channel.Items))
 	for _, it := range doc.Channel.Items {
-		results = append(results, resultFrom(testID, it))
+		results = append(results, resultFrom(testID, it, nil))
 	}
 
 	return results
@@ -324,7 +324,7 @@ func TestAttrElementParsesUnderAnyNamespacePrefix(t *testing.T) {
 				t.Fatalf("parsed %d items, want 1", len(doc.Channel.Items))
 			}
 
-			if got := resultFrom(testID, doc.Channel.Items[0]).Seeders; got != 5 {
+			if got := resultFrom(testID, doc.Channel.Items[0], nil).Seeders; got != 5 {
 				t.Fatalf("Seeders = %d, want 5: the attr element was not matched", got)
 			}
 		})

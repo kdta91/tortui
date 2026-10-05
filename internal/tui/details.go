@@ -564,6 +564,30 @@ func writeWrappedField(b *strings.Builder, th theme.Theme, label, value string, 
 	}
 }
 
+// detailsCategoryText is the Category value: the glyph and the bucket's word
+// and, when the source named the category itself, that name after a
+// separator (DEC-174). The name is remote text, so it is cleaned again here
+// and cut with the width-aware Truncate to what is left of width after the
+// label and the glyph and word; with no room at all it is left out rather
+// than shown as dots.
+func detailsCategoryText(th theme.Theme, r indexer.Result, width int) string {
+	text := categoryGlyph(th.Glyphs, r.Category) + " " + r.Category.String()
+
+	label := indexer.CleanSourceCategory(r.SourceCategory)
+	if label == "" {
+		return text
+	}
+
+	sep := " " + th.Glyphs.Sep + " "
+
+	room := width - theme.Width("Category: "+text+sep)
+	if room < 4 {
+		return text
+	}
+
+	return text + sep + theme.Truncate(label, room)
+}
+
 // renderDetailsScreen draws ScreenDetails' real body: every field T-063's
 // acceptance text names (full title, size, category, uploader, trust,
 // published date, source URL, infohash) plus the file list or its "not
@@ -587,7 +611,7 @@ func (m Model) renderDetailsScreen() string {
 	b.WriteString("\n\n")
 	b.WriteString(detailsFieldLine(th, "Size", formatSize(r.SizeBytes)))
 	b.WriteString("\n")
-	b.WriteString(detailsFieldLine(th, "Category", categoryGlyph(th.Glyphs, r.Category)+" "+r.Category.String()))
+	b.WriteString(detailsFieldLine(th, "Category", detailsCategoryText(th, r, m.width)))
 	b.WriteString("\n")
 	b.WriteString(detailsFieldLine(th, "Trust", detailsTrustText(r.Trust)))
 	b.WriteString("\n")

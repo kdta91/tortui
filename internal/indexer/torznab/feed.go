@@ -211,7 +211,7 @@ const (
 // returns an error and nothing here drops an item, because a result the user
 // asked for is worth showing even when half its metadata is unusable
 // (AGENT.md §6.3, §13).
-func resultFrom(indexerID string, it feedItem) indexer.Result {
+func resultFrom(indexerID string, it feedItem, names map[int]sourceCategory) indexer.Result {
 	idx := it.index()
 
 	magnet := magnetFrom(idx, it)
@@ -219,21 +219,22 @@ func resultFrom(indexerID string, it feedItem) indexer.Result {
 	seeders, leechers := swarmFrom(idx)
 
 	res := indexer.Result{
-		IndexerID:  indexerID,
-		ID:         resultID(hash, it),
-		Title:      strings.TrimSpace(it.Title),
-		InfoHash:   hash,
-		Magnet:     magnet,
-		TorrentURL: torrentAddress(it),
-		SizeBytes:  sizeFrom(idx, it),
-		Seeders:    seeders,
-		Leechers:   leechers,
-		Category:   categoryFrom(idx, it),
-		Published:  publishedFrom(idx, it),
-		Uploader:   uploaderFrom(idx),
-		Trust:      trustFrom(idx),
-		SourceURL:  sourceAddress(it),
-		Extra:      markUnknownSwarm(extraFrom(idx, it), idx),
+		IndexerID:      indexerID,
+		ID:             resultID(hash, it),
+		Title:          strings.TrimSpace(it.Title),
+		InfoHash:       hash,
+		Magnet:         magnet,
+		TorrentURL:     torrentAddress(it),
+		SizeBytes:      sizeFrom(idx, it),
+		Seeders:        seeders,
+		Leechers:       leechers,
+		Category:       categoryFrom(idx, it),
+		SourceCategory: sourceCategoryFrom(idx, it, names),
+		Published:      publishedFrom(idx, it),
+		Uploader:       uploaderFrom(idx),
+		Trust:          trustFrom(idx),
+		SourceURL:      sourceAddress(it),
+		Extra:          markUnknownSwarm(extraFrom(idx, it), idx),
 	}
 
 	return res
@@ -456,6 +457,41 @@ func categoryFrom(idx attrIndex, it feedItem) indexer.Category {
 	}
 
 	return indexer.CategoryOther
+}
+
+// sourceCategoryFrom is the source's own name for the item's most specific
+// category id, from the caps document's names (DEC-174). Among the numeric ids
+// the item lists, in the order it lists them, a named subcategory beats a
+// named top-level category, and the first of a kind wins. An id the caps do
+// not name is skipped, so an item the caps cannot explain has no label; with
+// no caps names at all the answer is always "".
+func sourceCategoryFrom(idx attrIndex, it feedItem, names map[int]sourceCategory) string {
+	if len(names) == 0 {
+		return ""
+	}
+
+	raws := append([]string(nil), idx[attrCategory]...)
+	raws = append(raws, it.Categories...)
+
+	best, found := sourceCategory{}, false
+
+	for _, raw := range raws {
+		id, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+
+		c, ok := names[id]
+		if !ok {
+			continue
+		}
+
+		if !found || (c.sub && !best.sub) {
+			best, found = c, true
+		}
+	}
+
+	return best.name
 }
 
 // publishedFrom parses the item's date, trying the layouts real servers

@@ -450,7 +450,7 @@ func TestResultsScreenRendersColumnsAndHeader(t *testing.T) {
 		`Search: "debian"`,
 		"Title", "Size", "S/L", "Trust", "Age", "Source",
 		// The Title column is a fixed 30 columns wide at this terminal
-		// width (80 - the five fixed columns - separators), so the full
+		// width (80 - the six fixed columns - separators), so the full
 		// 32-character filename is exactly what theme.Truncate cuts to —
 		// checking the un-truncated prefix rather than the whole title.
 		"debian-13.0.0-amd64-net", "⌘", "700.0 MB", "42/3", "VIP", "3h", "alpha",

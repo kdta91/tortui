@@ -1469,3 +1469,40 @@ func TestSearchAllFiltersLocallyOnlyForSourcesThatCannotPushItDown(t *testing.T)
 		t.Errorf("unfiltered results = %d, want 6", len(all))
 	}
 }
+
+// TestSearchAllCacheHitStillReturnsLocallyFilteredResults pins that the local
+// category filter runs before the answer is cached: the second, cached answer
+// for the same filtered query must still lack the off-category result.
+func TestSearchAllCacheHitStillReturnsLocallyFilteredResults(t *testing.T) {
+	plain := &stubIndexer{id: "plain", caps: Caps{Search: true}, fn: func(context.Context, Query) ([]Result, error) {
+		return []Result{
+			{IndexerID: "plain", ID: "v", Title: "plain video", Category: CategoryVideo, Seeders: 3},
+			{IndexerID: "plain", ID: "a", Title: "plain audio", Category: CategoryAudio, Seeders: 2},
+		}, nil
+	}}
+
+	reg, clk := newTestRegistry(t, Config{CacheTTL: time.Minute, MinRefreshInterval: 10 * time.Second}, plain)
+	q := Query{Text: "x", Categories: []Category{CategoryVideo}}
+
+	first, _, err := reg.SearchAll(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clk.advance(time.Second)
+
+	second, _, err := reg.SearchAll(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if plain.calls.Load() != 1 {
+		t.Fatalf("source queried %d times, want 1 (the second answer must come from the cache)", plain.calls.Load())
+	}
+
+	for name, got := range map[string][]Result{"first": first, "cached": second} {
+		if joined(titles(got)) != "plain video" {
+			t.Errorf("%s answer = %v, want only the video result", name, titles(got))
+		}
+	}
+}
