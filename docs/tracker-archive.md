@@ -5851,7 +5851,8 @@ Owner request 2026-10-05, before promoting the repo.
    wrapped at about 98 columns and removed from Backlog T-9142.
 5. `make check` and `make licenses` are green; `NOTICE` and `go.mod` show no diff.
 
-**Notes:** DEC-178. The tape uses `Set Shell "bash"` (vhs has no plain `sh`). The demo fixture data
-was already clean (invented titles, example.org hosts); frames checked at 1 fps, 18 s, about 0.5 MB.
-Demo-mode status lines print the sandbox temp path in the add dialog and Downloads rows; that is the
-real demo output and is left as is.
+**Notes:** DEC-178. The tape uses `Set Shell "bash"` (vhs has no plain `sh`). The fixtures are clean
+(invented titles, example.org hosts) and unchanged. For the take, the tape selects only the mirror source
+(the other fixture rows have emoji and CJK titles that render off-width) and removes the demo's scripted
+failed and stalled Downloads rows off camera with Remove, keep data; `TMPDIR` is set to a short path so the
+sandbox path is short. Frames checked at 1 fps: 16.6 s, about 0.4 MB.
