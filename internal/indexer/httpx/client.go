@@ -316,6 +316,33 @@ type Config struct {
 	MagnetRedirects bool
 }
 
+// LogValue implements slog.LogValuer so a Config logged whole renders its
+// settings rather than an encoder error for the func-typed Jitter field
+// (T-929). Credentials render through their own LogValue, so no credential
+// is ever emitted; the injected Transport, Clock, Jitter and Logger are
+// reported only as set or not.
+func (c Config) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("user_agent", c.UserAgent),
+		slog.Duration("connect_timeout", c.ConnectTimeout),
+		slog.Duration("read_timeout", c.ReadTimeout),
+		slog.Duration("request_timeout", c.RequestTimeout),
+		slog.Duration("min_host_interval", c.MinHostInterval),
+		slog.Int("max_attempts", c.MaxAttempts),
+		slog.Duration("base_backoff", c.BaseBackoff),
+		slog.Duration("max_backoff", c.MaxBackoff),
+		slog.Duration("max_retry_after", c.MaxRetryAfter),
+		slog.Int64("max_body_bytes", c.MaxBodyBytes),
+		slog.Any("credentials", c.Credentials.LogValue()),
+		slog.Bool("transport", c.Transport != nil),
+		slog.Bool("clock", c.Clock != nil),
+		slog.Bool("jitter", c.Jitter != nil),
+		slog.Bool("logger", c.Logger != nil),
+		slog.Bool("follow_subdomain_redirects", c.FollowSubdomainRedirects),
+		slog.Bool("magnet_redirects", c.MagnetRedirects),
+	)
+}
+
 // Client is a shared HTTP client for indexer adapters. It is safe for
 // concurrent use.
 type Client struct {
@@ -479,7 +506,9 @@ func newDialer(connect time.Duration) *net.Dialer {
 // http -> https is the opposite: the destination is the host the user
 // configured and the hop only adds TLS, so it is followed rather than
 // broken (an apex http URL upgraded by the server is an ordinary,
-// widespread redirect). See DEC-062.
+// widespread redirect). See DEC-062. Once a hop is https, a later hop back
+// to http is refused too, measured against the hop before it and not only
+// the first request (DEC-182).
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	return checkRedirectHosts(req, via, false)
 }
@@ -599,7 +628,11 @@ func checkRedirectHosts(req *http.Request, via []*http.Request, subdomains bool)
 		}
 	}
 
-	if isSchemeDowngrade(origin.Scheme, req.URL.Scheme) {
+	// The previous hop is checked as well as the original request (T-930,
+	// DEC-182): a chain the server upgraded to https must not drop back to
+	// http, though the user configured http to begin with.
+	prev := via[len(via)-1].URL
+	if isSchemeDowngrade(origin.Scheme, req.URL.Scheme) || isSchemeDowngrade(prev.Scheme, req.URL.Scheme) {
 		return fmt.Errorf("%w (at %s)", ErrInsecureRedirect, hostOf(req.URL))
 	}
 
