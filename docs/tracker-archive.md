@@ -6027,4 +6027,4 @@ deadline on each call and an esc cancel with a generation guard (DEC-187). T-971
 the import wizard, which had the same defect; with downloads active ctrl+c opens the quit prompt over the modal. T-9016:
 a status-bar hint. T-9017: `liveIssues` checks a copy with the Name filled while an import waits, and skips the id
 check then. T-964 now asserts the final model's screen and body. New Backlog: T-9172, T-9173 (no on-screen hint for the
-esc cancel).
+esc cancel), T-9174 (cancel priority; a linked startAdd does not cancel an earlier fetch).

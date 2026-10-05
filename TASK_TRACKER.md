@@ -590,6 +590,10 @@ deferrals stay deferred to Backlog T-9004.
 - `T-9173` The esc cancel of a details-page fetch (T-9043, DEC-187) has no on-screen hint: a status message pushed at
   the start would queue the real error behind it for the message's whole timeout. Needs a persistent hint slot in the
   status bar (like `CacheHint`) or a line in the help overlay. Found in T-9171.
+- `T-9174` Two follow-ups on the details-fetch cancel (T-9171, PR #113 review). (1) esc cancels a details fetch before
+  any of its other meanings (a running search, a running connection test), so those need a second press; consider
+  scoping the cancel to the screen the fetch started from. (2) `startAdd` of a result that already has a link does not
+  cancel an earlier in-flight details fetch, whose result can later continue into the add flow. This predates the PR.
 
 ---
 

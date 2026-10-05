@@ -1310,6 +1310,13 @@ func TestDetailsScreenEndToEndSelectAndAdd(t *testing.T) {
 	}
 
 	view := final.View()
+	// The Downloads body is either its empty state (the update may not have
+	// arrived yet) or a row, which alone prints a peers count; the status
+	// bar's "added" line is on every screen and proves nothing.
+	if !strings.Contains(view, "No downloads yet") && !strings.Contains(view, " peers") {
+		t.Fatalf("view is not the downloads body:\n%s", view)
+	}
+
 	if strings.Contains(view, "not yet resolved") || strings.Contains(view, "Query:") {
 		t.Fatalf("view still shows Details or Search content:\n%s", view)
 	}
