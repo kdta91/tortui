@@ -960,12 +960,13 @@ func (c *Client) Do(ctx context.Context, req Request) (*Response, error) {
 	}
 
 	host := hostOf(target)
+	bucket := rateLimitKey(target)
 
 	ctx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 
 	for attempt := 1; ; attempt++ {
-		if err := c.limiter.wait(ctx, host); err != nil {
+		if err := c.limiter.wait(ctx, bucket); err != nil {
 			return nil, c.redactor.safef(err, "httpx: %s %s: %v waiting for this host's rate-limit slot", method, host, err)
 		}
 

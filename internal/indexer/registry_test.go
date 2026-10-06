@@ -225,7 +225,7 @@ func TestRegistrySetEnabled(t *testing.T) {
 
 func TestRegistryUnregister(t *testing.T) {
 	alpha := okSource("alpha", hit("alpha", "1", "alpha one", 6))
-	r, _ := newTestRegistry(t, Config{CacheTTL: time.Hour}, alpha, okSource("beta"))
+	r, clock := newTestRegistry(t, Config{CacheTTL: time.Hour}, alpha, okSource("beta"))
 
 	q := Query{Text: "cached"}
 	if _, _, err := r.SearchAll(context.Background(), q, "alpha"); err != nil {
@@ -246,7 +246,9 @@ func TestRegistryUnregister(t *testing.T) {
 	}
 
 	// A source re-registered under the same id starts clean: the old
-	// adapter's cached answer must not be served for the new one.
+	// adapter's cached answer must not be served for the new one. It
+	// does inherit the refresh floor (T-995), so step past that first.
+	clock.advance(DefaultMinRefreshInterval)
 	replacement := okSource("alpha", hit("alpha", "2", "alpha two", 3))
 	if err := r.Register(replacement); err != nil {
 		t.Fatalf("Register(replacement): %v", err)
@@ -271,7 +273,7 @@ func TestRegistryDropsAnAnswerFromASourceUnregisteredMidFetch(t *testing.T) {
 		<-release
 		return []Result{hit("alpha", "1", "stale", 9)}, nil
 	}}
-	r, _ := newTestRegistry(t, Config{CacheTTL: time.Hour}, old)
+	r, clock := newTestRegistry(t, Config{CacheTTL: time.Hour}, old)
 	q := Query{Text: "in flight"}
 
 	done := make(chan struct{})
@@ -293,6 +295,10 @@ func TestRegistryDropsAnAnswerFromASourceUnregisteredMidFetch(t *testing.T) {
 	close(release)
 	<-done
 
+	// The old adapter's request reached the server, so the replacement
+	// inherits its refresh floor (T-995); step past it, staying well
+	// inside the cache TTL.
+	clock.advance(DefaultMinRefreshInterval)
 	got, _, err := r.SearchAll(context.Background(), q)
 	if err != nil {
 		t.Fatalf("SearchAll: %v", err)
@@ -403,6 +409,82 @@ func TestSearchAllNeverSpendsAReplacementsRefreshSlot(t *testing.T) {
 	}
 	if joined(titles(got)) != "fresh" || replacement.calls.Load() != 1 {
 		t.Errorf("results = %v (replacement asked %d times), want the replacement's answer", titles(got), replacement.calls.Load())
+	}
+}
+
+// A source re-registered under the same id (a Settings edit, a disable and
+// re-enable, a definition reload) keeps the refresh floor its predecessor
+// last claimed (T-995): it is the same server, and §6.13's floor is about the
+// server, not the adapter value.
+func TestReRegisterKeepsTheRefreshFloor(t *testing.T) {
+	alpha := okSource("alpha", hit("alpha", "1", "alpha one", 6))
+	r, clock := newTestRegistry(t, Config{MinRefreshInterval: 30 * time.Second}, alpha)
+
+	if _, _, err := r.SearchAll(context.Background(), Query{Text: "first"}); err != nil {
+		t.Fatalf("first SearchAll: %v", err)
+	}
+	if err := r.Unregister("alpha"); err != nil {
+		t.Fatalf("Unregister: %v", err)
+	}
+	clock.advance(5 * time.Second)
+	replacement := okSource("alpha", hit("alpha", "2", "alpha two", 3))
+	if err := r.Register(replacement); err != nil {
+		t.Fatalf("Register(replacement): %v", err)
+	}
+
+	_, errs, err := r.SearchAll(context.Background(), Query{Text: "second"})
+	if err != nil {
+		t.Fatalf("SearchAll inside the floor = %v, want nil (a skip)", err)
+	}
+	if len(errs) != 1 || !errs[0].Skipped || !errors.Is(errs[0], ErrThrottled) {
+		t.Fatalf("source errors = %v, want one ErrThrottled skip: the re-registered source restarted its floor", errs)
+	}
+	if n := replacement.calls.Load(); n != 0 {
+		t.Fatalf("replacement asked %d times inside its predecessor's floor, want 0", n)
+	}
+
+	clock.advance(30 * time.Second)
+	got, errs, err := r.SearchAll(context.Background(), Query{Text: "second"})
+	if err != nil || len(errs) != 0 || joined(titles(got)) != "alpha two" {
+		t.Fatalf("SearchAll after the floor = %v, %v, %v; want the replacement's answer", titles(got), errs, err)
+	}
+}
+
+// The carried floor lapses like any other: a source re-registered after its
+// predecessor's interval has passed fetches at once, an id that was never
+// fetched carries nothing, and the floor of an id that is never registered
+// again is dropped once it lapses, so the map cannot grow.
+func TestReRegisterAfterTheFloorFetchesAtOnce(t *testing.T) {
+	alpha := okSource("alpha", hit("alpha", "1", "alpha one", 6))
+	r, clock := newTestRegistry(t, Config{MinRefreshInterval: 30 * time.Second}, alpha, okSource("beta"), okSource("gamma"))
+
+	if _, _, err := r.SearchAll(context.Background(), Query{Text: "first"}, "alpha", "gamma"); err != nil {
+		t.Fatalf("first SearchAll: %v", err)
+	}
+	for _, id := range []string{"alpha", "beta", "gamma"} {
+		if err := r.Unregister(id); err != nil {
+			t.Fatalf("Unregister(%s): %v", id, err)
+		}
+	}
+	clock.advance(31 * time.Second)
+
+	alpha2 := okSource("alpha", hit("alpha", "2", "alpha two", 3))
+	beta2 := okSource("beta", hit("beta", "3", "beta three", 2))
+	for _, ix := range []Indexer{alpha2, beta2} {
+		if err := r.Register(ix); err != nil {
+			t.Fatalf("Register(%s): %v", ix.ID(), err)
+		}
+	}
+	got, errs, err := r.SearchAll(context.Background(), Query{Text: "second"})
+	if err != nil || len(errs) != 0 || joined(titles(got)) != "alpha two,beta three" {
+		t.Fatalf("SearchAll = %v, %v, %v; want both replacements fetched", titles(got), errs, err)
+	}
+
+	r.mu.Lock()
+	retired := len(r.retiredFetch)
+	r.mu.Unlock()
+	if retired != 0 {
+		t.Errorf("retiredFetch holds %d entries after every floor lapsed, want 0", retired)
 	}
 }
 

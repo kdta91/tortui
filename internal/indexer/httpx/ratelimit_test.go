@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -227,5 +228,69 @@ func TestClientRateLimitAppliesAcrossRetries(t *testing.T) {
 	// the 1ms backoff already waited inside each gap.
 	if got, want := clock.totalSlept(), 2*time.Second; got != want {
 		t.Fatalf("total waited = %s, want %s (the rate limit must apply to retries too)", got, want)
+	}
+}
+
+// An explicit default port, a trailing dot and letter case all name the same
+// server, so they share one spacing bucket (T-928): before, each spelling was
+// its own bucket and a source's budget doubled. A different port is still a
+// different bucket.
+func TestClientRateLimitBucketIgnoresDefaultPortAndTrailingDot(t *testing.T) {
+	t.Parallel()
+
+	ok := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: http.Header{}, Request: r}, nil
+	})
+
+	// Frozen, so each wait shows how many earlier requests share its
+	// bucket: 1s behind one, 2s behind two.
+	clock := newFrozenClock()
+	client := New(Config{MinHostInterval: time.Second, Clock: clock, Transport: ok})
+	ctx := testContext(t)
+
+	for _, target := range []string{
+		"http://feed.example.org/a",
+		"http://feed.example.org:80/b",
+		"http://FEED.example.org./c",
+		"https://feed.example.org/d",
+		"https://feed.example.org:443/e",
+		"http://feed.example.org:8080/f",
+	} {
+		if _, err := client.Get(ctx, target, nil); err != nil {
+			t.Fatalf("get %s: %v", target, err)
+		}
+	}
+
+	want := []time.Duration{time.Second, 2 * time.Second, time.Second}
+	got := clock.sleeps()
+	if len(got) != len(want) {
+		t.Fatalf("sleeps = %v, want %v: the http spellings share one bucket, the https ones another, port 8080 its own", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sleeps = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestRateLimitKey(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct{ in, want string }{
+		{"http://feed.example.org/x", "feed.example.org:80"},
+		{"http://feed.example.org:80/x", "feed.example.org:80"},
+		{"HTTP://Feed.Example.Org./x", "feed.example.org:80"},
+		{"https://feed.example.org/x", "feed.example.org:443"},
+		{"https://feed.example.org:443/x", "feed.example.org:443"},
+		{"https://feed.example.org:8443/x", "feed.example.org:8443"},
+		{"http://127.0.0.1:9117/x", "127.0.0.1:9117"},
+	} {
+		u, err := url.Parse(tt.in)
+		if err != nil {
+			t.Fatalf("parse %q: %v", tt.in, err)
+		}
+		if got := rateLimitKey(u); got != tt.want {
+			t.Errorf("rateLimitKey(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
