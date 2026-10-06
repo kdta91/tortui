@@ -20,7 +20,7 @@ func newBuiltinManager(t *testing.T, cfg config.Config, rt http.RoundTripper) (*
 
 	path := filepath.Join(t.TempDir(), "config.toml")
 	defs := t.TempDir()
-	live := buildSources(cfg, defs, discardLogger(), rt)
+	live := buildSources(cfg, defs, discardLogger(), httpEnv{transport: rt})
 
 	return newSettingsManager(path, cfg, live, engine.RootAdder(nil), discardLogger()), path
 }
@@ -232,7 +232,7 @@ func TestDoctorAndSettingsTestResolveTheSameDefinition(t *testing.T) {
 
 	rt := &recordingTransport{}
 	cfg := config.Default(t.TempDir())
-	live := buildSources(cfg, defs, discardLogger(), rt)
+	live := buildSources(cfg, defs, discardLogger(), httpEnv{transport: rt})
 	m := newSettingsManager(filepath.Join(t.TempDir(), "config.toml"), cfg, live, engine.RootAdder(nil), discardLogger())
 
 	_ = m.TestBuiltin(context.Background(), id) // the 404 is the transport's

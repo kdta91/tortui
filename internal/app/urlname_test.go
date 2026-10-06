@@ -124,9 +124,10 @@ func newKeyedApp(t *testing.T, ks *keyedServer, tweak ...func(*Options)) *App {
 	t.Helper()
 
 	opts := Options{
-		Capability: theme.Capability{Unicode: true},
-		transport:  labTransport{host: ks.Listener.Addr().String(), lab: ks.Client().Transport},
-		offline:    true,
+		Capability:      theme.Capability{Unicode: true},
+		transport:       labTransport{host: ks.Listener.Addr().String(), lab: ks.Client().Transport},
+		minHostInterval: -1,
+		offline:         true,
 		configure: func(c *config.Config) {
 			c.Indexers = append(c.Indexers, labSource(ks.Server))
 		},

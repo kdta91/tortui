@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -54,9 +53,9 @@ type settingsManager struct {
 	// check destinations against roots.
 	roots engine.RootAdder
 
-	defsDir   string
-	transport http.RoundTripper
-	logger    *slog.Logger
+	defsDir string
+	env     httpEnv
+	logger  *slog.Logger
 }
 
 var (
@@ -68,13 +67,13 @@ var (
 // newSettingsManager builds the manager over cfg as loaded from path.
 func newSettingsManager(path string, cfg config.Config, live *liveSources, roots engine.RootAdder, logger *slog.Logger) *settingsManager {
 	return &settingsManager{
-		path:      path,
-		cfg:       cloneConfig(cfg),
-		live:      live,
-		roots:     roots,
-		defsDir:   live.defsDir,
-		transport: live.transport,
-		logger:    logger,
+		path:    path,
+		cfg:     cloneConfig(cfg),
+		live:    live,
+		roots:   roots,
+		defsDir: live.defsDir,
+		env:     live.env,
+		logger:  logger,
 	}
 }
 
@@ -134,11 +133,11 @@ func (s *settingsManager) TestSource(ctx context.Context, src config.Indexer) er
 
 func (s *settingsManager) probe(ctx context.Context, src config.Indexer) error {
 	if src.Type == "torznab" {
-		_, err := torznab.Discover(ctx, torznabOptions(src, s.transport))
+		_, err := torznab.Discover(ctx, torznabOptions(src, s.env))
 		return err
 	}
 
-	a, err := userSource(src, s.defsDir, s.transport)
+	a, err := userSource(src, s.defsDir, s.env)
 	if err != nil {
 		return err
 	}
@@ -243,7 +242,7 @@ func (s *settingsManager) TestBuiltin(ctx context.Context, id string) error {
 			continue
 		}
 
-		a, err := scraper.New(scraper.Options{Definition: def, Client: newClient(httpx.Credentials{}, s.transport)})
+		a, err := scraper.New(scraper.Options{Definition: def, Client: newClient(httpx.Credentials{}, s.env)})
 		if err != nil {
 			return fmt.Errorf("build built-in source: %w", err)
 		}
@@ -283,8 +282,8 @@ func builtinIDs() ([]string, error) {
 // and returns its id and base_url.
 func (s *settingsManager) ImportDefinition(ctx context.Context, source string) (string, string, error) {
 	opts := scraper.ImporterOptions{Dir: s.defsDir}
-	if s.transport != nil {
-		opts.HTTPClient = newClient(httpx.Credentials{}, s.transport)
+	if s.env.transport != nil {
+		opts.HTTPClient = newClient(httpx.Credentials{}, s.env)
 	}
 
 	im, err := scraper.NewImporter(opts)
@@ -325,7 +324,7 @@ func (s *settingsManager) ListAggregatorIndexers(ctx context.Context, baseURL, a
 		return nil, errNoAggregatorURL
 	}
 
-	list, err := prowlarr.ListIndexers(ctx, newClient(httpx.Credentials{}, s.transport), baseURL, apiKey)
+	list, err := prowlarr.ListIndexers(ctx, newClient(httpx.Credentials{}, s.env), baseURL, apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("list aggregator indexers: %w", err)
 	}
@@ -355,7 +354,8 @@ func (s *settingsManager) Config() config.Config {
 // The download directory and every saved destination are admitted as
 // engine roots (AGENT.md §6.12) — each is checked as a root before anything
 // is written, and admitted only after the write succeeded, so a refused
-// save widens nothing.
+// save widens nothing. A failed admission after the write is logged, not
+// returned: the save itself succeeded (T-998).
 func (s *settingsManager) SaveConfig(cfg config.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -381,29 +381,31 @@ func (s *settingsManager) SaveConfig(cfg config.Config) error {
 
 	s.cfg = next
 
-	var errs []error
-
 	if s.roots != nil {
 		for _, d := range dirs {
+			// The save is done: disk and memory hold next. A refusal here
+			// (only a closed engine during shutdown can cause one, since every
+			// root was checked above) must not make the TUI keep its old
+			// snapshot while they hold the new one (T-998), so it is logged.
 			if err := s.roots.AddRoot(d); err != nil {
-				errs = append(errs, fmt.Errorf("admit destination %s: %w", d, err))
+				s.logger.Warn("settings: admit destination as an engine root", "dir", d, "error", err)
 			}
 		}
 	}
 
 	s.logger.Info("settings: preferences saved", "saved_destinations", len(next.SavedDestinations))
 
-	return errors.Join(errs...)
+	return nil
 }
 
 // torznabOptions is the torznab adapter configuration for one entry, with
 // the credentials the user supplied from their own account (AGENT.md §2).
-func torznabOptions(ix config.Indexer, transport http.RoundTripper) torznab.Options {
+func torznabOptions(ix config.Indexer, env httpEnv) torznab.Options {
 	return torznab.Options{
 		ID:           ix.ID,
 		Name:         ix.Name,
 		Endpoint:     ix.URL,
-		Client:       newClient(httpx.Credentials{APIKey: ix.APIKey, CookieHeader: ix.Cookie}, transport),
+		Client:       newClient(httpx.Credentials{APIKey: ix.APIKey, CookieHeader: ix.Cookie}, env),
 		RequiresAuth: ix.APIKey != "" || ix.Cookie != "",
 	}
 }

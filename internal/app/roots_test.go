@@ -60,6 +60,11 @@ func TestEngineRootsIncludeEveryDestinationSource(t *testing.T) {
 				t.Fatalf("New: %v", err)
 			}
 
+			// A Fatalf before the explicit Close below must not leave the
+			// lock, engine and log open (a Windows TempDir cleanup error on
+			// top of the real failure). Close is idempotent (T-9007).
+			t.Cleanup(func() { _ = first.Close() })
+
 			if !tc.config {
 				if err := first.store.TouchDestination(dest); err != nil {
 					t.Fatalf("TouchDestination: %v", err)

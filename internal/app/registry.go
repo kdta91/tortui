@@ -29,8 +29,8 @@ var errDefinitionEscapes = errors.New("definition must be a file inside the defi
 
 // buildSources returns the live source set a run starts with: a registry
 // holding the sources liveSources.sync names for cfg.
-func buildSources(cfg config.Config, defsDir string, logger *slog.Logger, transport http.RoundTripper) *liveSources {
-	live := newLiveSources(cfg, defsDir, logger, transport)
+func buildSources(cfg config.Config, defsDir string, logger *slog.Logger, env httpEnv) *liveSources {
+	live := newLiveSources(cfg, defsDir, logger, env)
 	if err := live.sync(cfg, false); err != nil {
 		logger.Warn("app: build the source registry", "error", err)
 	}
@@ -43,10 +43,10 @@ func buildSources(cfg config.Config, defsDir string, logger *slog.Logger, transp
 // added, edited, disabled, or removed source takes effect with no restart.
 // It is not safe for concurrent use; settingsManager serialises its calls.
 type liveSources struct {
-	reg       *indexer.Registry
-	defsDir   string
-	logger    *slog.Logger
-	transport http.RoundTripper
+	reg     *indexer.Registry
+	defsDir string
+	logger  *slog.Logger
+	env     httpEnv
 
 	// built is what each registered id was built from, so a sync rebuilds
 	// only the sources whose configuration changed.
@@ -64,13 +64,13 @@ type sourceSpec struct {
 // definitions reload has to rebuild it.
 func (s sourceSpec) scraperBacked() bool { return s.bundled || s.entry.Type == "scraper" }
 
-func newLiveSources(cfg config.Config, defsDir string, logger *slog.Logger, transport http.RoundTripper) *liveSources {
+func newLiveSources(cfg config.Config, defsDir string, logger *slog.Logger, env httpEnv) *liveSources {
 	return &liveSources{
-		reg:       indexer.NewRegistry(indexer.Config{Timeout: searchTimeout(cfg.SearchTimeout, logger)}),
-		defsDir:   defsDir,
-		logger:    logger,
-		transport: transport,
-		built:     make(map[string]sourceSpec),
+		reg:     indexer.NewRegistry(indexer.Config{Timeout: searchTimeout(cfg.SearchTimeout, logger)}),
+		defsDir: defsDir,
+		logger:  logger,
+		env:     env,
+		built:   make(map[string]sourceSpec),
 	}
 }
 
@@ -134,7 +134,7 @@ func (l *liveSources) sync(cfg config.Config, reload bool) error {
 	for _, def := range bundled {
 		if spec, ok := desired[def.ID]; ok && spec.bundled {
 			failed += l.register(def.ID, spec, func() (indexer.Indexer, error) {
-				return scraper.New(scraper.Options{Definition: def, Client: newClient(httpx.Credentials{}, l.transport)})
+				return scraper.New(scraper.Options{Definition: def, Client: newClient(httpx.Credentials{}, l.env)})
 			})
 		}
 	}
@@ -142,7 +142,7 @@ func (l *liveSources) sync(cfg config.Config, reload bool) error {
 	for _, ix := range entries {
 		if spec, ok := desired[ix.ID]; ok && spec == (sourceSpec{entry: ix}) {
 			failed += l.register(ix.ID, spec, func() (indexer.Indexer, error) {
-				return userSource(ix, l.defsDir, l.transport)
+				return userSource(ix, l.defsDir, l.env)
 			})
 		}
 	}
@@ -232,10 +232,10 @@ func bundledDefinitions(defsDir string, logger *slog.Logger) ([]*scraper.Definit
 
 // userSource builds the adapter for one enabled [[indexer]] entry, with the
 // credentials the user supplied from their own account (AGENT.md §2).
-func userSource(ix config.Indexer, defsDir string, transport http.RoundTripper) (indexer.Indexer, error) {
+func userSource(ix config.Indexer, defsDir string, env httpEnv) (indexer.Indexer, error) {
 	switch ix.Type {
 	case "torznab":
-		return torznab.New(torznabOptions(ix, transport))
+		return torznab.New(torznabOptions(ix, env))
 	case "scraper":
 		def, err := readDefinition(defsDir, ix.Definition)
 		if err != nil {
@@ -245,7 +245,7 @@ func userSource(ix config.Indexer, defsDir string, transport http.RoundTripper) 
 		creds := httpx.Credentials{APIKey: ix.APIKey, CookieHeader: ix.Cookie}
 		auth := ix.APIKey != "" || ix.Cookie != ""
 
-		return scraper.New(scraper.Options{Definition: def, Client: newClient(creds, transport), RequiresAuth: auth})
+		return scraper.New(scraper.Options{Definition: def, Client: newClient(creds, env), RequiresAuth: auth})
 	default:
 		return nil, fmt.Errorf("unknown source type %q", ix.Type)
 	}
@@ -281,10 +281,19 @@ func readDefinition(defsDir, name string) (*scraper.Definition, error) {
 	return def, nil
 }
 
-// newClient builds one source's HTTP client. transport is nil in
-// production (httpx builds its own) and a test double in tests.
-func newClient(creds httpx.Credentials, transport http.RoundTripper) *httpx.Client {
-	return httpx.New(httpx.Config{Credentials: creds, Transport: transport})
+// httpEnv is what every source's HTTP client is built over. The zero value is
+// production: httpx builds its own transport and spaces requests to one host
+// by its default interval. Tests set a double transport, and a short (or
+// negative, none) interval so two requests to one test host do not wait out
+// the real one (T-996).
+type httpEnv struct {
+	transport       http.RoundTripper
+	minHostInterval time.Duration
+}
+
+// newClient builds one source's HTTP client over env.
+func newClient(creds httpx.Credentials, env httpEnv) *httpx.Client {
+	return httpx.New(httpx.Config{Credentials: creds, Transport: env.transport, MinHostInterval: env.minHostInterval})
 }
 
 // searchTimeout parses search_timeout; an unparseable value (already

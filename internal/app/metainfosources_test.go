@@ -18,9 +18,10 @@ func newPublishedSourcesApp(t *testing.T, srv *twoLinkServer) *App {
 	t.Helper()
 
 	a, err := New(Options{
-		Capability: theme.Capability{Unicode: true},
-		transport:  labTransport{host: srv.Listener.Addr().String(), lab: srv.Client().Transport},
-		offline:    true,
+		Capability:      theme.Capability{Unicode: true},
+		transport:       labTransport{host: srv.Listener.Addr().String(), lab: srv.Client().Transport},
+		minHostInterval: -1,
+		offline:         true,
 		configure: func(c *config.Config) {
 			c.Indexers = append(c.Indexers, labSource(srv.Server))
 		},

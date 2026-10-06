@@ -87,9 +87,10 @@ func newSettingsApp(t *testing.T, srv *httptest.Server) *App {
 	sandbox(t)
 
 	a, err := New(Options{
-		Capability: theme.Capability{Unicode: true},
-		transport:  srv.Client().Transport,
-		offline:    true,
+		Capability:      theme.Capability{Unicode: true},
+		transport:       srv.Client().Transport,
+		minHostInterval: -1,
+		offline:         true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -544,7 +545,7 @@ func TestSettingsCredentialsNeverReachTheLog(t *testing.T) {
 	srv := newTorznabServer(t, fixture(t, "caps-minimal.xml"), fixture(t, "search-full.xml"))
 	sandbox(t)
 
-	a, err := New(Options{Capability: theme.Capability{Unicode: true}, transport: srv.Client().Transport, offline: true})
+	a, err := New(Options{Capability: theme.Capability{Unicode: true}, transport: srv.Client().Transport, minHostInterval: -1, offline: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
