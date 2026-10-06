@@ -864,10 +864,11 @@ func TestDecodeRejectsEveryUnusableDocument(t *testing.T) {
 		// alternative to knowing is a source that can crash the app.
 		"deeply nested inside a mapped element":   {body: `<rss><channel><item><title>` + deep + `</title></item></channel></rss>`, wantErr: nil},
 		"deeply nested inside an ignored element": {body: `<rss><channel><ignored>` + deep + `</ignored></channel></rss>`, wantErr: nil},
-		"an html page":    {body: fixture(t, "search-html.xml"), wantErr: ErrDocumentUnexpectedRoot},
-		"a caps document": {body: fixture(t, "caps-minimal.xml"), wantErr: ErrDocumentUnexpectedRoot},
-		"an unknown root": {body: "<feed><entry/></feed>", wantErr: ErrDocumentUnexpectedRoot},
-		"a nested rss":    {body: "<wrapper><rss/></wrapper>", wantErr: ErrDocumentUnexpectedRoot},
+		"an html page":            {body: fixture(t, "search-html.xml"), wantErr: ErrDocumentUnexpectedRoot},
+		"a caps document":         {body: fixture(t, "caps-minimal.xml"), wantErr: ErrDocumentUnexpectedRoot},
+		"an unknown root":         {body: "<feed><entry/></feed>", wantErr: ErrDocumentUnexpectedRoot},
+		"a nested rss":            {body: "<wrapper><rss/></wrapper>", wantErr: ErrDocumentUnexpectedRoot},
+		"a broken error document": {body: `<error code="100"><x></error>`, wantErr: ErrDocumentMalformed},
 	}
 
 	for name, tc := range cases {
@@ -887,8 +888,42 @@ func TestDecodeRejectsEveryUnusableDocument(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("decodeDocument = %v, want %v", err, tc.wantErr)
 			}
+
+			if !reportsParseFailed(err) {
+				t.Errorf("decodeDocument = %v, which does not report ParseFailed (T-981)", err)
+			}
 		})
 	}
+}
+
+// An <error> document is the source answering, not a parse failure: it must
+// not report ParseFailed, or the connection test would show a credentials
+// problem or a server-side failure as "parse failed" (T-981).
+func TestAnAPIErrorDocumentIsNotAParseFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, body := range []string{`<error code="100"/>`, `<error code="900"/>`, `<error/>`} {
+		var doc feedDocument
+
+		err := decodeDocument([]byte(body), rootFeed, &doc)
+
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("decodeDocument(%s) = %v, want an *APIError", body, err)
+		}
+
+		if reportsParseFailed(err) {
+			t.Errorf("decodeDocument(%s) = %v reports ParseFailed; an api error is not a parse failure", body, err)
+		}
+	}
+}
+
+// reportsParseFailed is how internal/tui's settings screen reads an error:
+// errors.As against the duck-typed ParseFailed shape.
+func reportsParseFailed(err error) bool {
+	var p interface{ ParseFailed() bool }
+
+	return errors.As(err, &p) && p.ParseFailed()
 }
 
 func TestDecodeNeverRepeatsTheDocumentBack(t *testing.T) {

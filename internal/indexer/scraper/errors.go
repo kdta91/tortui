@@ -255,3 +255,24 @@ func invalid(location string, err error) error {
 func invalidSelector(location, selector string, err error) error {
 	return &ValidationError{Location: location, Selector: selector, Err: err}
 }
+
+// parseError marks a response that arrived but did not parse in the
+// definition's mode: ErrDocumentMalformed, ErrDocumentTooDeep or
+// ErrRowsNotAList, from a listing or a details page. Its ParseFailed method
+// is the duck-typed shape internal/tui's connection test matches with
+// errors.As to show "parse failed" without importing this package
+// (AGENT.md §4, T-981). A definition file that does not parse
+// (ErrDefinitionMalformed) is not a response and is never wrapped in one.
+// The text and the sentinel underneath are unchanged, so errors.Is still
+// matches.
+type parseError struct {
+	err error
+}
+
+func (e *parseError) Error() string { return e.err.Error() }
+
+func (e *parseError) Unwrap() error { return e.err }
+
+// ParseFailed always reports true: a parseError is only built for a parse
+// failure.
+func (e *parseError) ParseFailed() bool { return true }

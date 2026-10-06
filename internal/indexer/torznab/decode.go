@@ -33,7 +33,7 @@ func decodeDocument(body []byte, root string, into any) error {
 		token, err := dec.Token()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return ErrDocumentEmpty
+				return &parseError{err: ErrDocumentEmpty}
 			}
 
 			return xmlFailure(err)
@@ -58,8 +58,8 @@ func decodeDocument(body []byte, root string, into any) error {
 		case rootError:
 			return decodeAPIError(dec, &start)
 		default:
-			return fmt.Errorf("%w (its root element is %s, not <%s>)",
-				ErrDocumentUnexpectedRoot, describeRoot(name), root)
+			return &parseError{err: fmt.Errorf("%w (its root element is %s, not <%s>)",
+				ErrDocumentUnexpectedRoot, describeRoot(name), root)}
 		}
 	}
 }
@@ -109,11 +109,30 @@ func decodeAPIError(dec *xml.Decoder, start *xml.StartElement) error {
 func xmlFailure(err error) error {
 	var syntaxErr *xml.SyntaxError
 	if errors.As(err, &syntaxErr) {
-		return fmt.Errorf("%w (xml syntax error on line %d)", ErrDocumentMalformed, syntaxErr.Line)
+		return &parseError{err: fmt.Errorf("%w (xml syntax error on line %d)", ErrDocumentMalformed, syntaxErr.Line)}
 	}
 
-	return fmt.Errorf("%w (%T from encoding/xml)", ErrDocumentMalformed, err)
+	return &parseError{err: fmt.Errorf("%w (%T from encoding/xml)", ErrDocumentMalformed, err)}
 }
+
+// parseError marks a response that arrived but did not parse as the document
+// asked for: ErrDocumentEmpty, ErrDocumentMalformed or
+// ErrDocumentUnexpectedRoot. Its ParseFailed method is the duck-typed shape
+// internal/tui's connection test matches with errors.As to show "parse
+// failed" without importing this package (AGENT.md §4, T-981). An <error>
+// document is an *APIError and is never wrapped in one. The text and the
+// sentinel underneath are unchanged, so errors.Is still matches.
+type parseError struct {
+	err error
+}
+
+func (e *parseError) Error() string { return e.err.Error() }
+
+func (e *parseError) Unwrap() error { return e.err }
+
+// ParseFailed always reports true: a parseError is only built for a parse
+// failure.
+func (e *parseError) ParseFailed() bool { return true }
 
 // describeRoot names the root element of a document that is not the one that
 // was asked for.

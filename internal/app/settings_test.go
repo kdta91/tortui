@@ -292,8 +292,9 @@ func TestSettingsFailedBuiltinSaveLeavesMemoryAlone(t *testing.T) {
 
 // Duck-typed the same way internal/tui's classifyProbeError reads them.
 type (
-	authFailure interface{ AuthFailed() bool }
-	timeoutErr  interface{ Timeout() bool }
+	authFailure  interface{ AuthFailed() bool }
+	parseFailure interface{ ParseFailed() bool }
+	timeoutErr   interface{ Timeout() bool }
 )
 
 func TestSettingsConnectionTestClassifiesAuthAndTimeout(t *testing.T) {
@@ -320,6 +321,25 @@ func TestSettingsConnectionTestClassifiesAuthAndTimeout(t *testing.T) {
 		var auth authFailure
 		if !errors.As(err, &auth) || !auth.AuthFailed() {
 			t.Fatalf("TestSource = %v, want an error reporting AuthFailed", err)
+		}
+	})
+
+	t.Run("parse", func(t *testing.T) {
+		// A sign-in page in place of the caps document: it arrived, and
+		// it is not a torznab response (T-981).
+		page := []byte("<html><body>Sign in</body></html>")
+		srv := newTorznabServer(t, page, page)
+
+		err := sm.TestSource(context.Background(), labSource(srv.Server))
+
+		var parse parseFailure
+		if !errors.As(err, &parse) || !parse.ParseFailed() {
+			t.Fatalf("TestSource = %v, want an error reporting ParseFailed", err)
+		}
+
+		var auth authFailure
+		if errors.As(err, &auth) && auth.AuthFailed() {
+			t.Errorf("a parse failure reported AuthFailed: %v", err)
 		}
 	})
 

@@ -330,13 +330,25 @@ func (a *Adapter) blockFor(q indexer.Query) (*blockPlan, error) {
 	}
 }
 
-// rows parses the response body in the definition's mode.
+// rows parses the response body in the definition's mode. Every error is a
+// response that did not parse, so it carries the ParseFailed marker.
 func (a *Adapter) rows(body []byte, block *blockPlan) ([]row, error) {
+	var (
+		rows []row
+		err  error
+	)
+
 	if a.plan.mode == ModeJSON {
-		return jsonRows(body, block.rows)
+		rows, err = jsonRows(body, block.rows)
+	} else {
+		rows, err = htmlRows(body, block.rows)
 	}
 
-	return htmlRows(body, block.rows)
+	if err != nil {
+		return nil, &parseError{err: err}
+	}
+
+	return rows, nil
 }
 
 // results maps the parsed rows onto indexer.Result, applying the query's

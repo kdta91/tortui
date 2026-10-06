@@ -3,6 +3,7 @@ package scraper
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,10 @@ func TestADeeplyNestedPageIsRefusedBeforeTheParserSeesIt(t *testing.T) {
 
 	if !errors.Is(err, ErrDocumentTooDeep) {
 		t.Fatalf("error = %v, want ErrDocumentTooDeep", err)
+	}
+
+	if !reportsParseFailed(err) {
+		t.Errorf("error = %v does not report ParseFailed (T-981)", err)
 	}
 
 	if elapsed > 10*time.Second {
@@ -330,6 +335,10 @@ func TestAJSONResponseThatIsNotWhatTheDefinitionExpects(t *testing.T) {
 					t.Fatalf("error = %v, want %v", err, tc.want)
 				}
 
+				if !reportsParseFailed(err) {
+					t.Errorf("error = %v does not report ParseFailed (T-981)", err)
+				}
+
 				return
 			}
 
@@ -501,4 +510,57 @@ func TestAJSONEndpointWithThousandsOfItemsIsCapped(t *testing.T) {
 	if len(results) != maxRows {
 		t.Fatalf("got %d results from %d items, want the cap of %d", len(results), maxRows*2, maxRows)
 	}
+}
+
+// A details page that does not parse is a parse failure too: Resolve reads
+// it through the same parsers as a listing (T-981).
+func TestADetailsPageThatDoesNotParseReportsParseFailed(t *testing.T) {
+	t.Parallel()
+
+	src := newSource(t, map[string]reply{"/item/1": pageReply(nestedDivs(100000))})
+	a := detailsAdapter(t, src, testClient(httpx.Config{}))
+
+	_, err := a.Resolve(testContext(t), indexer.Result{Title: "One", SourceURL: src.server.URL + "/item/1"})
+	if !errors.Is(err, ErrDocumentTooDeep) {
+		t.Fatalf("Resolve error = %v, want ErrDocumentTooDeep", err)
+	}
+
+	if !reportsParseFailed(err) {
+		t.Errorf("Resolve error = %v does not report ParseFailed (T-981)", err)
+	}
+}
+
+// Only a response that did not parse reports ParseFailed: an HTTP failure,
+// a refused query and a page with no link are something else, and the
+// connection test must not call them "parse failed" (T-981).
+func TestOnlyAParseFailureReportsParseFailed(t *testing.T) {
+	t.Parallel()
+
+	src := newSource(t, map[string]reply{"/s": statusReply(http.StatusNotFound)})
+	a := adapterFor(t, src, minimalDefinition)
+
+	_, statusErr := a.Search(testContext(t), keywordQuery())
+	_, emptyErr := a.Search(testContext(t), indexer.Query{Mode: indexer.ModeSearch})
+
+	details := detailsSource(t)
+	da := detailsAdapter(t, details, testClient(httpx.Config{}))
+	_, noLinkErr := da.Resolve(testContext(t), searchDetails(t, details, da)["/item/2004"])
+
+	for name, err := range map[string]error{"a 404": statusErr, "an empty keyword": emptyErr, "no link": noLinkErr} {
+		if err == nil {
+			t.Fatalf("%s: no error", name)
+		}
+
+		if reportsParseFailed(err) {
+			t.Errorf("%s: error %v reports ParseFailed", name, err)
+		}
+	}
+}
+
+// reportsParseFailed is how internal/tui's settings screen reads an error:
+// errors.As against the duck-typed ParseFailed shape.
+func reportsParseFailed(err error) bool {
+	var p interface{ ParseFailed() bool }
+
+	return errors.As(err, &p) && p.ParseFailed()
 }
