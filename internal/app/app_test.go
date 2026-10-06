@@ -89,9 +89,10 @@ const (
 // transport for every indexer request.
 func testOptions(rt *recordingTransport) Options {
 	return Options{
-		Capability: theme.Capability{Unicode: true},
-		transport:  rt,
-		offline:    true,
+		Capability:      theme.Capability{Unicode: true},
+		transport:       rt,
+		minHostInterval: -1,
+		offline:         true,
 	}
 }
 

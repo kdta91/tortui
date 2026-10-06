@@ -55,10 +55,11 @@ type Options struct {
 	// adjusts the loaded config before anything uses it; beforeResume
 	// receives the engine as built, before Session.Resume touches it. Test
 	// seams only (AGENT.md §6.7): cmd/tortui never sets them.
-	transport    http.RoundTripper
-	offline      bool
-	configure    func(*config.Config)
-	beforeResume func(*anacrolix.Engine)
+	transport       http.RoundTripper
+	minHostInterval time.Duration // see httpEnv
+	offline         bool
+	configure       func(*config.Config)
+	beforeResume    func(*anacrolix.Engine)
 
 	// torrentHTTP, when set, replaces the engine's .torrent fetch client, so
 	// a test can fetch with a millisecond backoff instead of sleeping out the
@@ -176,7 +177,7 @@ func (a *App) start(opts Options, level string) error {
 		return fmt.Errorf("app: start engine: %w", err)
 	}
 
-	live := buildSources(cfg, paths.DefinitionsDir, logger, opts.transport)
+	live := buildSources(cfg, paths.DefinitionsDir, logger, httpEnv{transport: opts.transport, minHostInterval: opts.minHostInterval})
 	a.registry = live.reg
 	a.settings = newSettingsManager(paths.ConfigFile, cfg, live, a.engine, logger)
 	a.session = lifecycle.NewSession(a.engine, st, logger)

@@ -4227,6 +4227,31 @@ tests wait on `infoChecked`. Repro: 9/500 at `-cpu 2` before; 0/1500 after. Back
 
 ---
 
+### T-9182 · App and engine Backlog test batch
+
+```
+status: done
+depends: none
+tier: M
+```
+Promote Backlog T-996, T-997, T-998, T-9001 and T-9007, each checked against the current code first.
+
+**Acceptance:**
+1. [x] T-996: the composition root has a seam for the per-host request spacing (`Options.minHostInterval`, carried by `httpEnv`), the settings tests use it, and a test fails if the seam stops reaching the clients.
+2. [x] T-997: a teatest check on the production model opens the add-source form and the preferences panel, and shows neither "no ... manager configured" refusal; it fails with either `WithSourceManager` or `WithPreferencesManager` removed.
+3. [x] T-998: `SaveConfig` logs an `AddRoot` failure after a successful save and returns nil (DEC-190), with a test on disk, memory and log.
+4. [x] T-9001: `Remove(id, true)` on a torrent restored by a second engine over the same directory releases the reopened store's handle and deletes the data, asserted by handle count and file absence, on every OS (`filepath.Join` paths; nothing needs a skip).
+5. [x] T-9007: the first App in `roots_test.go` is closed by a `t.Cleanup` (Close is idempotent).
+6. [x] Each new test is mutation-checked and the output is in the PR body.
+
+**Notes:** All five were still open. T-996 needed a production seam, `httpEnv`, in place of the bare transport
+argument; the settings tests no longer wait out the real 1 s. The remaining ~1 s in the add-flow tests is the engine's
+own `.torrent` client, a separate seam, left alone. T-998 chose "log, return nil" over documenting the divergence
+(DEC-190). T-9001 is `TestRemoveWithDataAfterARestartThroughAReopenedStore`. T-9007 shows only through goleak when a
+test ends early, so its check is an injected early exit. No tier H change: no engine, store or delete-guard code moved.
+
+---
+
 ---
 
 ## Blocked — Resolved

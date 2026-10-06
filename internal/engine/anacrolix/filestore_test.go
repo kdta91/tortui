@@ -371,6 +371,60 @@ func TestCompletedFileIsRemovableWithDataWhileRunningAndAfterClose(t *testing.T)
 	}
 }
 
+// TestRemoveWithDataAfterARestartThroughAReopenedStore is T-9001: the delete
+// that follows a restart goes through the real path. Session one completes a
+// torrent and closes; a second engine over the same directory restores it, so
+// its fileStore is a fresh one, and Remove(id, true) must release that
+// store's handle and delete the data. Verifying first opens a handle, and the
+// handle count is asserted because only Windows refuses to delete an open
+// file: elsewhere the delete alone would pass with the handle leaked.
+func TestRemoveWithDataAfterARestartThroughAReopenedStore(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	d := sessionOne(t, dir)
+	payload := filepath.Join(dir, "payload.bin")
+
+	if _, err := os.Stat(payload); err != nil {
+		t.Fatalf("session one left no data file: %v", err)
+	}
+
+	e := newTestEngine(t, func(o *Options) { o.Config.DownloadDir = dir })
+
+	id, err := e.Restore(context.Background(), d)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	waitForStarted(t, e, id)
+	verify(t, e, id)
+	waitUntil(t, "restored torrent complete", func() bool { return statusOf(t, e, id).Progress == 1 })
+
+	e.mu.Lock()
+	s := e.storages[e.downloadDir].inner
+	e.mu.Unlock()
+
+	if s.openHandles() == 0 {
+		t.Fatal("verifying the restored data opened no handle; the test would prove nothing")
+	}
+
+	if err := e.Remove(id, true); err != nil {
+		t.Fatalf("Remove with data after a restart: %v", err)
+	}
+
+	if n := s.openHandles(); n != 0 {
+		t.Fatalf("open handles after Remove = %d, want 0", n)
+	}
+
+	if _, err := os.Stat(payload); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("restored torrent's data survived Remove with data: stat = %v", err)
+	}
+
+	if len(e.List()) != 0 {
+		t.Fatalf("List after Remove = %v, want none", e.List())
+	}
+}
+
 // torrentOf returns the one fileTorrent s has open.
 func torrentOf(t *testing.T, s *fileStore) *fileTorrent {
 	t.Helper()
