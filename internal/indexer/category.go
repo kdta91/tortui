@@ -222,7 +222,10 @@ var categoryWords = map[string]Category{
 //
 // The label is lowercased and split on everything that is not a letter or a
 // digit, so "Movies/HD", "PC > Games", "  audio  ", and "[Books]" all work,
-// and the first token the taxonomy recognises wins. Nothing else is inferred:
+// and the first token naming a specific bucket wins. A word that maps to
+// CategoryOther ("misc", "unknown") never wins over a specific one later in
+// the label, since it says nothing about the kind of data: "Misc/Software" is
+// software, as "Software/Misc" is (T-917). Nothing else is inferred:
 // a word that merely contains a known token ("audiophile") does not match, and
 // a numeric label is not routed to CategoryFromTorznab — an adapter that has
 // numeric ids should call that helper directly rather than stringifying them.
@@ -243,7 +246,7 @@ func CategoryFromString(s string) Category {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
 	for _, tok := range tokens {
-		if c, ok := categoryWords[tok]; ok {
+		if c := categoryWords[tok]; c != CategoryOther {
 			return c
 		}
 	}

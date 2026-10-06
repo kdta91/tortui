@@ -4250,6 +4250,34 @@ own `.torrent` client, a separate seam, left alone. T-998 chose "log, return nil
 (DEC-190). T-9001 is `TestRemoveWithDataAfterARestartThroughAReopenedStore`. T-9007 shows only through goleak when a
 test ends early, so its check is an injected early exit. No tier H change: no engine, store or delete-guard code moved.
 
+### T-9183 · Indexer Backlog batch: category, floors, parse marker
+
+```
+status: done
+depends: none
+tier: H
+```
+Promotes Backlog T-917, T-923, T-928, T-981, T-992 and T-995, each checked against the current code first and
+either fixed, closed with evidence, or left in Backlog with a note. A security boundary: every fix only tightens.
+Cross-host refusal (DEC-136), magnet-only redirects (DEC-151), xs=/as= dropping (DEC-153), SafeName (DEC-154,
+DEC-155), the lenient redirect conditions (DEC-156), §6.13 spacing and credential handling are unchanged or tighter.
+
+**Acceptance:**
+1. [x] Each of the six entries is fixed, closed with evidence, or left in Backlog with a note naming why (too big, or the owner decision it needs).
+2. [x] T-917: an Other-class word never wins over a specific one in `CategoryFromString`; a test fails on the old code (DEC-192).
+3. [x] T-995: a source re-registered under an id inherits the refresh floor its predecessor claimed, and the kept floors are pruned once they lapse; tests fail on the old code (DEC-191).
+4. [x] T-928, limiter half: an explicit default port, a trailing dot and case share one per-host spacing bucket, and http and https to one host still share one (every old bucket sits inside one new one); tests fail on the old code and on a scheme-split key (DEC-191). The redirect half stays in Backlog as an owner decision.
+5. [x] T-981: torznab and scraper response parse failures report `ParseFailed()`, an api error, an HTTP status and a refused query do not, and the composition root's `TestSource` returns one for a sign-in page; tests fail on the old code.
+6. [x] No live network: loopback httptest servers or an in-process transport, example.org names only. Every new test mutation-checked; output in the PR body.
+
+**Notes:** T-917, T-981 and the first half of T-995 were open and are fixed; T-995's second half was already done by
+T-9168 (`reserveFetch` takes the selected source, DEC-183). T-928's limiter half is fixed; following a redirect that
+only adds a default port loosens DEC-064, so it stays in Backlog for the owner. T-992 stays (owner decision: a caps
+probe at launch contradicts T-9011/DEC-137). T-923 stays (too big: streaming fan-out plus TUI merging). Two existing
+registry tests now step the fake clock past the inherited floor before their second search. A malformed definition
+file (`ErrDefinitionMalformed`) is not a response, so it carries no parse marker. Review round 1: the first spacing key split
+http from https on one host; it now ignores the scheme. Backlog T-9184 lists spellings still unmerged.
+
 ---
 
 ---

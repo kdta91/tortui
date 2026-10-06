@@ -206,6 +206,13 @@ type Registry struct {
 	sources map[string]*source
 	order   []string
 	cache   map[cacheKey]cacheEntry
+
+	// retiredFetch is the lastFetch of each source unregistered inside
+	// its minimum refresh interval, keyed by id, so a source registered
+	// again under that id inherits the floor rather than starting from
+	// zero (T-995). An entry is dropped once its interval has passed, so
+	// the map holds at most the ids removed in the last interval.
+	retiredFetch map[string]time.Time
 }
 
 // NewRegistry returns an empty Registry configured by cfg, with any zero or
@@ -221,16 +228,22 @@ func NewRegistry(cfg Config) *Registry {
 		cfg.MinRefreshInterval = DefaultMinRefreshInterval
 	}
 	return &Registry{
-		cfg:     cfg,
-		now:     time.Now,
-		sources: make(map[string]*source),
-		cache:   make(map[cacheKey]cacheEntry),
+		cfg:          cfg,
+		now:          time.Now,
+		sources:      make(map[string]*source),
+		cache:        make(map[cacheKey]cacheEntry),
+		retiredFetch: make(map[string]time.Time),
 	}
 }
 
 // Register adds ix under its own ID, enabled. It returns ErrNilIndexer,
 // ErrEmptyID, or ErrDuplicateID rather than replacing or ignoring a source,
 // because every one of those cases is a wiring bug the caller should see.
+//
+// A source registered under the id of one unregistered inside the minimum
+// refresh interval inherits that source's last fetch time, so editing or
+// re-enabling a source never resets the per-source floor (AGENT.md §6.13,
+// T-995).
 func (r *Registry) Register(ix Indexer) error {
 	if ix == nil {
 		return ErrNilIndexer
@@ -245,9 +258,26 @@ func (r *Registry) Register(ix Indexer) error {
 	if _, exists := r.sources[id]; exists {
 		return fmt.Errorf("registering indexer %q: %w", id, ErrDuplicateID)
 	}
-	r.sources[id] = &source{ix: ix, enabled: true}
+	src := &source{ix: ix, enabled: true}
+	r.pruneRetiredFetch()
+	if last, ok := r.retiredFetch[id]; ok {
+		src.lastFetch = last
+		delete(r.retiredFetch, id)
+	}
+	r.sources[id] = src
 	r.order = append(r.order, id)
 	return nil
+}
+
+// pruneRetiredFetch drops every retiredFetch entry whose interval has passed.
+// Called under mu.
+func (r *Registry) pruneRetiredFetch() {
+	now := r.now()
+	for id, last := range r.retiredFetch {
+		if now.Sub(last) >= r.cfg.MinRefreshInterval {
+			delete(r.retiredFetch, id)
+		}
+	}
 }
 
 // Get returns the source registered under id, and whether there was one.
@@ -310,12 +340,18 @@ func (r *Registry) SetEnabled(id string, enabled bool) error {
 // that is not registered. A fan-out already under way that selected the
 // source but has not yet sent its request reports it as ErrUnknownIndexer and
 // never asks it; a request already sent runs to completion, and its answer is
-// not cached (DEC-183).
+// not cached (DEC-183). The source's refresh floor is kept for a source later
+// registered under the same id (see Register).
 func (r *Registry) Unregister(id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.sources[id]; !ok {
+	src, ok := r.sources[id]
+	if !ok {
 		return fmt.Errorf("indexer %q: %w", id, ErrUnknownIndexer)
+	}
+	r.pruneRetiredFetch()
+	if !src.lastFetch.IsZero() && r.now().Sub(src.lastFetch) < r.cfg.MinRefreshInterval {
+		r.retiredFetch[id] = src.lastFetch
 	}
 	delete(r.sources, id)
 	r.order = slices.DeleteFunc(r.order, func(o string) bool { return o == id })

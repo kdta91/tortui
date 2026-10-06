@@ -116,12 +116,13 @@ func (p *plan) detailsAddress(raw string) (*url.URL, error) {
 
 // documentRow parses a whole response as a single row, in the given mode:
 // the document root for html, the decoded value for json. A details field
-// with an empty selector therefore reads the whole page.
+// with an empty selector therefore reads the whole page. Every error is a
+// response that did not parse, so it carries the ParseFailed marker.
 func documentRow(body []byte, mode string) (row, error) {
 	if mode == ModeJSON {
 		doc, err := decodeJSON(body)
 		if err != nil {
-			return nil, err
+			return nil, &parseError{err: err}
 		}
 
 		return jsonRow{value: doc}, nil
@@ -129,7 +130,7 @@ func documentRow(body []byte, mode string) (row, error) {
 
 	sel, err := parseHTML(body)
 	if err != nil {
-		return nil, err
+		return nil, &parseError{err: err}
 	}
 
 	return htmlRow{sel: sel}, nil

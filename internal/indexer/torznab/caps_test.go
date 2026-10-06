@@ -181,6 +181,13 @@ func TestDiscoverHandlesAServerThatOmitsCaps(t *testing.T) {
 				t.Errorf("Discover error = %v, want it to wrap %v", err, tc.wantInnerErr)
 			}
 
+			// The settings screen's connection test shows "parse failed"
+			// for exactly the cases where a document arrived and did not
+			// parse (T-981); a status or an api error is something else.
+			if got, want := reportsParseFailed(err), tc.wantInnerErr != nil; got != want {
+				t.Errorf("Discover error %v: ParseFailed = %t, want %t", err, got, want)
+			}
+
 			want := indexer.Caps{Search: true, RequiresAuth: tc.wantAuth}
 
 			if got := a.Caps(); got != want {

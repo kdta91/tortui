@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -227,5 +228,97 @@ func TestClientRateLimitAppliesAcrossRetries(t *testing.T) {
 	// the 1ms backoff already waited inside each gap.
 	if got, want := clock.totalSlept(), 2*time.Second; got != want {
 		t.Fatalf("total waited = %s, want %s (the rate limit must apply to retries too)", got, want)
+	}
+}
+
+// An explicit default port, a trailing dot, letter case and the scheme all
+// name the same server, so they share one spacing bucket (T-928). Before,
+// the bucket was the host as written: http and https to one host already
+// shared it, but each port spelling was its own and a source's budget
+// doubled. Every old bucket must sit inside one new bucket, so the change
+// only adds spacing. A non-default port is still its own bucket.
+func TestClientRateLimitBucketIgnoresDefaultPortTrailingDotAndScheme(t *testing.T) {
+	t.Parallel()
+
+	ok := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: http.Header{}, Request: r}, nil
+	})
+
+	// Frozen, so each wait shows how many earlier requests share its
+	// bucket: 1s behind one, 2s behind two, and so on.
+	clock := newFrozenClock()
+	client := New(Config{MinHostInterval: time.Second, Clock: clock, Transport: ok})
+	ctx := testContext(t)
+
+	for _, target := range []string{
+		"http://feed.example.org/a",
+		"http://feed.example.org:80/b",
+		"http://FEED.example.org./c",
+		"https://feed.example.org/d",
+		"https://feed.example.org:443/e",
+		"http://feed.example.org:8080/f",
+	} {
+		if _, err := client.Get(ctx, target, nil); err != nil {
+			t.Fatalf("get %s: %v", target, err)
+		}
+	}
+
+	want := []time.Duration{time.Second, 2 * time.Second, 3 * time.Second, 4 * time.Second}
+	got := clock.sleeps()
+	if len(got) != len(want) {
+		t.Fatalf("sleeps = %v, want %v: every default-port spelling over either scheme is one bucket, port 8080 its own", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sleeps = %v, want %v", got, want)
+		}
+	}
+}
+
+// The review probe for T-928: https then http to one host is one server and
+// must be spaced, as it was when the bucket was the host as written. A
+// same-host upgrade or a details fetch on the other scheme takes this path.
+func TestClientRateLimitSpacesHTTPAndHTTPSToOneHost(t *testing.T) {
+	t.Parallel()
+
+	ok := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: http.Header{}, Request: r}, nil
+	})
+
+	clock := newFakeClock()
+	client := New(Config{MinHostInterval: time.Second, Clock: clock, Transport: ok})
+	ctx := testContext(t)
+
+	for _, target := range []string{"https://feed.example.org/s", "http://feed.example.org/s"} {
+		if _, err := client.Get(ctx, target, nil); err != nil {
+			t.Fatalf("get %s: %v", target, err)
+		}
+	}
+
+	if got := clock.sleeps(); len(got) != 1 || got[0] != time.Second {
+		t.Fatalf("sleeps = %v, want [1s]: http and https to one host share one bucket", got)
+	}
+}
+
+func TestRateLimitKey(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct{ in, want string }{
+		{"http://feed.example.org/x", "feed.example.org"},
+		{"http://feed.example.org:80/x", "feed.example.org"},
+		{"HTTP://Feed.Example.Org./x", "feed.example.org"},
+		{"https://feed.example.org/x", "feed.example.org"},
+		{"https://feed.example.org:443/x", "feed.example.org"},
+		{"http://feed.example.org:443/x", "feed.example.org"},
+		{"https://feed.example.org:8443/x", "feed.example.org:8443"},
+		{"http://127.0.0.1:9117/x", "127.0.0.1:9117"},
+	} {
+		u, err := url.Parse(tt.in)
+		if err != nil {
+			t.Fatalf("parse %q: %v", tt.in, err)
+		}
+		if got := rateLimitKey(u); got != tt.want {
+			t.Errorf("rateLimitKey(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }

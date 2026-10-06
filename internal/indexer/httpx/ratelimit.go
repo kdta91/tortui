@@ -2,10 +2,36 @@ package httpx
 
 import (
 	"context"
+	"net"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 )
+
+// rateLimitKey is the hostLimiter bucket for a request URL: the host name,
+// lowercased and without a trailing dot, alone when the port is empty, 80 or
+// 443, and joined with the port otherwise. So feed.example.org,
+// feed.example.org:80, feed.example.org:443 and FEED.example.org. are one
+// bucket over either scheme (T-928).
+//
+// The key depends on the URL's host alone, never its scheme, so every bucket
+// the old key (the host as written, lowercased) made sits inside exactly one
+// of these: http and https to one host still share a bucket, and only
+// spellings that used to be separate are merged. That is what makes this a
+// tightening (AGENT.md §6.13). A non-default port stays its own bucket: it
+// may be a different service on one machine. Spellings this does not merge
+// are Backlog T-9184.
+func rateLimitKey(u *url.URL) string {
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+
+	switch port := u.Port(); port {
+	case "", "80", "443":
+		return host
+	default:
+		return net.JoinHostPort(host, port)
+	}
+}
 
 // hostLimiter spaces outbound requests per host: at most one request to a
 // given host per interval, with every other host unaffected. It is per host
