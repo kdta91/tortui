@@ -519,8 +519,9 @@ func TestADetailsPageThatDoesNotParseReportsParseFailed(t *testing.T) {
 
 	src := newSource(t, map[string]reply{"/item/1": pageReply(nestedDivs(100000))})
 	a := detailsAdapter(t, src, testClient(httpx.Config{}))
+	srv := src.server
 
-	_, err := a.Resolve(testContext(t), indexer.Result{Title: "One", SourceURL: src.server.URL + "/item/1"})
+	_, err := a.Resolve(testContext(t), indexer.Result{Title: "One", SourceURL: srv.URL + "/item/1"})
 	if !errors.Is(err, ErrDocumentTooDeep) {
 		t.Fatalf("Resolve error = %v, want ErrDocumentTooDeep", err)
 	}
