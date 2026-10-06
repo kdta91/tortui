@@ -262,6 +262,12 @@ deferrals stay deferred to Backlog T-9004.
   call. The limiter half was fixed in T-9183 (DEC-191). Found by QA on T-020 (PR #11), disclosed in the
   `ErrCrossHostRedirect` godoc and DEC-064.
 
+- `T-9184` httpx's per-host spacing key (T-9183, DEC-191) merges case, a trailing dot and the default ports, but
+  other spellings of one server still get separate buckets, all predating T-9183: a Unicode host name and its
+  punycode form; a port written with leading zeros (`:080`); two textual spellings of one IPv6 address; and the
+  short and integer forms of an IPv4 address. Within one source the details-host check refuses these, so they
+  reach the limiter only through the engine's shared `.torrent` client. Normalise them, or record why not. Also:
+  redirect hops within one request are not spaced by the per-host limiter at all. Found in review of T-9183 (PR #117).
 - `T-933` `scripts/check-indexer-hostnames.sh` flags the value of an XML namespace declaration.
   A Torznab feed identifies its extension attributes with an `xmlns:torznab` declaration whose
   value is an http URL on the protocol's own domain, and an RSS document often carries an
@@ -756,7 +762,7 @@ New entries: append the full row to `docs/decisions.md` **and** a one-line row h
 | DEC-188 | 2026-10-05 | T-9175 (T-9039): a ClearHistory that races a Close reports Close's final-flush outcome, not the closed-file error. |
 | DEC-189 | 2026-10-05 | T-9177: another refused entry's sharedName at the destination is a claim: a refusal keeps that data as shared, and a leftName holder's remove with data keeps it. |
 | DEC-190 | 2026-10-06 | T-9182: a failed engine-root admission after a successful preferences save is logged, not returned; the composition root's HTTP seam is `httpEnv`. |
-| DEC-191 | 2026-10-06 | T-9183 (T-995, T-928): a re-registered source inherits its refresh floor; httpx's per-host limiter buckets ignore an explicit default port, a trailing dot and case. |
+| DEC-191 | 2026-10-06 | T-9183 (T-995, T-928): a re-registered source inherits its refresh floor; httpx's per-host limiter keys on the host alone for ports empty, 80 and 443 (never the scheme), so every old bucket sits inside one new one. |
 | DEC-192 | 2026-10-06 | T-9183 (T-917): CategoryFromString passes over Other-class words, so "Misc/Software" is software. |
 
 ## Blocked
