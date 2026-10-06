@@ -523,6 +523,13 @@ func TestCategoryFromString(t *testing.T) {
 		// First recognised token wins, left to right.
 		{"first token wins", "Audio/Video", CategoryAudio},
 		{"leading noise", "zzz qqq music", CategoryAudio},
+		// An Other-class word never wins over a specific one later in
+		// the label (T-917): it says nothing about the kind of data.
+		{"misc then software", "Misc/Software", CategorySoftware},
+		{"unknown then audio", "Unknown/Audio", CategoryAudio},
+		{"other then video", "Other > Video", CategoryVideo},
+		{"software then misc", "Software/Misc", CategorySoftware},
+		{"only other-class words", "Misc/Unknown/Other", CategoryOther},
 		// A sample of the words real source dialects use.
 		{"movies", "Movies", CategoryVideo},
 		{"film", "Film", CategoryVideo},
