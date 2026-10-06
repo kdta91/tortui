@@ -16,6 +16,7 @@ import (
 
 	"github.com/kdta91/tortui/internal/config"
 	"github.com/kdta91/tortui/internal/indexer/httpx"
+	"github.com/kdta91/tortui/internal/tui/theme"
 )
 
 // TestProductionSettingsWiringIsPresent pins what buildModel hands the TUI
@@ -140,5 +141,55 @@ func TestHostIntervalSeamSkipsTheRealWait(t *testing.T) {
 
 	if got := a.settings.env.minHostInterval; got != -1 {
 		t.Errorf("settings manager minHostInterval = %v, want -1 from Options", got)
+	}
+}
+
+// TestProductionKeepsThePerHostInterval guards AGENT.md section 6 item 13:
+// the zero httpEnv is production, and it must still hold the second request
+// to one host for the default interval. A client that dropped the spacing, or
+// a root that always passed the test seam, would hammer a source.
+func TestProductionKeepsThePerHostInterval(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := newClient(httpx.Credentials{}, httpEnv{transport: srv.Client().Transport})
+
+	if _, err := client.Get(context.Background(), srv.URL, nil); err != nil {
+		t.Fatalf("first Get: %v", err)
+	}
+
+	start := time.Now()
+
+	if _, err := client.Get(context.Background(), srv.URL, nil); err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+
+	if took, floor := time.Since(start), httpx.DefaultMinHostInterval*9/10; took < floor {
+		t.Errorf("second request to one host waited %v, want at least %v: the default spacing is gone", took, floor)
+	}
+}
+
+// TestRootWithoutTheSeamUsesTheDefaultInterval: an App built without
+// Options.minHostInterval hands its sources the zero env, which means the
+// real per-host interval.
+func TestRootWithoutTheSeamUsesTheDefaultInterval(t *testing.T) {
+	guardDefaultTransport(t)
+	sandbox(t)
+
+	a, err := New(Options{Capability: theme.Capability{Unicode: true}, transport: &recordingTransport{}, offline: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	t.Cleanup(func() { _ = a.Close() })
+
+	if got := a.settings.env.minHostInterval; got != 0 {
+		t.Errorf("settings env minHostInterval = %v without the seam, want 0 (production default)", got)
+	}
+
+	if got := a.settings.live.env.minHostInterval; got != 0 {
+		t.Errorf("live sources env minHostInterval = %v without the seam, want 0", got)
 	}
 }
