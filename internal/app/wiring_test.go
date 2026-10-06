@@ -156,18 +156,21 @@ func TestProductionKeepsThePerHostInterval(t *testing.T) {
 
 	client := newClient(httpx.Credentials{}, httpEnv{transport: srv.Client().Transport})
 
+	// The limiter books the first request's slot before it is sent, so the
+	// clock starts before the first Get: a slow first response (a cold connect,
+	// a GC stall) cannot shorten the measured wait.
+	start := time.Now()
+
 	if _, err := client.Get(context.Background(), srv.URL, nil); err != nil {
 		t.Fatalf("first Get: %v", err)
 	}
-
-	start := time.Now()
 
 	if _, err := client.Get(context.Background(), srv.URL, nil); err != nil {
 		t.Fatalf("second Get: %v", err)
 	}
 
 	if took, floor := time.Since(start), httpx.DefaultMinHostInterval*9/10; took < floor {
-		t.Errorf("second request to one host waited %v, want at least %v: the default spacing is gone", took, floor)
+		t.Errorf("two requests to one host took %v, want at least %v: the default spacing is gone", took, floor)
 	}
 }
 
